@@ -35,7 +35,7 @@ def main():
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     core = root / 'projects/halley7m-regba/core'
-    source = (core / 'regba_core.c').read_text(encoding='utf-8')
+    source = (core.parent / 'engines/regba/regba_adapter.c').read_text(encoding='utf-8')
     names = ('clamp12', 'reset_audio_update_timing', 'ReGBA_AudioUpdate',
              'ReGBA_RenderScreen', 'ReGBA_IsRenderingNextFrame', 'regba_frame_boundary')
     functions = '\n\n'.join(extract_function(source, name) for name in names)

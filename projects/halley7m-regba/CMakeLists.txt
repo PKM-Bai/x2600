@@ -15,7 +15,7 @@ execute_process(COMMAND ${Python3_EXECUTABLE} "${WORKSPACE}/scripts/prepare-ui-f
     --source "${WORKSPACE}/third_party/ReGBA/source/tools/unifont.hex.gz"
     --output "${REGBA_GENERATED}/ui_font.h"
     --text "${CMAKE_CURRENT_SOURCE_DIR}/core/handheld_ui.c"
-    --text "${CMAKE_CURRENT_SOURCE_DIR}/core/regba_core.c"
+    --text "${CMAKE_CURRENT_SOURCE_DIR}/engines/regba/regba_adapter.c"
     --text "${CMAKE_CURRENT_SOURCE_DIR}/platform/ui_draw.c"
     RESULT_VARIABLE UI_FONT_RESULT)
 if(NOT UI_FONT_RESULT EQUAL 0)
@@ -25,7 +25,7 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${WORKSPACE}/scripts/prepare-ui-font.py"
     "${WORKSPACE}/third_party/ReGBA/source/tools/unifont.hex.gz"
     "${CMAKE_CURRENT_SOURCE_DIR}/core/handheld_ui.c"
-    "${CMAKE_CURRENT_SOURCE_DIR}/core/regba_core.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/engines/regba/regba_adapter.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/platform/ui_draw.c")
 execute_process(COMMAND ${Python3_EXECUTABLE} "${WORKSPACE}/scripts/prepare-regba.py"
     --source "${WORKSPACE}/third_party/ReGBA" --output "${REGBA_GENERATED}"
@@ -88,7 +88,7 @@ add_executable(halley7m_regba
     ${DISPLAY_GENERATED}/x2600_hal_mipi_dsi.c
     ${DISPLAY_GENERATED}/x2600_ll_mipi_dsi.c
     core/emu_engine.c
-    core/regba_core.c
+    engines/regba/regba_adapter.c
     core/handheld_ui.c
     core/playback.c
     core/resources.c

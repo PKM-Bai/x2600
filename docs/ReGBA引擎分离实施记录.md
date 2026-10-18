@@ -39,7 +39,7 @@ Release CRC32 为 `178853ea`，入口 `0x80600000`。两个 manifest 的 `hardwa
 
 ### 拆分前职责与外部入口
 
-[`regba_core.c`](../projects/halley7m-regba/core/regba_core.c) 当前同时管理 FreeRTOS 任务和队列、GUI 会话、输入与播放策略、ReGBA 回调 / JIT、ROM / BIOS、音频样本以及原生存档状态。公共驱动已经分别位于 [`platform`](../projects/halley7m-regba/platform/)；GUI 和播放规则分别有 `handheld_ui` 与 `playback` 模块。
+拆分前的 `core/regba_core.c`（阶段 2 已迁至 [`regba_adapter.c`](../projects/halley7m-regba/engines/regba/regba_adapter.c)）同时管理 FreeRTOS 任务和队列、GUI 会话、输入与播放策略、ReGBA 回调 / JIT、ROM / BIOS、音频样本以及原生存档状态。公共驱动已经分别位于 [`platform`](../projects/halley7m-regba/platform/)；GUI 和播放规则分别有 `handheld_ui` 与 `playback` 模块。
 
 [`regba_core.h`](../projects/halley7m-regba/core/regba_core.h) 的现有入口包括任务启动、载入、运行、核心自测、保存、菜单、短音、显示控制、停止、串口键位、音频请求及状态查询。阶段 1 先保留这些入口兼容调用方，经新接口转发；串口命令、GUI 菜单、存档路径和错误含义不因重命名而改变。
 
@@ -76,3 +76,9 @@ Release CRC32 为 `178853ea`，入口 `0x80600000`。两个 manifest 的 `hardwa
 新增不依赖 ReGBA 头文件的 `emu_engine.h`，控制台统一通过该接口提出载入、运行、保存、菜单、停止和音频请求。当前实现转发给原任务，保持命令格式、队列和资源生命周期；接口注明异步请求、路径复制、连续运行以及诊断调用的语义。
 
 完整主机回归通过，Release / Debug 构建及产物检查通过；初始可用堆仍分别为 46764032 / 46108672 字节。Release BIN 为 2306448 字节，SHA256 `30799685ad915fc10a8182ff71efe106c459760b916884df74b076bf03db0008`；Debug BIN 为 2961904 字节，SHA256 `13a07b8be4cde270e35bee973890d7dad25e045bff8d22afff85211b253b1996`。本机日志为 `build/engine-stage1-{host,Release,Debug}-20261018.log`，本阶段没有板测。
+
+## 阶段 2：归拢 ReGBA 实现
+
+将原实现完整迁至 `engines/regba/regba_adapter.c`，并同步构建列表、字库输入和生产函数回归的来源。本次为行为保持的目录迁移，ReGBA 回调、JIT、ROM、BIOS 和存档私有状态已集中；其中任务与 GUI 调度将于阶段 3 通过同步 backend 合同移出。没有引入第二份 ROM、帧缓冲或任务。
+
+完整主机回归、Release / Debug 构建和产物检查通过，初始可用堆与阶段 1 一致。本机日志为 `build/engine-stage2-{host,Release,Debug}-20261018.log`。本阶段没有实板操作，功能分离的板测仍由阶段 4 放行。

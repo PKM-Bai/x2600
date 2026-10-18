@@ -38,6 +38,7 @@ foreach ($directory in @($output, $storageOutput, $audioOutput, $videoOutput, $b
 # supplies an independent absolute-time oracle and a bounded output queue.
 $platform = Join-Path $workspace 'projects\halley7m-regba\platform'
 $core = Join-Path $workspace 'projects\halley7m-regba\core'
+$regbaAdapter = Join-Path $workspace 'projects\halley7m-regba\engines\regba\regba_adapter.c'
 # Compile the real sampler with only its time/Idle/critical-section boundary
 # replaced. The fixture owns independent observations and expected rates.
 $statsStub = @'
@@ -56,7 +57,7 @@ uint64_t ulTaskGetIdleRunTimeCounter(void);
 foreach ($header in @('task.h', 'platform_runtime.h')) {
     [IO.File]::WriteAllText((Join-Path $statsOutput $header), "#include `"FreeRTOS.h`"`n", [Text.UTF8Encoding]::new($false))
 }
-& (Join-Path $workspace '.venv\Scripts\python.exe') (Join-Path $workspace 'scripts\prepare-ui-font.py') --source (Join-Path $workspace 'third_party\ReGBA\source\tools\unifont.hex.gz') --output (Join-Path $uiOutput 'ui_font.h') --text (Join-Path $core 'handheld_ui.c') --text (Join-Path $core 'regba_core.c') --text (Join-Path $platform 'ui_draw.c')
+& (Join-Path $workspace '.venv\Scripts\python.exe') (Join-Path $workspace 'scripts\prepare-ui-font.py') --source (Join-Path $workspace 'third_party\ReGBA\source\tools\unifont.hex.gz') --output (Join-Path $uiOutput 'ui_font.h') --text (Join-Path $core 'handheld_ui.c') --text $regbaAdapter --text (Join-Path $platform 'ui_draw.c')
 if ($LASTEXITCODE) { throw 'Could not prepare the native UI/HUD font.' }
 $audioSource = Get-Content -LiteralPath (Join-Path $platform 'audio.c') -Raw -Encoding UTF8
 $match = [regex]::Match($audioSource, '(?s)(size_t audio_submit_stereo\(.*?)(?=\r?\nvoid audio_get_stats\()')
@@ -104,7 +105,7 @@ $generatedGameConfig = Join-Path $gameConfigOutput 'game_config_test.c'
 [IO.File]::WriteAllText($generatedGameConfig, $configTemplate.Replace('@GAME_CONFIG_FUNCTIONS@', $configFunctions.Groups[1].Value), [Text.UTF8Encoding]::new($false))
 
 # Exercise the production aggregator with independent input-source stubs.
-$coreSource = Get-Content -LiteralPath (Join-Path $workspace 'projects\halley7m-regba\core\regba_core.c') -Raw -Encoding UTF8
+$coreSource = Get-Content -LiteralPath $regbaAdapter -Raw -Encoding UTF8
 $uiLifecycle = Get-Content -LiteralPath (Join-Path $workspace 'tests\handheld_lifecycle_test.c.in') -Raw -Encoding UTF8
 foreach ($part in @(
     @('(?s)(static int settle_backup\(void\)\r?\n\{.*?)(?=\r?\nstatic int core_reload_save\()', '@SETTLE_BACKUP_FUNCTION@'),
