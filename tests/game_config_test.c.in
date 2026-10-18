@@ -1,0 +1,168 @@
+/* Inject the generated native parser/lookup/load functions. Real stdio streams
+ * contain the packaged bytes or a user override; no card or board is accessed. */
+#define _CRT_SECURE_NO_WARNINGS
+#include "resources.h"
+#include "test_resources.h"
+#include <errno.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#ifdef _MSC_VER
+#define strcasecmp _stricmp
+#else
+#include <strings.h>
+#endif
+
+#define MAX_PATH 512
+#define MAX_IDLE_LOOPS 16
+#define CONFIG_FILENAME "game_config.txt"
+typedef FILE *FILE_TAG_TYPE;
+enum { FILE_ACTION_APPLY_GAME_COMPATIBILITY = 1 };
+enum { BACKUP_NONE, BACKUP_SRAM, BACKUP_FLASH, BACKUP_EEPROM };
+enum { FLASH_DEVICE_MACRONIX_64KB = 0x1c, FLASH_DEVICE_MACRONIX_128KB = 0x09 };
+static char main_path[MAX_PATH] = REGBA_CONFIG_DIR;
+static uint32_t idle_loop_targets, idle_loop_target_pc[MAX_IDLE_LOOPS];
+static int iwram_stack_optimize, flash_device_id, backup_type;
+static bool IsNintendoBIOS;
+static struct { uint8_t rom[16384]; } bios;
+static const char *user_text;
+static unsigned failures, user_opens, bundled_opens;
+
+static void expect(int condition, const char *name)
+{
+    if (!condition) { printf("FAIL %s\n", name); ++failures; }
+}
+
+static FILE *stream_bytes(const void *bytes, size_t size)
+{
+    FILE *file = tmpfile();
+    if (!file) { perror("tmpfile"); exit(2); }
+    if (fwrite(bytes, 1u, size, file) != size || fseek(file, 0, SEEK_SET)) {
+        puts("FAIL preparing stdio fixture");
+        exit(2);
+    }
+    return file;
+}
+
+static FILE *open_config(const char *path, const char *mode)
+{
+    expect(!strcmp(mode, "rb"), "native config opens read-only");
+    if (!strcmp(path, REGBA_GAME_CONFIG_FILE)) {
+        ++user_opens;
+        if (user_text) return stream_bytes(user_text, strlen(user_text));
+    } else if (!strcmp(path, REGBA_BUILTIN_GAME_CONFIG_FILE)) {
+        ++bundled_opens;
+        return stream_bytes(bundled_game_config, sizeof(bundled_game_config));
+    } else expect(0, "unexpected config path");
+    errno = ENOENT;
+    return NULL;
+}
+
+#define FILE_OPEN(tag,path,mode) tag = open_config(path, "rb")
+#define FILE_CHECK_VALID(tag) ((tag) != NULL)
+#define FILE_CLOSE(tag) fclose(tag)
+static bool ReGBA_GetBundledGameConfig(char *out)
+{ strcpy(out, REGBA_BUILTIN_GAME_CONFIG_FILE); return true; }
+static void ReGBA_ProgressInitialise(unsigned action) { (void)action; }
+static void ReGBA_ProgressUpdate(uint32_t current, uint32_t total)
+{ (void)current; (void)total; }
+static void ReGBA_ProgressFinalise(void) { }
+
+@GAME_CONFIG_FUNCTIONS@
+
+static void reset_fixture(const char *override)
+{
+    user_text = override;
+    user_opens = bundled_opens = 0;
+    IsNintendoBIOS = false;
+    backup_type = BACKUP_SRAM; /* Inferred from an existing native .sav. */
+    flash_device_id = 0;
+    iwram_stack_optimize = 0;
+    memset(&bios, 0, sizeof(bios));
+}
+
+static void test_packaged_sapphire(void)
+{
+    char title[] = "POKEMON SAPP", code[] = "AXPJ", maker[] = "01";
+    reset_fixture(NULL);
+    expect(load_game_config(title, code, maker) == 0, "AXPJ finds packaged entry without TF config");
+    expect(user_opens == 1 && bundled_opens == 1, "missing TF config falls back once");
+    expect(flash_device_id == 0x09, "AXPJ uses 128KB Macronix device ID");
+    expect(backup_type == BACKUP_SRAM, "compatibility lookup preserves inferred battery type");
+    expect(iwram_stack_optimize == 1, "normal compatibility defaults retained");
+}
+
+static void test_user_override(void)
+{
+    static const char lf[] =
+        "game_name = POKEMON SAPP\n"
+        "game_code = AXPJ\n"
+        "vender_code = 01\n"
+        "iwram_stack_optimize = no\n"
+        "save_type = eeprom\n"
+        "game_name = NEXT ENTRY\n"
+        "game_code = TEST\n"
+        "vender_code = 01\n";
+    static const char crlf[] =
+        "game_name = POKEMON SAPP\r\n"
+        "game_code = AXPJ\r\n"
+        "vender_code = 01\r\n"
+        "iwram_stack_optimize = no\r\n"
+        "save_type = eeprom\r\n"
+        "game_name = NEXT ENTRY\r\n"
+        "game_code = TEST\r\n"
+        "vender_code = 01\r\n";
+    const char *fixtures[] = { lf, crlf };
+    unsigned i;
+    for (i = 0; i < sizeof(fixtures) / sizeof(fixtures[0]); ++i) {
+        char title[] = "POKEMON SAPP", code[] = "AXPJ", maker[] = "01";
+        reset_fixture(fixtures[i]);
+        expect(load_game_config(title, code, maker) == 0, "matched user block terminates successfully");
+        expect(user_opens == 1 && !bundled_opens, "matched user entry suppresses packaged fallback");
+        expect(flash_device_id == 0x1c && !iwram_stack_optimize && backup_type == BACKUP_EEPROM,
+               "user values retain priority over built-in AXPJ rule");
+    }
+}
+
+static void test_unmatched_user(void)
+{
+    char title[] = "POKEMON SAPP", code[] = "AXPJ", maker[] = "01";
+    reset_fixture("game_name = OTHER\ngame_code = TEST\nvender_code = 01\n");
+    expect(load_game_config(title, code, maker) == 0, "unrelated user entries permit packaged fallback");
+    expect(bundled_opens == 1 && flash_device_id == 0x09, "fallback applies actual AXPJ rule");
+    code[3] = 'X';
+    reset_fixture(NULL);
+    expect(load_game_config(title, code, maker) == -1, "unknown game has no invented compatibility match");
+    expect(flash_device_id == 0x1c && backup_type == BACKUP_SRAM,
+           "unknown game retains native defaults and inferred save type");
+}
+
+static void test_parser_endings(void)
+{
+    char line1[] = "flash_rom_type = 128KB\n";
+    char line2[] = "flash_rom_type = 128KB\r\n";
+    char line3[] = "flash_rom_type = 128KB";
+    char line4[] = "flash_rom_type = \n";
+    char name[256], value[256];
+    char *lines[] = { line1, line2, line3 };
+    unsigned i;
+    for (i = 0; i < sizeof(lines) / sizeof(lines[0]); ++i)
+        expect(parse_config_line(lines[i], name, value) == 0 &&
+               !strcmp(name, "flash_rom_type") && !strcmp(value, "128KB"),
+               "line ending preserves last value character");
+    expect(parse_config_line(line4, name, value) == 0 && !value[0],
+           "empty config value stays empty");
+}
+
+int main(void)
+{
+    test_packaged_sapphire();
+    test_user_override();
+    test_unmatched_user();
+    test_parser_endings();
+    if (failures) { printf("game config regression: %u failure(s)\n", failures); return 1; }
+    puts("game config regression PASS: packaged AXPJ flash128, TF override priority, unmatched fallback, LF/CRLF, inferred save type");
+    return 0;
+}

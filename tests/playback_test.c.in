@@ -1,0 +1,237 @@
+/* Production frame callbacks + audio handoff, with only board/RTOS edges
+ * replaced. Playback helpers are linked from the real core/playback.c. */
+#include "playback.h"
+#include <stdbool.h>
+#include <stdint.h>
+#include <stddef.h>
+#include <stdio.h>
+#include <string.h>
+#include <errno.h>
+#include <setjmp.h>
+
+static uint16_t screen[240 * 160];
+static uint32_t GBAScreenPitch = 240;
+static uint32_t rendered_frames, drawn_frames, frame_crc, boundary_pending;
+static unsigned playback_frameskip, playback_speed;
+static uint32_t stop_requested, audio_stop_pending, want_audio, frame_limit;
+static int gui_enabled, gui_last_menu, gui_requested;
+static bool sound_started;
+static uint64_t start_us, next_frame_us;
+static jmp_buf return_to_task;
+static int16_t pending_pcm[256 * 2];
+static size_t pcm_offset, pcm_frames;
+static uint64_t audio_update_last_us;
+static uint32_t audio_update_max_gap_us, audio_update_gap_native, audio_update_gap_pending;
+
+static unsigned failures, critical_depth, video_calls, crc_calls;
+static unsigned stats_calls, backup_calls, menu_calls, menu_down;
+static unsigned start_calls, stop_calls, discard_calls, discarded, loaded, submitted;
+static unsigned delay_calls, stop_on_delay;
+static uint32_t stats_frames, native_available;
+static uint64_t clock_us, start_latency;
+
+static void expect(int condition, const char *message)
+{
+    if (!condition) { fprintf(stderr, "FAIL playback: %s\n", message); ++failures; }
+}
+static void enter(void) { ++critical_depth; }
+static void leave(void)
+{ expect(critical_depth != 0, "critical balance"); if (critical_depth) --critical_depth; }
+#define taskENTER_CRITICAL() enter()
+#define taskEXIT_CRITICAL() leave()
+static uint64_t platform_time_us(void) { return clock_us; }
+static void vTaskDelay(unsigned ticks)
+{
+    expect(ticks == 1 && !critical_depth, "pacing yields one tick outside lock");
+    ++delay_calls; clock_us += ticks * 1000u;
+    if (stop_on_delay && delay_calls == stop_on_delay) stop_requested = 1;
+}
+static uint32_t crc32_bytes(const void *data, size_t size)
+{
+    expect(data == screen && size == sizeof(screen), "CRC uses the framebuffer");
+    ++crc_calls; return 0x12345678u;
+}
+static void video_present_gba(const uint16_t *data, unsigned stride)
+{
+    expect(data == screen && stride == 240, "submit uses native framebuffer/stride");
+    ++video_calls;
+}
+static void game_stats_frame(uint32_t frames) { ++stats_calls; stats_frames = frames; }
+static void service_backup(void) { ++backup_calls; }
+static int gamepad_menu_down(void) { ++menu_calls; return menu_down != 0; }
+static uint32_t ReGBA_GetAudioSamplesAvailable(void) { return native_available; }
+static uint32_t ReGBA_DiscardAudioSamples(uint32_t count)
+{
+    expect(count <= native_available, "discard does not exceed native queue");
+    ++discard_calls; discarded += count; native_available -= count; return count;
+}
+static void ReGBA_LoadNextAudioSample(int16_t *left, int16_t *right)
+{
+    expect(native_available != 0, "PCM load has an available frame");
+    if (native_available) --native_available;
+    ++loaded; *left = 123; *right = -123;
+}
+static size_t audio_submit_stereo(const int16_t *samples, size_t frames, uint32_t rate)
+{
+    expect(samples >= pending_pcm && samples < pending_pcm + 512 && rate == 44100,
+           "normal-speed audio keeps its PCM conversion contract");
+    submitted += (unsigned)frames; return frames;
+}
+static int audio_start(void)
+{
+    expect(!native_available && !pcm_frames && !pcm_offset,
+           "restart discards stale native and pending PCM before enabling DMA");
+    ++start_calls; clock_us += start_latency; return 0;
+}
+static void audio_stop(void) { ++stop_calls; }
+
+@PRODUCTION_FUNCTIONS@
+
+static void reset_fixture(void)
+{
+    rendered_frames = drawn_frames = frame_crc = boundary_pending = 0;
+    playback_frameskip = 0; playback_speed = 1;
+    stop_requested = audio_stop_pending = want_audio = frame_limit = 0;
+    gui_enabled = gui_last_menu = gui_requested = 0;
+    sound_started = false;
+    start_us = next_frame_us = 0;
+    pcm_offset = pcm_frames = 0;
+    audio_update_last_us = 0;
+    audio_update_max_gap_us = audio_update_gap_native = audio_update_gap_pending = 0;
+    critical_depth = video_calls = crc_calls = stats_calls = backup_calls = menu_calls = menu_down = 0;
+    start_calls = stop_calls = discard_calls = discarded = loaded = submitted = 0;
+    delay_calls = stop_on_delay = 0;
+    stats_frames = native_available = 0;
+    clock_us = start_latency = 0;
+}
+
+static int boundary_result(void)
+{
+    int result = setjmp(return_to_task);
+    if (!result) regba_frame_boundary();
+    expect(!critical_depth, "frame boundary releases all locks before return/stop");
+    return result;
+}
+
+static void check_render_phase(void)
+{
+    /* Draw positions among 16 guest frames: every frame / even indices /
+     * indices0,3,6,9,12,15 / indices0,4,8,12. */
+    static const unsigned patterns[] = {0xffff, 0x5555, 0x9249, 0x1111};
+    for (unsigned skip = 0; skip < 4; ++skip) {
+        reset_fixture(); playback_frameskip = skip; gui_enabled = 1;
+        unsigned expected_draws = 0;
+        for (unsigned frame = 0; frame < 16; ++frame) {
+            int expected = !!(patterns[skip] & (1u << frame));
+            for (unsigned scanline = 0; scanline < 160; ++scanline)
+                expect(ReGBA_IsRenderingNextFrame() == expected,
+                       "all 160 scanlines share the same expected draw phase");
+            expect(rendered_frames == frame, "scanline queries do not advance guest frame count");
+            ReGBA_RenderScreen();
+            expected_draws += expected;
+            expect(rendered_frames == frame + 1 && boundary_pending,
+                   "every frame including skipped frames marks a boundary and advances count");
+            expect(video_calls == expected_draws && drawn_frames == expected_draws,
+                   "submit uses pre-increment scanline phase");
+            clock_us = UINT64_C(10000000) + frame * 20000u;
+            native_available = 37;
+            expect(boundary_result() == 0, "normal guest frame continues");
+            expect(stats_calls == frame + 1 && stats_frames == frame + 1,
+                   "FPS input counts every simulated frame, independent of drawn frames");
+            expect(backup_calls == frame + 1 && menu_calls == frame + 1 &&
+                   discarded == (frame + 1) * 37u && !boundary_pending,
+                   "skipped frames retain audio, save and menu service exactly once");
+            regba_frame_boundary();
+            expect(stats_calls == frame + 1 && backup_calls == frame + 1,
+                   "an update without a guest frame does not duplicate service");
+        }
+        expect(crc_calls == 1, "first displayed frame gets CRC even under frameskip");
+    }
+}
+
+static void check_targets(void)
+{
+    /* Literal floors of frames / (16777216 / 280896) seconds, scaled by
+     * 1/2/4. Large cases exceed the old frames*280896000000 uint64 product. */
+    static const struct { uint32_t frames; uint64_t target[3]; } cases[] = {
+        {0, {0,0,0}}, {1, {16742,8371,4185}}, {2, {33485,16742,8371}},
+        {60, {1004562,502281,251140}}, {120, {2009124,1004562,502281}},
+        {65536, {1097250000,548625000,274312500}},
+        {100000000, {UINT64_C(1674270629882),UINT64_C(837135314941),UINT64_C(418567657470)}},
+        {UINT32_MAX, {UINT64_C(71909375983257),UINT64_C(35954687991628),UINT64_C(17977343995814)}}
+    };
+    static const unsigned speeds[] = {1,2,4};
+    for (unsigned i = 0; i < sizeof(cases)/sizeof(cases[0]); ++i)
+        for (unsigned speed = 0; speed < 3; ++speed)
+            expect(playback_target_us(cases[i].frames, speeds[speed]) == cases[i].target[speed],
+                   "exact rational frame target, including long counter values");
+    static const unsigned first_target[] = {16742,8371,4185};
+    static const unsigned first_ticks[] = {17,9,5};
+    for (unsigned speed = 0; speed < 3; ++speed) {
+        reset_fixture(); playback_speed = speeds[speed];
+        clock_us = start_us = UINT64_C(1000000);
+        rendered_frames = boundary_pending = 1;
+        expect(boundary_result() == 0 && next_frame_us == start_us + first_target[speed],
+               "actual boundary uses selected speed and run-time anchor");
+        expect(delay_calls == first_ticks[speed] && clock_us >= next_frame_us &&
+               clock_us - next_frame_us < 1000u, "pacing reaches the target with bounded tick rounding");
+    }
+}
+
+static void check_fast_audio(void)
+{
+    static const unsigned fast[] = {2,4};
+    for (unsigned i = 0; i < 2; ++i) {
+        reset_fixture(); playback_speed = fast[i]; want_audio = 1; sound_started = true;
+        clock_us = UINT64_C(10000000); pcm_frames = 256; pcm_offset = 17;
+        native_available = 2048; rendered_frames = boundary_pending = 1;
+        expect(boundary_result() == 0, "accelerated frame continues");
+        expect(!sound_started && stop_calls == 1 && !start_calls && want_audio == 1,
+               "fast-forward stops DMA while retaining the user's sound preference");
+        expect(!pcm_frames && !pcm_offset && !native_available && discarded == 2048 &&
+               !loaded && !submitted, "fast-forward discards stale PCM without submitting it");
+        ++rendered_frames; boundary_pending = 1; native_available = 1536;
+        expect(boundary_result() == 0 && stop_calls == 1 && !start_calls &&
+               discarded == 3584, "ongoing fast-forward drains native sound without repeated restarts");
+        playback_speed = 1; ++rendered_frames; boundary_pending = 1;
+        native_available = 1000; pcm_frames = 123; pcm_offset = 7;
+        start_latency = 70000;
+        expect(boundary_result() == 0 && sound_started && start_calls == 1 && want_audio == 1,
+               "returning to 1x restores the retained sound preference");
+        expect(discarded == 4584 && !native_available && !pcm_frames && !pcm_offset &&
+               start_us == 70000 && !loaded && !submitted,
+               "1x restore clears stale PCM and excludes codec settling from guest time");
+        expect(stats_calls == 3 && stats_frames == 3 && backup_calls == 3,
+               "speed and audio transitions retain all guest frame service");
+    }
+    reset_fixture(); playback_speed = 1; want_audio = 0;
+    clock_us = UINT64_C(10000000); rendered_frames = boundary_pending = 1; native_available = 100;
+    expect(boundary_result() == 0 && !start_calls && !sound_started && !want_audio && discarded == 100,
+           "normal-speed resume does not enable sound the user disabled");
+}
+
+static void check_stop(void)
+{
+    reset_fixture(); rendered_frames = boundary_pending = 1; stop_requested = 1;
+    expect(boundary_result() == 1 && stats_frames == 1 && stats_calls == 1 &&
+           !backup_calls && !delay_calls, "explicit stop exits at boundary before more work or pacing");
+    reset_fixture(); clock_us = UINT64_C(10000000); frame_limit = rendered_frames = 3;
+    boundary_pending = 1;
+    expect(boundary_result() == 1 && stats_frames == 3 && backup_calls == 1 && !delay_calls,
+           "frame limit uses guest frames, including skipped drawing");
+    reset_fixture(); rendered_frames = boundary_pending = 1; gui_enabled = menu_down = 1;
+    expect(boundary_result() == 1 && gui_requested && stop_requested && gui_last_menu &&
+           !backup_calls && !delay_calls,
+           "menu edge pauses before automatic backup so reload can keep the existing save");
+    reset_fixture(); rendered_frames = boundary_pending = 1; stop_on_delay = 2;
+    expect(boundary_result() == 1 && delay_calls == 2 && backup_calls == 1,
+           "stop interrupts pacing rather than waiting for the full frame deadline");
+}
+
+int main(void)
+{
+    check_render_phase(); check_targets(); check_fast_audio(); check_stop();
+    if (failures) return 1;
+    puts("playback PASS: stable scanline/preincrement phases0..3, every-frame service/FPS, exact1x/2x/4x/long targets, fast-audio drain/1x restore, stops");
+    return 0;
+}

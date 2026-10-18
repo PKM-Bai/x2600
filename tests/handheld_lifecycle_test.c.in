@@ -1,0 +1,508 @@
+/* Inject the production GUI service/run/unload functions. Dependencies below
+ * model completed I/O and an emulator returning at its next pause boundary. */
+#define _CRT_SECURE_NO_WARNINGS
+#include "handheld_ui.h"
+#include "bt_gamepad.h"
+#include "resources.h"
+#include <errno.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+
+static unsigned failures;
+static uint32_t gui_enabled, gui_showing, gui_requested, gui_input_gate;
+static uint32_t requested_keys, want_audio, command_busy, save_requested;
+static int gui_storage_ready, gui_last_menu, gui_last_result, last_flush_result;
+static bool IsGameLoaded, IsZippedROM, backup_dirty, save_in_flight;
+static uint32_t gamepak_ram_buffer_size, gamepak_ram_pages, gamepak_size;
+static char CurrentGamePath[513];
+static uint8_t old_rom[4], new_rom[4], *gamepak_rom;
+static bt_gamepad_stats_t fixture_pad;
+static uint16_t board_keys, polled_keys;
+static int polled_menu, status_connected, status_loaded, status_sound;
+static uint32_t polled_ms;
+static enum ui_action next_action, retry_action;
+static int check_result, flush_result, load_result, run_flush_result;
+static int mount_result, prepare_result, error_result, library_loaded;
+static int menu_latch, forced_save_seen;
+static unsigned volume_percent = 100, playback_frameskip, playback_speed = 1;
+static unsigned option_volume, option_skip, option_speed;
+static size_t pcm_frames, pcm_offset;
+static uint64_t backup_changed_us, save_attempt_us;
+static uint32_t backup_update;
+static const uint32_t write_backup_delay = 10;
+static int reload_result, wait_result, worker_busy;
+static unsigned paint_calls, poll_calls, status_calls, unmap_calls;
+static const char *launch_path = REGBA_ROM_DIR "/New.gba";
+static char trace[64];
+
+static void expect(int condition, const char *name)
+{
+    if (!condition) {
+        printf("FAIL %s trace=%s\n", name, trace);
+        ++failures;
+    }
+}
+
+static void event(char value)
+{
+    size_t length = strlen(trace);
+    if (length + 1u >= sizeof(trace)) {
+        expect(0, "trace capacity");
+        return;
+    }
+    trace[length] = value;
+    trace[length + 1u] = 0;
+}
+
+void bt_gamepad_get_stats(bt_gamepad_stats_t *out) { *out = fixture_pad; }
+static uint16_t buttons_get_keys(void) { return board_keys; }
+static uint64_t platform_time_us(void) { return 123456u; }
+static int gamepad_menu_down(void) { return menu_latch; }
+static void gui_paint(void) { ++paint_calls; }
+static void gui_message(const char *title, const char *text)
+{ (void)title; (void)text; }
+
+void handheld_ui_status(int connected, int loaded, int sound)
+{
+    ++status_calls;
+    status_connected = connected;
+    status_loaded = loaded;
+    status_sound = sound;
+}
+
+void handheld_ui_options(unsigned volume, unsigned skip, unsigned speed)
+{ option_volume = volume; option_skip = skip; option_speed = speed; }
+static unsigned audio_get_volume(void) { return volume_percent; }
+static int audio_set_volume(unsigned volume) { volume_percent = volume; return 0; }
+static void observe_backup(void) { }
+static int battery_save_busy(void) { return worker_busy; }
+static int battery_save_wait(void) { event('W'); worker_busy = 0; return wait_result; }
+static int regba_reload_backup(void) { event('D'); return reload_result; }
+
+@SETTLE_BACKUP_FUNCTION@
+
+@RELOAD_SAVE_FUNCTION@
+
+enum ui_action handheld_ui_poll(uint16_t keys, int menu, uint32_t now)
+{
+    enum ui_action action = next_action;
+    ++poll_calls;
+    polled_keys = keys;
+    polled_menu = menu;
+    polled_ms = now;
+    next_action = UI_ACTION_NONE;
+    return action;
+}
+
+const char *handheld_ui_launch_path(void) { return launch_path; }
+
+void handheld_ui_error(const char *title, int result, enum ui_action retry)
+{
+    (void)title;
+    event('E');
+    error_result = result;
+    retry_action = retry;
+}
+
+void handheld_ui_notice(const char *title, const char *message, int error,
+                        enum ui_action retry)
+{
+    (void)title; (void)message;
+    event('N');
+    expect(!error && retry == UI_ACTION_NONE, "successful save notice");
+}
+
+void handheld_ui_library(int loaded)
+{
+    event('B');
+    library_loaded = loaded;
+    expect(loaded == (int)IsGameLoaded, "library receives actual loaded state");
+}
+
+void handheld_ui_pause(const char *path)
+{
+    event('T');
+    expect(IsGameLoaded && !strcmp(path, CurrentGamePath), "pause keeps current ROM path");
+}
+
+static int gui_check_rom(const char *path)
+{
+    event('C');
+    expect(!strcmp(path, launch_path), "preflight selected ROM");
+    return check_result;
+}
+
+static int flush_backup(void)
+{
+    event('F');
+    expect(command_busy, "flush owns the core command");
+    forced_save_seen = !!save_requested;
+    if (!flush_result) {
+        backup_dirty = save_in_flight = false;
+        save_requested = 0;
+    }
+    return flush_result;
+}
+
+static int core_load_game(const char *path)
+{
+    event('L');
+    expect(!backup_dirty && !save_in_flight && !save_requested,
+           "completed save precedes native loader");
+    expect(!strcmp(path, launch_path), "load selected ROM");
+    /* Native loading releases the old ROM before trying the new ROM. */
+    IsGameLoaded = load_result == 0;
+    gamepak_rom = IsGameLoaded ? new_rom : NULL;
+    if (IsGameLoaded) strcpy(CurrentGamePath, path);
+    else CurrentGamePath[0] = 0;
+    return load_result;
+}
+
+static bool run_game(uint32_t frames, bool selftest)
+{
+    event('R');
+    expect(IsGameLoaded && command_busy, "run has a loaded owned game");
+    expect(!frames && !selftest, "GUI runs continuously without self-test");
+    expect(!gui_showing && !gui_requested, "running hides menu and consumes request");
+    expect(gui_input_gate && gui_last_menu == menu_latch,
+           "resume gates held game keys and latches menu button");
+    last_flush_result = run_flush_result;
+    gui_requested = 1; /* A later frame boundary requests this simulated pause. */
+    return true;
+}
+
+static void ReGBA_UnmapEntireROM(void *rom)
+{
+    event('U');
+    ++unmap_calls;
+    expect(rom == old_rom, "exit unmaps original owned ROM");
+    expect(!backup_dirty && !save_in_flight && !save_requested,
+           "exit unmaps only after completed save");
+}
+
+static int storage_mount(void) { event('M'); return mount_result; }
+static int storage_prepare_dirs(void) { event('P'); return prepare_result; }
+
+@GUI_RUN_FUNCTION@
+
+@GUI_UNLOAD_FUNCTION@
+
+@GUI_SERVICE_FUNCTION@
+
+static void reset_case(enum ui_action action)
+{
+    gui_enabled = gui_showing = 1;
+    gui_requested = gui_input_gate = 0;
+    requested_keys = command_busy = save_requested = 0;
+    want_audio = 1;
+    gui_storage_ready = 1;
+    gui_last_menu = last_flush_result = 0;
+    gui_last_result = 17;
+    IsGameLoaded = true;
+    IsZippedROM = false;
+    backup_dirty = save_in_flight = true;
+    gamepak_rom = old_rom;
+    gamepak_ram_buffer_size = 32768;
+    gamepak_ram_pages = 1;
+    gamepak_size = 32000;
+    strcpy(CurrentGamePath, REGBA_ROM_DIR "/Old.gba");
+    memset(&fixture_pad, 0, sizeof(fixture_pad));
+    fixture_pad.connected = fixture_pad.data_valid = 1;
+    board_keys = polled_keys = 0;
+    polled_menu = status_connected = status_loaded = status_sound = 0;
+    polled_ms = 0;
+    next_action = action;
+    retry_action = UI_ACTION_NONE;
+    check_result = flush_result = load_result = run_flush_result = 0;
+    mount_result = prepare_result = error_result = 0;
+    reload_result = wait_result = worker_busy = 0;
+    volume_percent = 100; playback_frameskip = 0; playback_speed = 1;
+    option_volume = option_skip = option_speed = 0;
+    backup_update = 0; backup_changed_us = save_attempt_us = 123;
+    pcm_frames = 256; pcm_offset = 20;
+    library_loaded = -1;
+    menu_latch = forced_save_seen = 0;
+    paint_calls = poll_calls = status_calls = unmap_calls = 0;
+    trace[0] = 0;
+}
+
+static void expect_trace(const char *expected, const char *name)
+{
+    expect(!strcmp(trace, expected), name);
+    expect(!command_busy, "action publishes completion");
+}
+
+static void expect_old_rom(const char *name)
+{
+    expect(IsGameLoaded && gamepak_rom == old_rom &&
+           !strcmp(CurrentGamePath, REGBA_ROM_DIR "/Old.gba"), name);
+}
+
+static void test_exit_and_switch(void)
+{
+    const enum ui_action actions[] = { UI_ACTION_EXIT, UI_ACTION_SWITCH };
+    unsigned i;
+    for (i = 0; i < sizeof(actions) / sizeof(actions[0]); ++i) {
+        reset_case(actions[i]);
+        flush_result = -EIO;
+        gui_service();
+        expect_trace("FE", "failed save stops exit/switch before library or unload");
+        expect_old_rom("failed exit/switch retains old ROM in RAM");
+        expect(backup_dirty && save_in_flight && !unmap_calls,
+               "failed exit/switch retains unsaved state");
+        expect(error_result == -EIO && retry_action == actions[i],
+               "failed exit/switch offers matching retry");
+        expect(gui_last_result == -EIO, "failed exit/switch exposes result");
+    }
+    reset_case(UI_ACTION_SWITCH);
+    gui_service();
+    expect_trace("FB", "switch saves before returning to ROM library");
+    expect_old_rom("switch keeps resumable old ROM until new launch");
+    expect(library_loaded == 1 && !unmap_calls, "switch library keeps loaded state");
+
+    reset_case(UI_ACTION_EXIT);
+    gui_service();
+    expect_trace("FUB", "exit synchronizes before unmap before library");
+    expect(!IsGameLoaded && !IsZippedROM && !gamepak_rom && !CurrentGamePath[0],
+           "exit clears native ROM ownership and path");
+    expect(!gamepak_ram_buffer_size && !gamepak_ram_pages && !gamepak_size &&
+           !backup_dirty && !save_in_flight && !save_requested,
+           "exit clears ROM sizes and saved state");
+    expect(library_loaded == 0 && unmap_calls == 1, "exit library is unloaded");
+    gui_unload_game();
+    expect(unmap_calls == 1, "unloading empty game does not double free");
+}
+
+static void test_launch(void)
+{
+    reset_case(UI_ACTION_LAUNCH);
+    check_result = -ENOEXEC;
+    gui_service();
+    expect_trace("CE", "bad ROM preflight does not save or load");
+    expect_old_rom("bad selected ROM leaves previous ROM intact");
+    expect(error_result == -ENOEXEC && retry_action == UI_ACTION_LAUNCH,
+           "bad ROM is reported with launch retry");
+
+    reset_case(UI_ACTION_LAUNCH);
+    flush_result = -ENOSPC;
+    gui_service();
+    expect_trace("CFE", "launch aborts after failed save");
+    expect_old_rom("launch save failure retains old ROM");
+
+    reset_case(UI_ACTION_LAUNCH);
+    load_result = -ENOMEM;
+    gui_service();
+    expect_trace("CFLE", "native load failure never runs");
+    expect(!IsGameLoaded && !gamepak_rom && !status_loaded,
+           "load failure reports actual unloaded state");
+    expect(error_result == -ENOMEM && gui_last_result == -ENOMEM,
+           "native load failure reaches UI and status");
+
+    reset_case(UI_ACTION_LAUNCH);
+    menu_latch = 1;
+    gui_service();
+    expect_trace("CFLRT", "launch validates then synchronizes then loads then runs");
+    expect(IsGameLoaded && gamepak_rom == new_rom && !strcmp(CurrentGamePath, launch_path),
+           "successful launch owns the new ROM");
+    expect(gui_showing && !gui_requested && gui_input_gate,
+           "later pause restores GUI with release gate intact");
+}
+
+static void test_save_resume_sound(void)
+{
+    reset_case(UI_ACTION_SAVE);
+    backup_dirty = save_in_flight = false;
+    gui_service();
+    expect_trace("FN", "explicit save flushes before success notice");
+    expect(forced_save_seen && !save_requested, "explicit save requests a fresh snapshot");
+    expect_old_rom("successful save retains game");
+
+    reset_case(UI_ACTION_SAVE);
+    flush_result = -EROFS;
+    gui_service();
+    expect_trace("FE", "failed explicit save does not report success");
+    expect(error_result == -EROFS && retry_action == UI_ACTION_SAVE,
+           "save error offers save retry");
+    expect_old_rom("failed explicit save retains game");
+
+    reset_case(UI_ACTION_SAVE);
+    IsGameLoaded = false;
+    gui_service();
+    expect_trace("E", "no-game save avoids disk work");
+    expect(error_result == -ENOENT, "no-game save is explained");
+
+    reset_case(UI_ACTION_RESUME);
+    gui_service();
+    expect_trace("RT", "resume uses existing ROM without loading");
+    expect_old_rom("resume keeps original ROM");
+    expect(gui_showing && !gui_requested, "paused game returns to menu");
+
+    reset_case(UI_ACTION_RESUME);
+    run_flush_result = -EIO;
+    gui_service();
+    expect_trace("RTE", "post-run save failure is shown");
+    expect(error_result == -EIO && retry_action == UI_ACTION_SAVE,
+           "post-run save failure permits retry");
+    expect(gui_last_result == -EIO, "post-run save failure survives service status");
+    expect_old_rom("post-run save failure keeps RAM snapshot owner");
+
+    reset_case(UI_ACTION_RESUME);
+    IsGameLoaded = false;
+    gui_service();
+    expect_trace("", "no-game resume never starts emulator");
+
+    reset_case(UI_ACTION_SOUND);
+    gui_service();
+    expect_trace("", "sound toggle does not save or unload");
+    expect(!want_audio && !status_sound && status_loaded,
+           "sound toggle updates runtime preference and menu");
+    next_action = UI_ACTION_SOUND;
+    gui_service();
+    expect(want_audio && status_sound, "second sound toggle restores preference");
+}
+
+static void test_refresh(void)
+{
+    reset_case(UI_ACTION_REFRESH);
+    gui_service();
+    expect_trace("B", "ready filesystem refresh does not remount open ROM");
+    expect_old_rom("refresh keeps loaded ROM");
+
+    reset_case(UI_ACTION_REFRESH);
+    gui_storage_ready = 0;
+    mount_result = -ENODEV;
+    gui_service();
+    expect_trace("ME", "mount failure avoids prepare and library");
+    expect(!gui_storage_ready && error_result == -ENODEV && retry_action == UI_ACTION_REFRESH,
+           "missing card offers refresh retry");
+
+    reset_case(UI_ACTION_REFRESH);
+    gui_storage_ready = 0;
+    prepare_result = -EACCES;
+    gui_service();
+    expect_trace("MPE", "prepare failure avoids library");
+    expect(!gui_storage_ready && error_result == -EACCES, "prepare failure remains visible");
+
+    reset_case(UI_ACTION_REFRESH);
+    gui_storage_ready = 0;
+    gui_service();
+    expect_trace("MPB", "recovered card prepares resources before library");
+    expect(gui_storage_ready && library_loaded == 1, "recovery preserves loaded state");
+}
+
+static void test_reload_and_options(void)
+{
+    reset_case(UI_ACTION_RELOAD);
+    wait_result = -EIO;
+    gui_service();
+    expect_trace("WE", "failed in-flight save prevents read/reset");
+    expect_old_rom("failed wait preserves current game");
+    expect(backup_dirty && error_result == -EIO, "failed wait retains dirty backup");
+
+    reset_case(UI_ACTION_RELOAD);
+    reload_result = -ENOENT;
+    gui_service();
+    expect_trace("WDE", "missing save does not run or flush a new snapshot");
+    expect_old_rom("missing save keeps current game resumable");
+    expect(backup_dirty && retry_action == UI_ACTION_RELOAD, "failed read preserves dirty state and offers retry");
+
+    reset_case(UI_ACTION_RELOAD);
+    gui_service();
+    expect_trace("WDRT", "reload settles old snapshot then reads then runs cached ROM");
+    expect_old_rom("successful reload does not unmap or read ROM again");
+    expect(!backup_dirty && !save_in_flight && !save_requested &&
+           backup_update == write_backup_delay + 1 && !backup_changed_us && !save_attempt_us,
+           "reload clears previous guest save bookkeeping");
+    expect(!pcm_frames && !pcm_offset, "reload clears pending PCM");
+
+    reset_case(UI_ACTION_RELOAD);
+    IsGameLoaded = false;
+    gui_service();
+    expect_trace("E", "no-game reload never reads a file");
+
+    reset_case(UI_ACTION_VOLUME_UP);
+    gui_service();
+    expect(volume_percent == 100 && option_volume == 100, "volume upper bound");
+    for (unsigned i = 0; i < 11; ++i) { next_action = UI_ACTION_VOLUME_DOWN; gui_service(); }
+    expect(!volume_percent && !option_volume, "volume lower bound and readback");
+    next_action = UI_ACTION_VOLUME_UP; gui_service();
+    expect(volume_percent == 10 && option_volume == 10, "volume adjusts by ten");
+    expect_trace("", "volume does not save or restart");
+
+    reset_case(UI_ACTION_FRAMESKIP_DOWN);
+    gui_service();
+    expect(playback_frameskip == 3 && option_skip == 3, "skip down wraps to three");
+    for (unsigned i = 0; i < 5; ++i) {
+        next_action = UI_ACTION_FRAMESKIP_UP; gui_service();
+        expect(playback_frameskip == i % 4 && option_skip == i % 4, "skip cycles zero through three");
+    }
+    expect_trace("", "skip changes preserve current guest");
+
+    reset_case(UI_ACTION_SPEED_DOWN);
+    gui_service(); expect(playback_speed == 4 && option_speed == 4, "speed down wraps to four");
+    next_action = UI_ACTION_SPEED_DOWN; gui_service(); expect(playback_speed == 2, "speed down to two");
+    next_action = UI_ACTION_SPEED_DOWN; gui_service(); expect(playback_speed == 1, "speed down to normal");
+    const unsigned speeds[] = {2, 4, 1};
+    for (unsigned i = 0; i < 3; ++i) {
+        next_action = UI_ACTION_SPEED_UP; gui_service();
+        expect(playback_speed == speeds[i] && option_speed == speeds[i], "speed up cycle and readback");
+    }
+    expect_trace("", "speed changes do not save or restart");
+}
+
+static void test_input_and_idle(void)
+{
+    reset_case(UI_ACTION_NONE);
+    requested_keys = 0xf00;
+    board_keys = 3;
+    fixture_pad.keys = 0x050;
+    fixture_pad.key2 = 0x10; /* Independent wire bit: physical Y, not X (0x08). */
+    gui_service();
+    expect_trace("", "idle does no persistence or launch work");
+    expect(polled_keys == 0x353 && polled_menu && polled_ms == 123,
+           "UI merges three input sources, masks GBA bits and receives Y");
+    expect(paint_calls == 1 && poll_calls == 1 && status_connected,
+           "idle publishes connection and paints");
+    expect(gui_last_result == 17, "idle preserves last operation result");
+    fixture_pad.key2 = 0x08;
+    gui_service();
+    expect(!polled_menu, "physical X does not act as Y menu");
+    fixture_pad.key2 = 0x10; fixture_pad.connected = 0;
+    gui_service();
+    expect(!polled_menu, "disconnected Y is ignored");
+    fixture_pad.connected = 1; fixture_pad.data_valid = 0;
+    gui_service();
+    expect(!polled_menu, "Y without current data is ignored");
+    fixture_pad.data_valid = 1; fixture_pad.stale = 1;
+    gui_service();
+    expect(!polled_menu, "stale Y is ignored");
+
+    reset_case(UI_ACTION_EXIT);
+    gui_enabled = 0;
+    gui_service();
+    expect(!poll_calls && !paint_calls && !status_calls && !trace[0],
+           "disabled GUI does not consume input or actions");
+    reset_case(UI_ACTION_EXIT);
+    gui_showing = 0;
+    gui_service();
+    expect(!poll_calls && !paint_calls && !status_calls && !trace[0],
+           "hidden GUI does not consume game input");
+}
+
+int main(void)
+{
+    test_exit_and_switch();
+    test_launch();
+    test_save_resume_sound();
+    test_refresh();
+    test_reload_and_options();
+    test_input_and_idle();
+    if (failures) {
+        printf("handheld lifecycle regression: %u failure(s)\n", failures);
+        return 1;
+    }
+    puts("handheld lifecycle regression PASS: production service/run/unload, save-before-switch, failures, loaded state, release gate, Y input");
+    return 0;
+}
