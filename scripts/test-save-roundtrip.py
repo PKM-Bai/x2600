@@ -1,7 +1,7 @@
 """Verify native SRAM/FLASH/EEPROM saves on already booted, mounted firmware.
 
-Only the embedded /__save_*.gba diagnostics and their /GBA/SAVES/__save_*.sav
-files are used. No reset, boot-mode change, NOR write, or audible output is
+Only the embedded /__save_*.gba diagnostics and their __save_*.sav files under
+--save-dir (default /GBA/SAVES) are used. No reset, boot-mode change, NOR write, or audible output is
 requested. --verify-only checks persisted diagnostic saves without changing them.
 """
 
@@ -28,6 +28,25 @@ def _module(name, filename):
 _soak = _module("save_roundtrip_soak", "soak-regba.py")
 _roms = _module("save_roundtrip_roms", "make-save-test-roms.py")
 require = _soak.require
+
+
+def save_directory(value):
+    """验证单行绝对 TF 路径，容量包含最终 NUL 字节。"""
+    try:
+        encoded = value.encode("utf-8")
+    except UnicodeEncodeError as error:
+        raise argparse.ArgumentTypeError("存档目录必须为有效 UTF-8") from error
+    if not value.startswith("/") or any(char in value for char in ("\r", "\n", "\0")) or len(encoded) >= 512:
+        raise argparse.ArgumentTypeError("存档目录必须为单行绝对 TF 路径，小于 512 个 UTF-8 字节")
+    return value.rstrip("/") or "/"
+
+
+def native_save_path(args, name):
+    # 兼容既有本机 helper 中尚未提供 save_dir 的 Args。
+    directory = save_directory(getattr(args, "save_dir", "/GBA/SAVES"))
+    path = directory.rstrip("/") + "/" + name
+    save_directory(path)
+    return path
 
 
 class Console(_soak.Console):
@@ -192,7 +211,7 @@ def expected_crc(kind, choice, count):
 
 
 def check_card(console, kind, choice, count, args):
-    path = "/GBA/SAVES/__save_" + kind + ".sav"
+    path = native_save_path(args, "__save_" + kind + ".sav")
     size, crc = expected_crc(kind, choice, count)
     console.send("crc " + path)
     checked = console.wait(r"CRC32=([0-9a-fA-F]+) bytes=(\d+) " + re.escape(path),
@@ -206,7 +225,7 @@ def check_card(console, kind, choice, count, args):
 
 def wait_saved(console, kind, choice, count, baseline, args):
     size, crc = expected_crc(kind, choice, count)
-    path = "/GBA/SAVES/__save_" + kind + ".sav"
+    path = native_save_path(args, "__save_" + kind + ".sav")
 
     def finished(state):
         save = state["save"]
@@ -327,11 +346,18 @@ def main():
     parser.add_argument("--baud", type=int, default=115200)
     parser.add_argument("--kind", action="append", choices=_roms.KINDS)
     parser.add_argument("--verify-only", action="store_true")
+    parser.add_argument("--save-dir", type=save_directory, default="/GBA/SAVES",
+                        help="原生存档目录；mGBA 独立构建使用 /GBA/SAVES/mGBA")
     parser.add_argument("--load-timeout", type=float, default=60)
     parser.add_argument("--operation-timeout", type=float, default=30)
     parser.add_argument("--log", type=Path)
     parser.add_argument("--json", type=Path)
     args = parser.parse_args()
+    try:
+        for kind in args.kind or _roms.KINDS:
+            native_save_path(args, "__save_" + kind + ".sav")
+    except argparse.ArgumentTypeError as error:
+        parser.error(str(error))
     for name in ("load_timeout", "operation_timeout"):
         if not 0 < getattr(args, name) < float("inf"):
             parser.error("--" + name.replace("_", "-") + " must be finite and positive")
@@ -344,7 +370,7 @@ def main():
     uart.port, uart.baudrate, uart.timeout = args.port, args.baud, 0.1
     uart.dtr = uart.rts = False
     result = {"timestamp": datetime.now().astimezone().isoformat(), "verify_only": args.verify_only,
-              "pass": False, "port": args.port, "log": str(path)}
+              "pass": False, "port": args.port, "save_dir": args.save_dir, "log": str(path)}
     with path.open("ab") as output:
         console = Console(uart, output)
         try:

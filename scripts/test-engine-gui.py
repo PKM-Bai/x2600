@@ -8,6 +8,7 @@ switch：小 ROM、龙珠、32MiB ROM、小 ROM、退出，并包含 large 检�
 要求 GUI 已显示 --directory 对应的游戏库。测试不复制或修改 ROM、不复位、
 不操作 NOR、不播放测试音；商业游戏只运行启动场景并保存其当前原生状态，
 不声称验证了具体剧情进度。每次退出都尝试停止模拟和音频并保持静音。
+--save-dir 默认 /GBA/SAVES，mGBA 独立构建可指定 /GBA/SAVES/mGBA。
 """
 
 import argparse
@@ -340,7 +341,7 @@ def run_options(console, args, report):
         console.idle(0.2)
     m.require(saved["ui"].get("result") == 0 and saved["save"].get("last_result") == 0 and idle_save(saved),
               "manual GUI save did not complete cleanly")
-    save_path = "/GBA/SAVES/" + args.rom_name.rsplit(".", 1)[0] + ".sav"
+    save_path = m.native_save_path(args, args.rom_name.rsplit(".", 1)[0] + ".sav")
     m.require(saved["save"].get("path") == save_path, "save name lost its complete Chinese basename")
     cursor = len(console.observed)
     console.send("crc " + save_path)
@@ -486,7 +487,7 @@ def test_reload_kind(console, kind, args, report):
     require(saved["save"].get("queued") == boot["save"]["queued"] + 1 and
             saved["save"].get("last_result") == 0 and saved["save"].get("bytes") == size and
             saved["save"].get("crc32") == crc and
-            saved["save"].get("path") == "/GBA/SAVES/__save_" + kind + ".sav",
+            saved["save"].get("path") == m.native_save_path(args, "__save_" + kind + ".sav"),
             kind + " GUI saved image differs from guest A: " + repr(saved["save"]))
     report["card_A_after_save"] = m.check_card(console, kind, "A", baseline_count + 1, args)
     console.pulse(0x002)  # notice -> pause, resets selection to zero
@@ -586,7 +587,7 @@ def exit_game(console, args, step="exit-library"):
 def check_large_reload(console, args, report):
     before = console.pause("large-paused", args.operation_timeout)
     path = before["ui"]["path"]
-    save_path = "/GBA/SAVES/" + path.rsplit("/", 1)[1].rsplit(".", 1)[0] + ".sav"
+    save_path = m.native_save_path(args, path.rsplit("/", 1)[1].rsplit(".", 1)[0] + ".sav")
     original = console.crc(save_path, args.operation_timeout)
     require(original["bytes"] == 131072, "大 ROM 检查要求既有 128KiB Flash 原生存档")
     console.down(2)
@@ -669,6 +670,8 @@ def main():
     parser.add_argument("--port", default="COM52")
     parser.add_argument("--directory", default="/gba_game", help="GUI 当前显示的游戏目录")
     parser.add_argument("--rom-name", default="龙珠大冒险.gba")
+    parser.add_argument("--save-dir", type=m.save_directory, default="/GBA/SAVES",
+                        help="原生存档目录；mGBA 独立构建使用 /GBA/SAVES/mGBA")
     parser.add_argument("--kind", choices=tuple(m._roms.KINDS), action="append",
                         help="reload 模式可重复指定，默认三类全部检查")
     parser.add_argument("--load-timeout", type=float, default=180)
@@ -684,6 +687,12 @@ def main():
     path = args.directory.rstrip("/") + "/" + args.rom_name
     if not args.directory.startswith("/") or len(path.encode("utf-8")) >= 512:
         parser.error("需要绝对 TF 路径，组合 ROM 路径必须小于 512 个 UTF-8 字节")
+    try:
+        m.native_save_path(args, args.rom_name.rsplit(".", 1)[0] + ".sav")
+        for kind in args.kind or tuple(m._roms.KINDS):
+            m.native_save_path(args, "__save_" + kind + ".sav")
+    except argparse.ArgumentTypeError as error:
+        parser.error(str(error))
     prefix = ROOT / "build" / ("engine-gui-" + args.mode + "-" + datetime.now().strftime("%Y%m%d-%H%M%S-%f"))
     log_path = args.log or prefix.with_suffix(".log")
     json_path = args.json or log_path.with_suffix(".json")
@@ -692,6 +701,7 @@ def main():
     log_path.parent.mkdir(parents=True, exist_ok=True)
     json_path.parent.mkdir(parents=True, exist_ok=True)
     report = {"pass": False, "mode": args.mode, "port": args.port, "records": [], "notes": [],
+              "save_dir": args.save_dir,
               "started": datetime.now().astimezone().isoformat(), "log": str(log_path),
               "scope": "静音 GUI、原生存档文件及缓存重启；不验证具体剧情点恢复"}
     uart = serial.Serial(port=None, baudrate=115200, timeout=0.03, write_timeout=3)
