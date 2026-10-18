@@ -1,0 +1,159 @@
+{
+  "schema_version": 1,
+  "date": "2026-10-19",
+  "phase": 5,
+  "status": "SOFTWARE_PASS_BOARD_PENDING",
+  "software_gate_pass": true,
+  "full_phase_gate_pass": false,
+  "description": "mGBA 独立构建及生产适配层软件验收通过；实板验收尚未开始",
+  "mgba_version": "0.10.5",
+  "mgba_commit": "26b7884bc25a5933960f3cdcd98bac1ae14d42e2",
+  "default_engine": "regba",
+  "runtime_engine_switching": false,
+  "mgba_native_save_directory": "/GBA/SAVES/mGBA",
+  "regba_native_save_directory": "/GBA/SAVES",
+  "default_regba_release_debug_binaries_unchanged": true,
+  "artifacts": {
+    "regba-Release": {
+      "binary_bytes": 2308336,
+      "binary_sha256": "6d5a7e99a36c812776d7427c9ae3b2e8edf29666256f42ac1f3d57b8bfb378e6",
+      "heap_before_task_allocation_bytes": 46759936,
+      "entry": "0x80600000",
+      "crc32": "07c8de28",
+      "archive": "build/firmware-revisions/engine-stage5-final-20261019/regba-Release"
+    },
+    "regba-Debug": {
+      "binary_bytes": 2964528,
+      "binary_sha256": "06a1be117c26c3e235b33bda16ee24bd6615dc322a4692e51db3c9816db24554",
+      "heap_before_task_allocation_bytes": 46104576,
+      "entry": "0x80600000",
+      "crc32": "f59620b0",
+      "archive": "build/firmware-revisions/engine-stage5-final-20261019/regba-Debug"
+    },
+    "mgba-Release": {
+      "binary_bytes": 2386540,
+      "binary_sha256": "b13fa27e635421662e3ac0f92fd17c374c24d4892a7e4112ed381eb530341ab1",
+      "heap_before_task_allocation_bytes": 58155008,
+      "entry": "0x80600000",
+      "crc32": "3d64aa82",
+      "archive": "build/firmware-revisions/engine-stage5-final-20261019/mgba-Release"
+    },
+    "mgba-Debug": {
+      "binary_bytes": 2745100,
+      "binary_sha256": "d088ebbed89b697a481ec9d242427a5cdbecd5cce5c2899a8e2fccaff3d3146d",
+      "heap_before_task_allocation_bytes": 57794560,
+      "entry": "0x80600000",
+      "crc32": "9969b82e",
+      "archive": "build/firmware-revisions/engine-stage5-final-20261019/mgba-Debug"
+    }
+  },
+  "host_regression": {
+    "result": "PASS",
+    "log": "build/engine-stage5-host-final-20261019.log"
+  },
+  "mips_production_adapter": {
+    "result": "PASS",
+    "inputs": {
+      "adapter_sha256": "a780808061b84e97b43ff38008e99a97eee495c50e55ce5642cf4c809d39ca90",
+      "harness_sha256": "c80f5d1d5057b51f8d0ecf171f34f21b58b5cf7a0853bf7f23cdf4ffd1755a5f",
+      "library_sha256": "8a8aa6a602821e0d5e02b3f1f3c285328f763de6df864fd13522a737f3712e9a",
+      "test_resources_sha256": "311b3a3fb98595354374b3a7d3406e24a708d0a969cd960d4650010b9309f722"
+    },
+    "cases": {
+      "cpu": {
+        "result": "PASS",
+        "result_json": "build/mgba-adapter-sim-cpu/result.json",
+        "log": "build/mgba-adapter-sim-cpu/simulator.log",
+        "elf_sha256": "836d8cb304af7f0178aeeb40a05184b15fd30bc365bdd250ec9c7e59951c14c1",
+        "inputs_changed": []
+      },
+      "sram": {
+        "result": "PASS",
+        "result_json": "build/mgba-adapter-sim-sram/result.json",
+        "log": "build/mgba-adapter-sim-sram/simulator.log",
+        "elf_sha256": "f7e25643446ed069319bfc9f5db227dfe2f9fcfe42d9acb56bcacecb3e1347e7",
+        "inputs_changed": []
+      },
+      "flash": {
+        "result": "PASS",
+        "result_json": "build/mgba-adapter-sim-flash/result.json",
+        "log": "build/mgba-adapter-sim-flash/simulator.log",
+        "elf_sha256": "a86f7aaa9ed346158a85dea572730dc1f0b51b7369f47135282041e1f9d4bc94",
+        "inputs_changed": []
+      },
+      "eeprom": {
+        "result": "PASS",
+        "result_json": "build/mgba-adapter-sim-eeprom/result.json",
+        "log": "build/mgba-adapter-sim-eeprom/simulator.log",
+        "elf_sha256": "ca459d054f0c05fef0c9e2524e9404dfb807cd6e321e627b2fa5508bc7d2410e",
+        "inputs_changed": []
+      },
+      "mirror": {
+        "result": "PASS",
+        "result_json": "build/mgba-adapter-sim-mirror/result.json",
+        "log": "build/mgba-adapter-sim-mirror/simulator.log",
+        "elf_sha256": "283c346a1f7a54894f24761a92e282a7a330dd186cfc682198b8c0c39b4aaeea",
+        "inputs_changed": []
+      }
+    },
+    "scope": "真实适配层与内核，软件 host / 保存后台桩；没有 FreeRTOS 调度或 TF 实卡操作；宿主耗时不推算板上 FPS"
+  },
+  "cpu": {
+    "frames": 120,
+    "mailbox_expected": [
+      42,
+      55,
+      66,
+      77,
+      6,
+      24589
+    ],
+    "irq_count": 114,
+    "rgb555_crc32": "19b3e686",
+    "jit_supported": false
+  },
+  "native_save_cases": {
+    "sram": {
+      "bytes": 32768,
+      "saved_a_crc32": "5868628d"
+    },
+    "flash": {
+      "bytes": 65536,
+      "saved_a_crc32": "1c69ce88",
+      "native_upgrade_bytes": 131072
+    },
+    "eeprom": {
+      "bytes": 512,
+      "saved_a_crc32": "248d5c5d",
+      "native_upgrade_bytes": 8192
+    }
+  },
+  "native_save_checks": [
+    "完整 A/B/恢复 A",
+    "读取 I/O 失败保留 B 和 guest 帧状态",
+    "128KiB 预读内存直接移交及尾部 FF",
+    "正常重载和完整原生内容校验"
+  ],
+  "diagnostic_variants": {
+    "regba_default_rom_bytes_unchanged": true,
+    "mgba_eeprom": "DMA3 真实事务",
+    "mgba_flash": "擦除、逐字节编程和整段完成等待"
+  },
+  "one_mib_rom": {
+    "mapped_buffer_bytes": 4194304,
+    "copies": 4,
+    "source_crc32": "394f127d",
+    "execution_frames": 120
+  },
+  "engine_mismatch_negative_controls": "最终产物上两种反向混用均被身份检查拒绝",
+  "pending_board_checks": [
+    "实际游戏帧率和主核 CPU",
+    "运行内存、栈及卸载回收",
+    "32MiB ROM",
+    "三类 TF 原生存档保存和读取",
+    "LCD / 静音非零 PCM / DMA / TF 联合稳定性"
+  ],
+  "cross_engine_save_interchange_validated": false,
+  "nor_written_this_phase": false,
+  "board_firmware_loaded_this_phase": false
+}

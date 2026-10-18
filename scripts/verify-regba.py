@@ -11,6 +11,7 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument('--build', required=True, type=Path)
     p.add_argument('--prefix', required=True)
+    p.add_argument('--engine', choices=('regba', 'mgba'), default='regba')
     args = p.parse_args()
     suffix = '.exe' if Path(args.prefix + 'nm.exe').is_file() else ''
     elf = args.build / 'halley7m_regba.elf'
@@ -26,8 +27,14 @@ def main():
     for line in tool('nm', '-n').splitlines():
         match = re.match(r'^([0-9a-fA-F]+)\s+\w\s+(\S+)$', line)
         if match: symbols[match[2]] = int(match[1], 16)
-    required = ['_start', '__image_copy_end', '__heap_start', '__heap_end',
-                'readonly_code_cache', 'writable_code_cache', 'ReGBA_MakeCodeVisible']
+    required = ['_start', '__image_copy_end', '__heap_start', '__heap_end']
+    regba_symbols = ['readonly_code_cache', 'writable_code_cache', 'ReGBA_MakeCodeVisible']
+    if args.engine == 'regba':
+        required += regba_symbols
+    else:
+        required += ['mgba_adapter_backend', 'GBACoreCreate']
+        if any(name in symbols for name in regba_symbols):
+            raise RuntimeError('mGBA-only firmware retains ReGBA JIT symbols')
     if any(name not in symbols for name in required):
         raise RuntimeError('Expected linker/core symbols missing')
     if symbols['_start'] != 0x80600000 or symbols['__heap_end'] != 0x84000000:
@@ -41,7 +48,7 @@ def main():
         raise RuntimeError('Binary exceeds the NOR application partition')
     manifest = {
         'board': 'HALLEY7-M-KIT X2600M 64MiB DDR2',
-        'regba_commit': '7f379052dc14366e622a96c7cf7fb6b5a7e918a3',
+        'engine': args.engine,
         'binary': binary.name, 'binary_bytes': len(data),
         'binary_sha256': hashlib.sha256(data).hexdigest(),
         'entry': hex(symbols['_start']),
@@ -50,6 +57,10 @@ def main():
         'checks': 'ELF ABI/entry, no undefined symbols, NOR size, DDR bounds, disabled state buffers discarded',
         'hardware_validated': False,
     }
+    manifest[args.engine + '_commit'] = {
+        'regba': '7f379052dc14366e622a96c7cf7fb6b5a7e918a3',
+        'mgba': '26b7884bc25a5933960f3cdcd98bac1ae14d42e2',
+    }[args.engine]
     (args.build / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n', encoding='utf-8')
     print(f"Artifact verified: {len(data)} bytes; initial heap {manifest['heap_before_task_allocation_bytes']} bytes; hardware validation pending")
 

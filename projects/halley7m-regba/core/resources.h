@@ -6,6 +6,7 @@
 #define REGBA_ROM_DIR "/GBA/ROMS"
 #define REGBA_LEGACY_ROM_DIR "/gba_game"
 #define REGBA_SAVE_DIR "/GBA/SAVES"
+#define MGBA_SAVE_DIR "/GBA/SAVES/mGBA"
 #define REGBA_CONFIG_DIR "/GBA/CONFIG"
 #define REGBA_GAME_CONFIG_FILE "/GBA/CONFIG/game_config.txt"
 #define REGBA_BUILTIN_GAME_CONFIG_FILE "/__game_config.txt"

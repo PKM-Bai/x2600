@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [string]$ToolchainRoot,
-    [ValidateSet('Debug','Release')][string]$Configuration = 'Release'
+    [ValidateSet('Debug','Release')][string]$Configuration = 'Release',
+    [ValidateSet('regba','mgba')][string]$Engine = 'regba'
 )
 $ErrorActionPreference = 'Stop'
 if (-not $ToolchainRoot) { $ToolchainRoot = Join-Path $PSScriptRoot '..\toolchains\xburst2-windows' }
@@ -11,18 +12,20 @@ $compilers = @(Get-ChildItem -LiteralPath $ToolchainRoot -Recurse -File -Filter 
 if ($compilers.Count -ne 1) { throw 'Expected one official XBurst2 GCC; install toolchain first.' }
 $compiler = $compilers[0].FullName
 $prefix = ($compiler -replace 'gcc\.exe$', '') -replace '\\', '/'
-$buildDir = Join-Path $workspace "build\regba-$Configuration"
-& cmake -S (Join-Path $workspace 'projects\halley7m-regba') -B $buildDir -G Ninja "-DCMAKE_TOOLCHAIN_FILE=$workspace/cmake/xburst2-elf.cmake" "-DCROSS_COMPILE=$prefix" "-DCMAKE_BUILD_TYPE=$Configuration"
+$buildDir = Join-Path $workspace "build\$Engine-$Configuration"
+& cmake -S (Join-Path $workspace 'projects\halley7m-regba') -B $buildDir -G Ninja "-DCMAKE_TOOLCHAIN_FILE=$workspace/cmake/xburst2-elf.cmake" "-DCROSS_COMPILE=$prefix" "-DCMAKE_BUILD_TYPE=$Configuration" "-DEMU_ENGINE=$Engine"
 if ($LASTEXITCODE) { throw 'ReGBA CMake configuration failed.' }
 & cmake --build $buildDir --parallel 4
 if ($LASTEXITCODE) { throw 'ReGBA compilation failed.' }
-& python (Join-Path $workspace 'scripts\verify-regba.py') --build $buildDir --prefix $prefix
+& python (Join-Path $workspace 'scripts\verify-regba.py') --build $buildDir --prefix $prefix --engine $Engine
 if ($LASTEXITCODE) { throw 'ReGBA artifact verification failed.' }
 $sdRoot = Join-Path $workspace 'build\sdcard\GBA'
 foreach ($dir in @('ROMS','SAVES','BIOS','CONFIG')) {
     New-Item -ItemType Directory -Force -Path (Join-Path $sdRoot $dir) | Out-Null
 }
-Copy-Item -LiteralPath (Join-Path $workspace 'third_party\ReGBA\game_config.txt') -Destination (Join-Path $sdRoot 'CONFIG\game_config.txt')
+if ($Engine -eq 'regba') {
+    Copy-Item -LiteralPath (Join-Path $workspace 'third_party\ReGBA\game_config.txt') -Destination (Join-Path $sdRoot 'CONFIG\game_config.txt')
+}
 Copy-Item -LiteralPath (Join-Path $buildDir 'regba-core\x2600-selftest.gba') -Destination (Join-Path $sdRoot 'ROMS\x2600-selftest.gba')
 Get-Item -LiteralPath (Join-Path $buildDir 'halley7m_regba.bin') | Select-Object FullName,Length
 $hash = Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $buildDir 'halley7m_regba.bin')

@@ -140,6 +140,9 @@ static int prepare_dirs(void)
 {
     static const char *paths[] = {
         "/GBA", "/GBA/ROMS", "/GBA/SAVES", "/GBA/BIOS", "/GBA/CONFIG"
+#ifdef EMU_ENGINE_MGBA
+        , "/GBA/SAVES/mGBA"
+#endif
     };
     TCHAR path16[PATH_CAPACITY];
     for (unsigned i = 0; i < sizeof(paths) / sizeof(paths[0]); i++) {

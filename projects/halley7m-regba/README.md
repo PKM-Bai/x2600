@@ -10,6 +10,18 @@ git submodule update --init libbare-cpu third_party/ReGBA
 
 工具链使用官方 XBurst2 ELF R5.1.6，本机安装方式、Python 依赖和 CMake / Ninja 准备见仓库 README。可选的 `u-boot-ingenic` 子模块只在重编原启动器或复现早期 Hello 流程时初始化。代码按现有功能边界分组导入，集成提交之前的中间提交不保证独立构建，也不代表开发当时的历史快照。
 
+mGBA 独立版本固定为 0.10.5。保留上述两个公共依赖后额外执行：
+
+```powershell
+git submodule update --init third_party/mGBA
+.\scripts\build-regba.ps1 -Engine mgba
+.\scripts\build-regba.ps1 -Engine mgba -Configuration Debug
+```
+
+输出分别位于 `build/mgba-Release` 和 `build/mgba-Debug`，文件名继续为 `halley7m_regba.bin` / `.elf`，以复用现有 RAM 加载工具。此版本只链接 mGBA 的 GBA 解释器、软件渲染和音频核心，使用内置 HLE BIOS，原生存档在 `/GBA/SAVES/mGBA`；不读取 ReGBA 的 `game_config.txt` 或外部 BIOS。`test-save-roundtrip.py` 和 `test-engine-gui.py` 验证该版本时传 `--save-dir /GBA/SAVES/mGBA`。默认 ReGBA 的构建目录、存档目录和命令保持原样；具体软件及实板放行范围见[引擎分离实施记录](../../docs/ReGBA引擎分离实施记录.md)。
+
+纯软件检查使用 `python scripts/test-mgba-sim.py --mode cpu --timeout 360`，还可分别选择 `sram`、`flash`、`eeprom`、`mirror`。脚本编译真实适配层，使用已有官方 Linux 工具链的 MIPS 模拟器；Windows 下通过 WSL 执行，不打开开发板串口。Flash 模式可用 `--timeout 900` 留出模拟器执行时间。mGBA 的 EEPROM 诊断采用 DMA3 事务，Flash 诊断等待编程完成，二者保持相同邮箱与完整原生存档校验；默认 ReGBA 诊断不变。模拟器耗时不用于推算开发板帧率。
+
 本文保留阶段 0～7 及后续 GUI 各版记录。`build/` 中的原始日志、镜像、ROM / 存档及备份仅在开发机保留；在线摘要见 [docs/validation](../../docs/validation/)，其中的原始路径用于追溯。板级原理图 / BOM、工具链和 Cloner 需单独准备。
 
 当前 NOR 为 Release **2306352 字节 / CRC32 `178853ea`**，所有 GUI 页面（含游戏设置）继续使用 **GBA**。游戏中 Y 打开七项菜单：继续游戏、保存进度、读取存档、游戏设置、切换游戏、资源路径、退出游戏。“读取存档”确认后读取原生 `.sav` 并复用缓存 ROM 重启，再在游戏内选择继续游戏；读取失败保留当前 guest。进入菜单只等待在途保存，不新提交当前进度，显式保存 / 正常切换 / 退出仍完成同步。

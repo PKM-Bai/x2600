@@ -140,7 +140,93 @@ class _Arm:
         return struct.pack("<" + "I" * len(self.words), *self.words)
 
 
-def save_test_rom(kind):
+def _eeprom_dma(a):
+    """Use DMA3's actual transaction length to address a 512-byte EEPROM."""
+    tx, rx, device = 0x02001400, 0x02001600, 0x0DFFFF00
+    for reading in (True, False):
+        prefix = "eeprom_read" if reading else "eeprom_write"
+        a.label(prefix)
+        a.push(sum(1 << r for r in (4, 5, 6, 7, 14)))
+        a.mov_reg(6, 0)  # six-bit block address
+        a.mov_reg(5, 1)  # eight-byte payload
+        a.literal(4, tx)
+        a.mov(0, 1)
+        a.half(False, 0, 4, 2, post=True)
+        a.mov(0, int(reading))
+        a.half(False, 0, 4, 2, post=True)
+        a.mov(7, 5)
+        a.label(prefix + "_address")
+        a.mov_reg(0, 6, shift_type=1, shift_reg=7)
+        a.dp(0, 0, 0, 1, immediate=True)
+        a.half(False, 0, 4, 2, post=True)
+        a.sub(7, 7, 1, flags=True)
+        a.branch(prefix + "_address", cond=5)
+        if not reading:
+            a.mov(6, 8)
+            a.label(prefix + "_pack_byte")
+            a.mem(True, 2, 5, 1, byte=True, post=True)
+            a.mov(7, 8)
+            a.label(prefix + "_pack_bit")
+            a.mov_reg(0, 2, shift=7, shift_type=1)
+            a.dp(0, 0, 0, 1, immediate=True)
+            a.half(False, 0, 4, 2, post=True)
+            a.mov_reg(2, 2, shift=1)
+            a.sub(7, 7, 1, flags=True)
+            a.branch(prefix + "_pack_bit", cond=1)
+            a.sub(6, 6, 1, flags=True)
+            a.branch(prefix + "_pack_byte", cond=1)
+        a.mov(0, 0)  # final stop bit
+        a.half(False, 0, 4)
+        a.literal(0, tx)
+        a.literal(1, device)
+        # Enable immediate 16-bit DMA3, increment source, fixed destination.
+        a.literal(2, 0x80400000 | (9 if reading else 73))
+        a.branch("eeprom_dma_transfer", link=True)
+        if reading:
+            a.literal(0, device)
+            a.literal(1, rx)
+            # Four dummy bits and 64 data bits, fixed source, increment dest.
+            a.literal(2, 0x81000044)
+            a.branch("eeprom_dma_transfer", link=True)
+            a.literal(4, rx + 8)
+            a.mov(6, 8)
+            a.label(prefix + "_unpack_byte")
+            a.mov(2, 0)
+            a.mov(7, 8)
+            a.label(prefix + "_unpack_bit")
+            a.half(True, 0, 4, 2, post=True)
+            a.dp(0, 0, 0, 1, immediate=True)
+            a.mov_reg(2, 2, shift=1)
+            a.dp(12, 2, 2, 0)
+            a.sub(7, 7, 1, flags=True)
+            a.branch(prefix + "_unpack_bit", cond=1)
+            a.mem(False, 2, 5, 1, byte=True, post=True)
+            a.sub(6, 6, 1, flags=True)
+            a.branch(prefix + "_unpack_byte", cond=1)
+        else:
+            a.literal(4, device)
+            a.label(prefix + "_ready")
+            a.half(True, 0, 4)
+            a.dp(8, 0, 0, 1, immediate=True, flags=True)
+            a.branch(prefix + "_ready", cond=0)
+        a.pop(sum(1 << r for r in (4, 5, 6, 7, 15)))
+
+    a.label("eeprom_dma_transfer")
+    a.literal(3, 0x040000D4)  # DMA3 source/destination/count+control
+    a.mem(False, 0, 3)
+    a.mem(False, 1, 3, 4)
+    a.mem(False, 2, 3, 8)
+    # Allow the enable write to take effect before polling completion.
+    a.mov_reg(0, 0)
+    a.mov_reg(0, 0)
+    a.label("eeprom_dma_wait")
+    a.half(True, 0, 3, 10)
+    a.dp(8, 0, 0, 0x8000, immediate=True, flags=True)
+    a.branch("eeprom_dma_wait", cond=1)
+    a.ret()
+
+
+def save_test_rom(kind, *, eeprom_dma=False, flash_poll=False):
     """Create a 32KiB original diagnostic for sram, flash, or eeprom."""
     kind_id, capacity = KINDS[kind]
     a = _Arm()
@@ -359,6 +445,12 @@ def save_test_rom(kind):
         a.branch("flash_command", link=True)
         a.mov(0, 0x10)
         a.branch("flash_command", link=True)
+        if flash_poll:
+            a.literal(1, 0x0E000000)
+            a.label("flash_erase_ready")
+            a.mem(True, 0, 1, byte=True)
+            a.cmp(0, 0xFF)
+            a.branch("flash_erase_ready", cond=1)
         a.mov_reg(4, 9)
         a.literal(5, 0x0E000000)
         a.mov_reg(6, 10)
@@ -366,9 +458,26 @@ def save_test_rom(kind):
         a.mov(0, 0xA0)
         a.branch("flash_command", link=True)
         a.mem(True, 3, 4, 1, byte=True, post=True)
-        a.mem(False, 3, 5, 1, byte=True, post=True)
+        if flash_poll:
+            a.mem(False, 3, 5, byte=True)
+            a.label("flash_program_ready")
+            a.mem(True, 0, 5, byte=True)
+            a.cmp_reg(0, 3)
+            a.branch("flash_program_ready", cond=1)
+            a.add(5, 5, 1)
+        else:
+            a.mem(False, 3, 5, 1, byte=True, post=True)
         a.sub(6, 6, 1, flags=True)
         a.branch("write_flash_byte", cond=1)
+        if flash_poll:
+            # This core's Flash busy status remains attached to sector zero
+            # after chip erase. Check that sector before reading the image.
+            a.literal(1, 0x0E000000)
+            a.mem(True, 3, 9, byte=True)
+            a.label("flash_image_ready")
+            a.mem(True, 0, 1, byte=True)
+            a.cmp_reg(0, 3)
+            a.branch("flash_image_ready", cond=1)
         a.pop((1 << 4) | (1 << 5) | (1 << 6) | (1 << 15))
         a.label("flash_command")
         a.literal(1, 0x0E005555)
@@ -394,7 +503,9 @@ def save_test_rom(kind):
         a.branch("write_block", cond=1)
         a.pop((1 << 4) | (1 << 5) | (1 << 15))
 
-    if kind == "eeprom":
+    if kind == "eeprom" and eeprom_dma:
+        _eeprom_dma(a)
+    if kind == "eeprom" and not eeprom_dma:
         for reading in (True, False):
             prefix = "eeprom_read" if reading else "eeprom_write"
             a.label(prefix)
@@ -467,11 +578,15 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=Path("build/save-test-roms"))
     parser.add_argument("--kind", action="append", choices=KINDS)
+    parser.add_argument("--eeprom-dma", action="store_true",
+                        help="Use hardware DMA3 transactions for the EEPROM diagnostic only")
+    parser.add_argument("--flash-poll", action="store_true",
+                        help="Wait for Flash erase/program completion before continuing")
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     for kind in args.kind or KINDS:
         path = args.output / ("__save_" + kind + ".gba")
-        data = save_test_rom(kind)
+        data = save_test_rom(kind, eeprom_dma=args.eeprom_dma, flash_poll=args.flash_poll)
         path.write_bytes(data)
         print(f"{path}: {len(data)} byte ROM, {KINDS[kind][1]} byte battery image")
 

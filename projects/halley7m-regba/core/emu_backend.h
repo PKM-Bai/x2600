@@ -9,6 +9,7 @@
 enum { EMU_PATH_CAPACITY = 512 };
 
 typedef enum {
+    /* Native GBA layout: R bits 0..4, G 5..9, B 10..14; bit 15 ignored. */
     EMU_PIXELS_RGB555 = 0,
 } emu_pixel_format_t;
 

@@ -102,6 +102,10 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--source', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--eeprom-dma', action='store_true',
+                        help='Use the DMA3 EEPROM diagnostic for the mGBA backend')
+    parser.add_argument('--flash-poll', action='store_true',
+                        help='Poll Flash completion in the mGBA diagnostic ROM')
     args = parser.parse_args()
     pin = subprocess.check_output(['git', '-C', str(args.source), 'rev-parse', 'HEAD'], text=True).strip()
     if pin != PIN:
@@ -352,7 +356,8 @@ int regba_reload_backup(void)
     game_config = (args.source / 'game_config.txt').read_bytes()
     resources = [('selftest_rom', rom), ('openbios', bios),
                  ('bundled_game_config', game_config)]
-    resources += [(f'save_{kind}_rom', save_tests['save_test_rom'](kind))
+    resources += [(f'save_{kind}_rom', save_tests['save_test_rom'](
+                      kind, eeprom_dma=args.eeprom_dma, flash_poll=args.flash_poll))
                   for kind in save_tests['KINDS']]
     with (out / 'test_resources.h').open('w') as f:
         for name, data in resources:

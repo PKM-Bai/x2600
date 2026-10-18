@@ -6,6 +6,8 @@
 
 引擎接口抽取、ReGBA 适配层与公共会话分离，以及接入 mGBA 前的回归条件见[引擎分离实施记录](docs/ReGBA引擎分离实施记录.md)。该记录分别追溯源码、RAM 验收镜像和 NOR 已安装版本，并列出每阶段实际通过与待完成的检查。
 
+mGBA 使用单独的构建目录和存档目录。初始化 `third_party/mGBA` 后运行 `.\scripts\build-regba.ps1 -Engine mgba`；默认命令仍构建 ReGBA。此开关在编译时选择一个内核，当前不提供运行时双引擎切换。mGBA 的实际验收范围随后记录在引擎分离记录中，不能沿用 ReGBA 的板测结论。
+
 新电脑部署时，先克隆工程并初始化两项必要的固定版本源码依赖，再准备 XBurst2 ELF R5.1.6 工具链、CMake、Ninja 和 Python：
 
 ```powershell

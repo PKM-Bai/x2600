@@ -185,7 +185,11 @@ static void console_task(void *arg)
     result = battery_save_start();
     printf("save task=%d (native .sav, 2s idle autosave)\n", result);
     result = emu_engine_start();
+#ifdef EMU_ENGINE_MGBA
+    printf("mGBA task=%d\n", result);
+#else
     printf("ReGBA task=%d\n", result);
+#endif
     result = buttons_start();
     printf("buttons task=%d (SW6=Start PE13, SW3=A PE14, SW4=B PE15)\n", result);
     result = bt_gamepad_init();
@@ -225,7 +229,11 @@ int main(void)
 {
     platform_init();
     setvbuf(stdout, NULL, _IONBF, 0);
+#ifdef EMU_ENGINE_MGBA
+    puts("X2600M mGBA independent-engine bring-up; 64MiB DDR; J9 SSI0 TF; portrait MIPI; UART0 115200");
+#else
     puts("X2600M ReGBA stage0-5 bring-up; 64MiB DDR; J9 SSI0 TF; portrait MIPI; UART0 115200");
+#endif
     /* UART TX polls at 115200 baud. Share the core's priority so a long
      * status line cannot exclude the PCM producer for an entire audio ring.
      */

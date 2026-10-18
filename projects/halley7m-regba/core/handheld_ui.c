@@ -162,9 +162,15 @@ static void resources_page(void)
     view.screen = UI_RESOURCES;
     copy_text(view.title, sizeof(view.title), "资源路径");
     copy_text(view.subtitle, sizeof(view.subtitle), "TF / FAT32");
+#ifdef EMU_ENGINE_MGBA
+    const char *names[] = { "游戏目录", "旧版游戏目录", "游戏存档" };
+    const char *paths[] = {REGBA_ROM_DIR, REGBA_LEGACY_ROM_DIR, MGBA_SAVE_DIR};
+    view.item_count = view.total = 3;
+#else
     const char *names[] = { "游戏目录", "旧版游戏目录", "游戏存档", "可选 BIOS", "游戏配置" };
     const char *paths[] = {REGBA_ROM_DIR, REGBA_LEGACY_ROM_DIR, REGBA_SAVE_DIR, REGBA_BIOS_FILE, REGBA_GAME_CONFIG_FILE};
     view.item_count = view.total = 5;
+#endif
     view.first = view.selected = 0;
     view.error = 0;
     view.message[0] = 0;

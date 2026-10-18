@@ -9,3 +9,6 @@
 	url = http://git1.ingenic.com.cn:8082/gerrit/bootloader/u-boot
 	# build-uboot.sh applies the two versioned patches to this optional tree.
 	ignore = dirty
+[submodule "third_party/mGBA"]
+	path = third_party/mGBA
+	url = https://github.com/mgba-emu/mgba.git
