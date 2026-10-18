@@ -309,6 +309,8 @@ if ($LASTEXITCODE) { throw 'Audio volume host regression failed.' }
 if ($LASTEXITCODE) { throw 'Playback pacing/frameskip host regression failed.' }
 & (Join-Path $workspace '.venv\Scripts\python.exe') (Join-Path $workspace 'tests\console_utf8_test.py')
 if ($LASTEXITCODE) { throw 'Console UTF-8 host regression failed.' }
+& (Join-Path $workspace '.venv\Scripts\python.exe') (Join-Path $workspace 'tests\console_tool_utf8_test.py')
+if ($LASTEXITCODE) { throw 'Console tool UTF-8 path/command host regression failed.' }
 & (Join-Path $workspace '.venv\Scripts\python.exe') (Join-Path $workspace 'scripts\flash-regba-nor.py') --self-test
 if ($LASTEXITCODE) { throw 'NOR install workflow host regression failed.' }
 Write-Host "ReGBA host checks passed. Artifacts: $output"

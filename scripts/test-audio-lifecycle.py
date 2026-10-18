@@ -199,8 +199,12 @@ def main():
         parser.error("--load-timeout must be positive and at most 120 seconds")
     if not 0 < args.operation_timeout < float("inf"):
         parser.error("--operation-timeout must be finite and positive")
-    if not args.rom or not args.rom.isascii() or "\r" in args.rom or "\n" in args.rom or len(args.rom) > 500:
-        parser.error("--rom must be a single ASCII console path of 1..500 characters")
+    try:
+        rom_bytes = args.rom.encode("utf-8")
+    except UnicodeEncodeError:
+        parser.error("--rom must be a valid UTF-8 console path")
+    if not args.rom.strip() or "\r" in args.rom or "\n" in args.rom or len(rom_bytes) > 500:
+        parser.error("--rom must be a nonempty single-line UTF-8 path of at most 500 bytes")
     root = Path(__file__).resolve().parent.parent
     path = args.log or root / "build" / (
         "regba-audio-lifecycle-" + datetime.now().strftime("%Y%m%d-%H%M%S") + ".log")

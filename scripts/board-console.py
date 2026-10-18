@@ -22,6 +22,14 @@ def main():
     args = parser.parse_args()
     if args.duration <= 0:
         parser.error("--duration must be positive")
+    encoded_commands = []
+    for command in args.command:
+        if not command.strip() or "\r" in command or "\n" in command:
+            parser.error("Each --command must be a nonempty single line")
+        try:
+            encoded_commands.append(command.encode("utf-8"))
+        except UnicodeEncodeError:
+            parser.error("Each --command must be valid UTF-8 text")
     root = Path(__file__).resolve().parent.parent
     path = args.log or root / "build" / ("board-console-" + datetime.now().strftime("%Y%m%d-%H%M%S") + ".log")
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -58,11 +66,9 @@ def main():
 
         print(f"UART {args.port} {args.baud}; log={path}", flush=True)
         capture(0.2)
-        for command in args.command:
-            if "\r" in command or "\n" in command:
-                parser.error("Each --command must be one line")
+        for command, encoded in zip(args.command, encoded_commands):
             emit(f"\n[host command: {command}]\n".encode())
-            uart.write(command.encode("ascii") + b"\r")
+            uart.write(encoded + b"\r")
             uart.flush()
             capture(args.duration)
         if not args.command:

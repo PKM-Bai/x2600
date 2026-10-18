@@ -23,8 +23,11 @@ class Console:
         self.output.flush()
 
     def send(self, command):
+        if not command.strip() or "\r" in command or "\n" in command:
+            raise ValueError("Console commands must be nonempty single lines")
+        encoded = command.encode("utf-8")
         self.record(f"\n[host {datetime.now().isoformat(timespec='seconds')}: {command}]\n".encode())
-        self.uart.write(command.encode("utf-8") + b"\r")
+        self.uart.write(encoded + b"\r")
         self.uart.flush()
 
     def lines(self, seconds):
@@ -243,8 +246,12 @@ def main():
         parser.error("--duration must be finite and positive")
     if not 0 < args.load_timeout < float("inf"):
         parser.error("--load-timeout must be finite and positive")
-    if "\r" in args.rom or "\n" in args.rom or not args.rom.isascii() or len(args.rom) > 500:
-        parser.error("--rom must be a single ASCII console path of at most 500 characters")
+    try:
+        rom_bytes = args.rom.encode("utf-8")
+    except UnicodeEncodeError:
+        parser.error("--rom must be a valid UTF-8 console path")
+    if not args.rom.strip() or "\r" in args.rom or "\n" in args.rom or len(rom_bytes) > 500:
+        parser.error("--rom must be a nonempty single-line UTF-8 path of at most 500 bytes")
     root = Path(__file__).resolve().parent.parent
     path = args.log or root / "build" / ("regba-soak-" + datetime.now().strftime("%Y%m%d-%H%M%S") + ".log")
     path.parent.mkdir(parents=True, exist_ok=True)
