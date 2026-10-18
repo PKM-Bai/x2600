@@ -1,0 +1,216 @@
+/* Production native reload helper with independent guest/file boundaries. */
+#define _CRT_SECURE_NO_WARNINGS
+#include <errno.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#define MAX_PATH 512
+enum { BACKUP_NONE, BACKUP_SRAM, BACKUP_FLASH, BACKUP_EEPROM };
+enum { SRAM_SIZE_32KB=32, SRAM_SIZE_64KB=64,
+       FLASH_SIZE_64KB=64, FLASH_SIZE_128KB=128,
+       EEPROM_512_BYTE=512, EEPROM_8_KBYTE=8192,
+       CHANGED_PC_STATUS=63 };
+static struct {
+    uint32_t before;
+    uint8_t data[0x20000];
+    uint32_t after;
+} backup_guard;
+#define gamepak_backup backup_guard.data
+static uint8_t expected_backup[0x20000], stage[0x20000], old_guest[64], guest[64];
+static uint8_t rom[256], *gamepak_rom;
+static char CurrentGamePath[MAX_PATH], gamepak_title[13], gamepak_code[5], gamepak_maker[3];
+static uint32_t reg[64], backup_update, write_backup_delay;
+static bool IsGameLoaded, backup_dirty, save_in_flight;
+static uint32_t save_requested;
+static int backup_type, sram_size, flash_size, eeprom_size;
+static size_t fixture_size, allocation_size;
+static int fixture_result, fixture_busy, fixture_path, allocation_failure, config_override;
+static unsigned failures, read_calls, allocations, frees, live_allocations;
+static unsigned config_calls, rewind_calls, reset_calls, rom_reads, rom_unmaps;
+
+static void expect(int condition, const char *message)
+{
+    if (!condition) { printf("FAIL: %s\n", message); ++failures; }
+}
+
+static void *fixture_malloc(size_t size)
+{
+    ++allocations;
+    allocation_size = size;
+    expect(size == sizeof(stage), "bounded 128KiB temporary allocation");
+    if (allocation_failure) return NULL;
+    expect(!live_allocations, "one staging owner");
+    ++live_allocations;
+    memset(stage, 0xEE, sizeof(stage));
+    return stage;
+}
+
+static void fixture_free(void *pointer)
+{
+    expect(pointer == stage && live_allocations == 1, "free the owned temporary exactly once");
+    if (live_allocations) --live_allocations;
+    ++frees;
+}
+
+static int battery_save_busy(void) { return fixture_busy; }
+static bool ReGBA_GetBackupFilename(char *out, const char *path)
+{
+    expect(!strcmp(path, "/GBA/ROMS/current.gba"), "current mapped game's path used");
+    if (!fixture_path) return false;
+    strcpy(out, "/GBA/SAVES/current.sav");
+    return true;
+}
+
+static int battery_save_load(const char *path, void *data, size_t capacity, size_t *size)
+{
+    ++read_calls;
+    expect(!strcmp(path, "/GBA/SAVES/current.sav"), "read only this game's native save");
+    expect(data == stage && data != gamepak_backup, "read into staging, never live guest");
+    expect(capacity == sizeof(stage), "reader has exact staging capacity");
+    size_t amount = fixture_size < capacity ? fixture_size : capacity;
+    memcpy(data, expected_backup, amount);
+    *size = fixture_size;
+    return fixture_result;
+}
+
+static int32_t load_game_config(char *title, char *code, char *maker)
+{
+    ++config_calls;
+    expect(!strcmp(title, "CURRENT GAME") && !strcmp(code, "TEST") && !strcmp(maker, "01"),
+           "same game's compatibility identity retained");
+    expect(!memcmp(gamepak_backup, expected_backup, fixture_size), "apply image before compatibility override");
+    if (config_override) backup_type = BACKUP_FLASH;
+    return 0;
+}
+
+static void init_rewind(void) { ++rewind_calls; }
+static void reset_gba(void)
+{
+    ++reset_calls;
+    expect(config_calls == 1 && rewind_calls == 1, "reset only after compatibility and rewind init");
+    expect(!memcmp(gamepak_backup, expected_backup, fixture_size), "reset sees the selected save image");
+    memset(guest, 0, sizeof(guest));
+}
+
+/* If the production helper ever takes the normal ROM path, these trap it. */
+int load_gamepak(const char *path) { (void)path; ++rom_reads; return -1; }
+uint8_t *ReGBA_MapEntireROM(FILE *file, size_t size)
+{ (void)file; (void)size; ++rom_reads; return NULL; }
+void ReGBA_UnmapEntireROM(void *pointer) { (void)pointer; ++rom_unmaps; }
+
+#define malloc fixture_malloc
+#define free fixture_free
+@NATIVE_RELOAD_FUNCTION@
+#undef malloc
+#undef free
+
+static void setup(void)
+{
+    for (size_t i = 0; i < sizeof(expected_backup); ++i)
+        expected_backup[i] = (uint8_t)(i * 37u + 0x5Cu);
+    backup_guard.before = 0x10203040;
+    backup_guard.after = 0x50607080;
+    memset(gamepak_backup, 0xA5, sizeof(gamepak_backup));
+    memset(guest, 0x71, sizeof(guest));
+    memcpy(old_guest, guest, sizeof(guest));
+    memset(reg, 0x22, sizeof(reg));
+    gamepak_rom = rom;
+    strcpy(CurrentGamePath, "/GBA/ROMS/current.gba");
+    strcpy(gamepak_title, "CURRENT GAME"); strcpy(gamepak_code, "TEST"); strcpy(gamepak_maker, "01");
+    IsGameLoaded = true;
+    backup_type = BACKUP_FLASH; sram_size = SRAM_SIZE_64KB;
+    flash_size = FLASH_SIZE_128KB; eeprom_size = EEPROM_8_KBYTE;
+    backup_update = 3; write_backup_delay = 7;
+    backup_dirty = save_in_flight = true; save_requested = 1;
+    fixture_size = 0x8000; fixture_result = fixture_busy = allocation_failure = config_override = 0;
+    fixture_path = 1;
+    allocation_size = 0;
+    read_calls = allocations = frees = live_allocations = 0;
+    config_calls = rewind_calls = reset_calls = rom_reads = rom_unmaps = 0;
+}
+
+static void unchanged(void)
+{
+    for (size_t i = 0; i < sizeof(gamepak_backup); ++i)
+        if (gamepak_backup[i] != 0xA5) { expect(0, "failed read preserves all guest backup bytes"); break; }
+    expect(backup_type == BACKUP_FLASH && sram_size == SRAM_SIZE_64KB &&
+           flash_size == FLASH_SIZE_128KB && eeprom_size == EEPROM_8_KBYTE,
+           "failure preserves native type and all size state");
+    expect(!memcmp(guest, old_guest, sizeof(guest)) && reg[0] == 0x22222222 &&
+           reg[CHANGED_PC_STATUS] == 0x22222222, "failure preserves running CPU/guest state");
+    expect(backup_update == 3 && backup_dirty && save_in_flight && save_requested == 1,
+           "failure preserves dirty/pending markers");
+    expect(!config_calls && !rewind_calls && !reset_calls, "failed read never resets or changes config");
+}
+
+static void common(void)
+{
+    expect(gamepak_rom == rom && IsGameLoaded && !strcmp(CurrentGamePath, "/GBA/ROMS/current.gba"),
+           "current ROM mapping and path retained");
+    expect(!rom_reads && !rom_unmaps, "no ROM reopen/map/unmap on cached restart");
+    expect(!live_allocations && allocations == frees + (unsigned)allocation_failure,
+           "temporary buffer ownership released on every path");
+    expect(backup_guard.before == 0x10203040 && backup_guard.after == 0x50607080,
+           "backup bounds preserved");
+}
+
+int main(void)
+{
+    const int errors[] = {-ENOENT, -EIO, -EILSEQ};
+    for (unsigned i = 0; i < sizeof(errors) / sizeof(errors[0]); ++i) {
+        setup(); fixture_result = errors[i];
+        expect(regba_reload_backup() == (errors[i] == -EILSEQ ? -EINVAL : errors[i]),
+               "missing/read/bad-length error propagated before commit");
+        unchanged(); common();
+    }
+    const size_t invalid[] = {0, 1, 511, 513, 8193, 0x20001};
+    for (unsigned i = 0; i < sizeof(invalid) / sizeof(invalid[0]); ++i) {
+        setup(); fixture_size = invalid[i];
+        expect(regba_reload_backup() == -EINVAL, "unsupported staged size rejected");
+        unchanged(); common();
+    }
+    setup(); allocation_failure = 1;
+    expect(regba_reload_backup() == -ENOMEM && !read_calls, "allocation failure before reader");
+    unchanged(); common();
+    setup(); fixture_path = 0;
+    expect(regba_reload_backup() == -ENOTSUP && !allocations && !read_calls, "unsupported filename before allocation");
+    unchanged(); common();
+    setup(); fixture_busy = 1;
+    expect(regba_reload_backup() == -EBUSY && !read_calls, "unsettled writer cannot race the read");
+    unchanged(); common();
+    setup(); IsGameLoaded = false;
+    expect(regba_reload_backup() == -ENOENT && !read_calls && !allocations, "no loaded ROM has no reload target");
+    unchanged(); IsGameLoaded = true; common();
+
+    const size_t sizes[] = {0x200, 0x2000, 0x8000, 0x10000, 0x20000};
+    const int types[] = {BACKUP_EEPROM, BACKUP_EEPROM, BACKUP_SRAM, BACKUP_SRAM, BACKUP_FLASH};
+    for (unsigned i = 0; i < sizeof(sizes) / sizeof(sizes[0]); ++i) {
+        setup(); fixture_size = sizes[i];
+        expect(regba_reload_backup() == 0, "supported save reload succeeds");
+        expect(read_calls == 1 && allocations == 1 && frees == 1 && reset_calls == 1,
+               "one complete stage/read/commit/reset");
+        expect(backup_type == types[i] &&
+               sram_size == (i == 3 ? SRAM_SIZE_64KB : SRAM_SIZE_32KB) &&
+               flash_size == (i == 4 ? FLASH_SIZE_128KB : FLASH_SIZE_64KB) &&
+               eeprom_size == (i == 1 ? EEPROM_8_KBYTE : EEPROM_512_BYTE),
+               "same five-size boot inference and default sizes");
+        expect(!memcmp(gamepak_backup, expected_backup, fixture_size), "complete save image applied");
+        for (size_t j = fixture_size; j < sizeof(gamepak_backup); ++j)
+            if (gamepak_backup[j] != 0xFF) { expect(0, "unused backup tail erased"); break; }
+        expect(backup_update == write_backup_delay + 1 && reg[CHANGED_PC_STATUS] == 1,
+               "clean native marker and changed PC set before resume");
+        expect(backup_dirty && save_in_flight && save_requested == 1,
+               "caller-owned dirty state only cleared by successful core integration");
+        common();
+    }
+    setup(); fixture_size = 0x10000; config_override = 1;
+    expect(regba_reload_backup() == 0 && backup_type == BACKUP_FLASH,
+           "explicit compatibility type overrides ambiguous 64KiB inference");
+    common();
+    if (failures) return 1;
+    puts("PASS: production cached-ROM native reload; five save sizes/config override; failures retain guest/type/dirty; no ROM reread; staging freed");
+    return 0;
+}
