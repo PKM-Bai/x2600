@@ -1,0 +1,105 @@
+{
+  "schema_version": 1,
+  "date": "2026-10-18",
+  "phase": 0,
+  "status": "拆分前基线已记录，重构版回归尚未执行",
+  "source_commit": "144218b5645997f8ecf0d82d6cc20e6a8cb1d2bb",
+  "source_commit_title": "文档：约定阶段完成后使用中文提交并推送",
+  "dependencies": {
+    "libbare-cpu": "9500d2ec917a44d0d9657940e865e70f1a885849",
+    "third_party/ReGBA": "7f379052dc14366e622a96c7cf7fb6b5a7e918a3",
+    "u-boot-ingenic": "501177955aab5f844d52a0a8ea3802e704f9ceca"
+  },
+  "artifact_note": "以下字节数和 SHA256 已从本机 BIN 读取，与原版 manifest 一致；阶段 0 未重新构建，后续阶段产物须独立记录。",
+  "artifacts": {
+    "release": {
+      "path": "build/regba-Release/halley7m_regba.bin",
+      "archive_path": "build/firmware-revisions/gui-options-20261018-halley7m_regba.bin",
+      "manifest": "build/regba-Release/manifest.json",
+      "bytes": 2306352,
+      "sha256": "7517d55258594d485a86b4d7eecb1a8f32abf34674fcccf9727396a5f97e16eb",
+      "crc32": "178853ea",
+      "entry": "0x80600000",
+      "heap_start": "0x81367000",
+      "heap_end": "0x84000000",
+      "heap_before_task_allocation_bytes": 46764032
+    },
+    "debug": {
+      "path": "build/regba-Debug/halley7m_regba.bin",
+      "manifest": "build/regba-Debug/manifest.json",
+      "bytes": 2961200,
+      "sha256": "b722c10696029c53ba4f34e6a183fa785ffcb2f8b652dd4cd4045d07632bbe48",
+      "entry": "0x80600000",
+      "heap_start": "0x81407000",
+      "heap_end": "0x84000000",
+      "heap_before_task_allocation_bytes": 46108672
+    }
+  },
+  "baseline_validation": {
+    "summary": "docs/validation/gui-options-20261018-validation.json",
+    "local_archive_summary": "build/firmware-revisions/gui-options-20261018-validation.json",
+    "publication_host_regression": {
+      "log": "build/git-publication-host-tests-utf8-20261018.log",
+      "result": "通过",
+      "completion_record": "ReGBA host checks passed.",
+      "rerun_during_phase_0": false,
+      "scope": "现有生产代码的主机内存、临时文件、寄存器模型和内存卡回归；不访问真实开发板或 TF。"
+    },
+    "release_and_debug_builds": "拆分前通过",
+    "ram_gui_smoke": "拆分前通过",
+    "native_reload": {
+      "result": "拆分前通过",
+      "scenario": "保存 A 后产生未保存 B，经 GUI 读取恢复 A，并核对客体与卡上文件。",
+      "types": [
+        {"type": "SRAM", "bytes": 32768},
+        {"type": "Flash", "bytes": 65536},
+        {"type": "EEPROM", "bytes": 512}
+      ]
+    },
+    "large_rom": {
+      "result": "拆分前通过",
+      "rom_bytes": 33554432,
+      "save_bytes": 131072,
+      "save_crc32": "d5343e3a",
+      "load_seconds": 28.25817879999522,
+      "cached_reload_seconds": 0.32305629999609664,
+      "free_heap_bytes": 5522040
+    },
+    "manual_feedback": "菜单、音量、加速和声音恢复均正常",
+    "nor_install_and_software_reset_boot": "拆分前通过",
+    "cold_boot_on_this_image": "未验收",
+    "joint_30minute_soak_on_this_image": "未验收",
+    "commercial_game_story_checkpoint_restore": "未验收"
+  },
+  "historical_evidence": {
+    "h_soak_summary": "docs/validation/regba-H-soak-summary-20261018.json",
+    "result": "历史 H 版静音真实 PCM、LCD 和 TF 联合测试通过",
+    "host_seconds": 1800.188,
+    "substitutes_for_refactored_phase_4": false
+  },
+  "contracts": [
+    "打开菜单只 settle 已在途的保存，不新提交 dirty，保留读取旧存档的机会。",
+    "显式保存、正常停止、换游戏和退出执行 flush；失败保留当前 ROM 和未保存内存状态。",
+    "适配层持有并释放 ROM 缓冲及其文件；缓存原生读档不重读 ROM，失败保留 guest。",
+    "常驻音频任务和栈在首个大 ROM 分配前初始化，初始化无声。",
+    "ReGBA 首版保留 run 加帧边界回调，setjmp/longjmp 和 JIT 留在适配层。",
+    "接口明确视频格式与 stride 单位、PCM 采样率与声道、缓冲有效期及部分消费返回值。",
+    "输入释放门控、跳帧相位、每帧服务、倍速静音和 1× 恢复保持现有行为。",
+    "搬迁时同步生产函数提取测试和中文字库输入，保留原断言。",
+    "本轮板测先用 RAM，全程静音，不自动解除静音或播放测试音，不执行新的 NOR 写入。"
+  ],
+  "phase_4_gate": {
+    "status": "未执行重构版验收",
+    "required": [
+      "完整主机回归、Release/Debug 构建和产物校验",
+      "核心诊断、JIT 代码可见性和清缓存重译",
+      "小 ROM、test4、32MiB ROM、小 ROM、退出的资源回收",
+      "SRAM、Flash、EEPROM 保存和原生读档，A/B 回退及失败保留",
+      "中文 GUI、七项菜单、音量、跳帧、倍速和输入释放",
+      "静音真实非零 PCM 的普通与快速启停",
+      "30 分钟新镜像的 LCD、真实 PCM、TF 联合测试及保存与内存状态复核"
+    ],
+    "mgba_after_gate": true
+  },
+  "local_artifacts_note": "build 中原始日志、镜像、ROM、存档和备份仅保留开发机；本摘要可提交，不能将路径视为远程可下载产物。"
+}
