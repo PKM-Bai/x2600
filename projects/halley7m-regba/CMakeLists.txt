@@ -87,6 +87,7 @@ add_executable(halley7m_regba
     ${DISPLAY_GENERATED}/x2600_hal_lcd.c
     ${DISPLAY_GENERATED}/x2600_hal_mipi_dsi.c
     ${DISPLAY_GENERATED}/x2600_ll_mipi_dsi.c
+    core/emu_engine.c
     core/regba_core.c
     core/handheld_ui.c
     core/playback.c

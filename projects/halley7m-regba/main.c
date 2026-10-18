@@ -8,7 +8,7 @@
 #include "buttons.h"
 #include "bt_gamepad.h"
 #include "battery_save.h"
-#include "regba_core.h"
+#include "emu_engine.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -35,7 +35,7 @@ static void status(void)
            (unsigned long long)platform_time_us(), (unsigned long)xTaskGetTickCount(),
            (unsigned long)platform_free_heap(), (unsigned long)uxTaskGetNumberOfTasks(),
            (unsigned long)uxTaskGetStackHighWaterMark(NULL) * sizeof(StackType_t));
-    regba_core_status();
+    emu_engine_status();
     buttons_status();
     bt_gamepad_status();
     battery_save_status();
@@ -130,7 +130,7 @@ static void command(char *line)
     if (!strcmp(line, "help")) help();
     else if (!strcmp(line, "status")) status();
     else if (!strcmp(line, "buttons")) buttons_status();
-    else if (!strcmp(line, "menu") && !*arg) result = regba_core_menu();
+    else if (!strcmp(line, "menu") && !*arg) result = emu_engine_menu();
     else if (!strcmp(line, "btpad") && !*arg) bt_gamepad_status();
     else if (!strcmp(line, "cpu")) {
         char *end;
@@ -140,12 +140,12 @@ static void command(char *line)
     }
     else if (!strcmp(line, "ram-test")) result = runtime_memory_test();
     else if (!strcmp(line, "rtos-test")) result = runtime_selftest_start();
-    else if (!strcmp(line, "jit-test")) result = regba_jit_test();
-    else if (!strcmp(line, "core-test")) result = regba_core_selftest();
+    else if (!strcmp(line, "jit-test")) result = emu_engine_jit_test();
+    else if (!strcmp(line, "core-test")) result = emu_engine_selftest();
     else if (!strcmp(line, "lcd") && !strcmp(arg, "diag")) video_diagnostics();
     else if (!strcmp(line, "lcd") && (!strcmp(arg, "on") ||
              !strcmp(arg, "off") || !strcmp(arg, "test") || !strcmp(arg, "vpg")))
-        result = regba_core_video(!strcmp(arg, "off") ? 0 : !strcmp(arg, "on") ? 1 :
+        result = emu_engine_video(!strcmp(arg, "off") ? 0 : !strcmp(arg, "on") ? 1 :
                                  !strcmp(arg, "vpg") ? 3 : 2);
     else if (!strcmp(line, "mount")) result = storage_mount();
     else if (!strcmp(line, "tf-probe") && !*arg) result = storage_tf_probe();
@@ -156,23 +156,23 @@ static void command(char *line)
         result = storage_crc32(arg, &crc, &bytes);
         if (!result) printf("CRC32=%08lx bytes=%lu %s\n", (unsigned long)crc, (unsigned long)bytes, arg);
     } else if (!strcmp(line, "rwtest")) result = storage_write_test();
-    else if (!strcmp(line, "load") && *arg) result = regba_core_load(arg);
+    else if (!strcmp(line, "load") && *arg) result = emu_engine_load(arg);
     else if (!strcmp(line, "run") && *arg) {
         char *end;
         unsigned long frames = strtoul(arg, &end, 10);
-        if (*end) result = -1; else result = regba_core_run(frames);
-    } else if (!strcmp(line, "stop")) regba_core_stop();
+        if (*end) result = -1; else result = emu_engine_run(frames);
+    } else if (!strcmp(line, "stop")) emu_engine_stop();
     else if (!strcmp(line, "keys") && *arg) {
         char *end;
         unsigned long keys = strtoul(arg, &end, 16);
-        if (*end || keys > 0x3FF) result = -1; else regba_core_keys(keys);
+        if (*end || keys > 0x3FF) result = -1; else emu_engine_keys(keys);
     } else if (!strcmp(line, "audio") && (!strcmp(arg, "on") ||
                !strcmp(arg, "off") || !strcmp(arg, "silent"))) {
         if (strcmp(arg, "off")) audio_set_muted(!strcmp(arg, "silent"));
-        regba_core_audio(strcmp(arg, "off") != 0);
+        emu_engine_audio(strcmp(arg, "off") != 0);
     }
-    else if (!strcmp(line, "tone")) result = regba_core_tone();
-    else if (!strcmp(line, "save")) result = regba_core_save();
+    else if (!strcmp(line, "tone")) result = emu_engine_tone();
+    else if (!strcmp(line, "save")) result = emu_engine_save();
     else { puts("Unknown command/argument; type help"); return; }
     if (result) printf("result=%d\n", result);
 }
@@ -184,14 +184,14 @@ static void console_task(void *arg)
     printf("filesystem task=%d\n", result);
     result = battery_save_start();
     printf("save task=%d (native .sav, 2s idle autosave)\n", result);
-    result = regba_core_start();
+    result = emu_engine_start();
     printf("ReGBA task=%d\n", result);
     result = buttons_start();
     printf("buttons task=%d (SW6=Start PE13, SW3=A PE14, SW4=B PE15)\n", result);
     result = bt_gamepad_init();
     printf("btpad init=%d (UART2 RX=PD12, J10 pin 2, 115200 8N1)\n", result);
     help();
-    result = regba_core_menu();
+    result = emu_engine_menu();
     printf("game library start=%d\n", result);
     char line[544];
     size_t length = 0;
