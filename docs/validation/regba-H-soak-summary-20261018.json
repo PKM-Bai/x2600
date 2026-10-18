@@ -1,0 +1,441 @@
+{
+  "schema_version": 1,
+  "result": "PASS",
+  "source_log": "build/regba-H-save-audio-soak-20261018-30min.log",
+  "source_bytes": 45753,
+  "source_sha256": "222f5a50974c93ee8dbe3125a31ff284596fde4d620d59d9e1e502c5ff41279f",
+  "formal_interval": {
+    "definition": "First complete running status after run warm-up through final running status before stop; pre-soak cumulative counters and post-stop tail excluded.",
+    "all_status_samples": 35,
+    "complete_status_samples": 35,
+    "running_status_samples": 31,
+    "initial": {
+      "sample_number": 4,
+      "clock_line": 47,
+      "host_annotation": "[host 2026-10-18T00:23:09: status]",
+      "clock": {
+        "time_us": 417363015,
+        "tick": 417289,
+        "heap_free": 26157688,
+        "tasks": 8,
+        "console_stack_free": 12296
+      },
+      "core": {
+        "running": 1,
+        "frames": 134,
+        "crc": "9b78d475",
+        "keys": 0,
+        "audio_requested": 1,
+        "serial_keys": 0,
+        "board_keys": 0,
+        "audio_max_call_gap_us": 16879,
+        "audio_gap_native": 2516,
+        "audio_gap_pending": 149
+      },
+      "stack": {
+        "min_unused": "160280/245760",
+        "last_sp": "8124a148",
+        "translation_depth": 0,
+        "peak": 8,
+        "min_unused_bytes": 160280,
+        "allocated_bytes": 245760
+      },
+      "save": {
+        "queued": 1,
+        "completed": 1,
+        "errors": 0,
+        "busy": 0,
+        "bytes": 32768,
+        "last_result": 0,
+        "path": "/GBA/SAVES/test4.sav"
+      },
+      "lcd": {
+        "active": 1,
+        "vblank": 10854,
+        "presented": 7224,
+        "skipped": 7016,
+        "underrun": 0,
+        "blit_us": 920,
+        "max_us": 3750,
+        "allocated": 7372800
+      },
+      "audio": {
+        "running": 1,
+        "muted": 1,
+        "rate": 44100,
+        "queued": 2760,
+        "in": 97792,
+        "out": 106440,
+        "DMA_done": 216,
+        "queue_under": 0,
+        "FIFO_under": 0,
+        "errors": 0,
+        "timeouts": 0,
+        "nonzero": 87049,
+        "peak": 25744
+      },
+      "audio_timing": {
+        "max_ready_gap_us": 17052,
+        "underrun_ready_gap_us": 0,
+        "max_dma_restart_us": 5,
+        "first_queue_underrun_us": 0,
+        "last_ready_periods": 4,
+        "last_ready_active": 1,
+        "last_ready_dma_age_us": 1338,
+        "first_under_ready_periods": 0,
+        "first_under_active": 0,
+        "first_under_dma_age_us": 0,
+        "first_fifo_underrun_us": 0,
+        "first_fifo_completed_periods": 0
+      }
+    },
+    "final_before_stop": {
+      "sample_number": 34,
+      "clock_line": 435,
+      "host_annotation": "[host 2026-10-18T00:53:09: status]",
+      "clock": {
+        "time_us": 2217517990,
+        "tick": 2217144,
+        "heap_free": 26157688,
+        "tasks": 8,
+        "console_stack_free": 12296
+      },
+      "core": {
+        "running": 1,
+        "frames": 107653,
+        "crc": "5eca8699",
+        "keys": 0,
+        "audio_requested": 1,
+        "serial_keys": 0,
+        "board_keys": 0,
+        "audio_max_call_gap_us": 18681,
+        "audio_gap_native": 2536,
+        "audio_gap_pending": 183
+      },
+      "stack": {
+        "min_unused": "160280/245760",
+        "last_sp": "8124a148",
+        "translation_depth": 0,
+        "peak": 8,
+        "min_unused_bytes": 160280,
+        "allocated_bytes": 245760
+      },
+      "save": {
+        "queued": 1,
+        "completed": 1,
+        "errors": 0,
+        "busy": 0,
+        "bytes": 32768,
+        "last_result": 0,
+        "path": "/GBA/SAVES/test4.sav"
+      },
+      "lcd": {
+        "active": 1,
+        "vblank": 65348,
+        "presented": 61719,
+        "skipped": 60040,
+        "underrun": 0,
+        "blit_us": 1995,
+        "max_us": 3750,
+        "allocated": 7372800
+      },
+      "audio": {
+        "running": 1,
+        "muted": 1,
+        "rate": 44100,
+        "queued": 2847,
+        "in": 79484928,
+        "out": 86514207,
+        "DMA_done": 180232,
+        "queue_under": 0,
+        "FIFO_under": 0,
+        "errors": 0,
+        "timeouts": 0,
+        "nonzero": 75479641,
+        "peak": 29088
+      },
+      "audio_timing": {
+        "max_ready_gap_us": 18813,
+        "underrun_ready_gap_us": 0,
+        "max_dma_restart_us": 7,
+        "first_queue_underrun_us": 0,
+        "last_ready_periods": 4,
+        "last_ready_active": 1,
+        "last_ready_dma_age_us": 472,
+        "first_under_ready_periods": 0,
+        "first_under_active": 0,
+        "first_under_dma_age_us": 0,
+        "first_fifo_underrun_us": 0,
+        "first_fifo_completed_periods": 0
+      }
+    },
+    "excluded_preparation": {
+      "sample_count": 3,
+      "sample_numbers": [
+        1,
+        2,
+        3
+      ],
+      "clock_lines": [
+        4,
+        19,
+        31
+      ]
+    },
+    "excluded_post_stop": {
+      "sample_count": 1,
+      "sample_number": 35,
+      "clock_line": 455,
+      "core_frames": 107660,
+      "audio_dma_completions": 180244,
+      "tail_frames_excluded": 7,
+      "tail_dma_completions_excluded": 12,
+      "core_running": 0,
+      "audio_running": 0,
+      "muted": 1
+    }
+  },
+  "elapsed": {
+    "requested_seconds": 1800.0,
+    "board_microseconds": 1800154975,
+    "board_seconds": 1800.154975,
+    "host_reported_seconds": 1800.188,
+    "host_reported_resolution_seconds": 0.001,
+    "board_minus_host_seconds": -0.033025000000179716,
+    "host_minus_board_seconds": 0.033025000000179716,
+    "absolute_difference_seconds": 0.033025000000179716,
+    "absolute_difference_percent": 0.001834530615701233,
+    "rtos_tick_delta": 1799855,
+    "rtos_tick_seconds_at_1000hz": 1799.855,
+    "note": "Board duration uses status OST timestamps; host duration is the rounded monotonic result reported by soak-regba.py. Their difference also includes status timestamp/readout timing and is not an oscillator calibration.",
+    "host_pass_record": {
+      "line": 465,
+      "text": "[host SOAK 30min PASS: actual=1800.188s; requested=1800s]"
+    }
+  },
+  "counters_and_rates": {
+    "gba_frames": {
+      "initial": 134,
+      "final": 107653,
+      "delta": 107519,
+      "per_board_second": 59.72763539428043
+    },
+    "lcd_vblank": {
+      "initial": 10854,
+      "final": 65348,
+      "delta": 54494,
+      "per_board_second": 30.27183812327047
+    },
+    "lcd_presented": {
+      "initial": 7224,
+      "final": 61719,
+      "delta": 54495,
+      "per_board_second": 30.272393630998355
+    },
+    "lcd_skipped": {
+      "initial": 7016,
+      "final": 60040,
+      "delta": 53024,
+      "per_board_second": 29.455241763282075
+    },
+    "audio_dma_completions": {
+      "initial": 216,
+      "final": 180232,
+      "delta": 180016,
+      "per_board_second": 100.00027914263326
+    },
+    "audio_pcm_in": {
+      "initial": 97792,
+      "final": 79484928,
+      "delta": 79387136,
+      "per_board_second": 44100.1675425195
+    },
+    "audio_pcm_out": {
+      "initial": 106440,
+      "final": 86514207,
+      "delta": 86407767,
+      "per_board_second": 48000.182317636296
+    },
+    "audio_nonzero": {
+      "initial": 87049,
+      "final": 75479641,
+      "delta": 75392592,
+      "per_board_second": 41881.16748114979
+    }
+  },
+  "running_error_counter_ranges": {
+    "audio.queue_under": {
+      "min": 0,
+      "max": 0
+    },
+    "audio.FIFO_under": {
+      "min": 0,
+      "max": 0
+    },
+    "audio.errors": {
+      "min": 0,
+      "max": 0
+    },
+    "audio.timeouts": {
+      "min": 0,
+      "max": 0
+    },
+    "lcd.underrun": {
+      "min": 0,
+      "max": 0
+    },
+    "save.errors": {
+      "min": 0,
+      "max": 0
+    }
+  },
+  "running_underrun_diagnostic_ranges": {
+    "underrun_ready_gap_us": {
+      "min": 0,
+      "max": 0
+    },
+    "first_queue_underrun_us": {
+      "min": 0,
+      "max": 0
+    },
+    "first_under_ready_periods": {
+      "min": 0,
+      "max": 0
+    },
+    "first_under_active": {
+      "min": 0,
+      "max": 0
+    },
+    "first_under_dma_age_us": {
+      "min": 0,
+      "max": 0
+    },
+    "first_fifo_underrun_us": {
+      "min": 0,
+      "max": 0
+    },
+    "first_fifo_completed_periods": {
+      "min": 0,
+      "max": 0
+    }
+  },
+  "running_state_ranges": {
+    "core.running": {
+      "min": 1,
+      "max": 1
+    },
+    "core.audio_requested": {
+      "min": 1,
+      "max": 1
+    },
+    "audio.running": {
+      "min": 1,
+      "max": 1
+    },
+    "audio.muted": {
+      "min": 1,
+      "max": 1
+    },
+    "lcd.active": {
+      "min": 1,
+      "max": 1
+    }
+  },
+  "memory": {
+    "heap_free_bytes": {
+      "min": 26157688,
+      "max": 26157688
+    },
+    "heap_free_final_minus_initial_bytes": 0,
+    "core_stack_min_remaining_watermark_bytes": {
+      "min": 160280,
+      "max": 160280
+    },
+    "core_stack_allocated_bytes": {
+      "min": 245760,
+      "max": 245760
+    },
+    "console_stack_free_bytes": {
+      "min": 12296,
+      "max": 12296
+    },
+    "task_count": {
+      "min": 8,
+      "max": 8
+    }
+  },
+  "native_save_activity": {
+    "queued": {
+      "initial": 1,
+      "final": 1,
+      "delta": 0
+    },
+    "completed": {
+      "initial": 1,
+      "final": 1,
+      "delta": 0
+    },
+    "errors": {
+      "min": 0,
+      "max": 0
+    },
+    "note": "The completed native-save job predates this soak; no new save job completed inside the formal interval. Separate native-save/readback validation is not counted as a soak operation."
+  },
+  "tf": {
+    "new_write_readback_count": 5,
+    "new_write_readback_files": [
+      {
+        "line": 107,
+        "path": "/GBA/TEST/SDTEST14.BIN",
+        "bytes": 131072,
+        "crc32": "29df376d"
+      },
+      {
+        "line": 171,
+        "path": "/GBA/TEST/SDTEST15.BIN",
+        "bytes": 131072,
+        "crc32": "29df376d"
+      },
+      {
+        "line": 239,
+        "path": "/GBA/TEST/SDTEST16.BIN",
+        "bytes": 131072,
+        "crc32": "29df376d"
+      },
+      {
+        "line": 303,
+        "path": "/GBA/TEST/SDTEST17.BIN",
+        "bytes": 131072,
+        "crc32": "29df376d"
+      },
+      {
+        "line": 371,
+        "path": "/GBA/TEST/SDTEST18.BIN",
+        "bytes": 131072,
+        "crc32": "29df376d"
+      }
+    ],
+    "persistent_crc_read_count": 2,
+    "persistent_crc_reads": [
+      {
+        "line": 175,
+        "path": "/GBA/TEST/SDTEST00.BIN",
+        "bytes": 131072,
+        "crc32": "29df376d"
+      },
+      {
+        "line": 307,
+        "path": "/GBA/TEST/SDTEST00.BIN",
+        "bytes": 131072,
+        "crc32": "29df376d"
+      }
+    ],
+    "new_test_payload_bytes_written": 655360,
+    "verified_test_payload_bytes_read": 917504,
+    "note": "Payload totals exclude filesystem metadata and other I/O."
+  },
+  "log_error_diagnostic_count": 0,
+  "log_error_diagnostics": [],
+  "issues": [],
+  "scope_note": "One completed 30-minute silent test4 game/LCD/PCM-DMA/TF soak on the retained H RAM image; this result does not establish every historical TF failure had one cause."
+}

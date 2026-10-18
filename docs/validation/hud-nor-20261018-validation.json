@@ -1,0 +1,521 @@
+{
+  "board": "HALLEY7-M-KIT X2600M 64MiB DDR2",
+  "date": "2026-10-18",
+  "binary_bytes": 915536,
+  "binary_sha256": "71e4e75d6b20fe6bf1bb5655d324387507e07e9bab345a00badfa2268ac371c4",
+  "binary_crc32": "3d721f71",
+  "release_initial_heap": 48156672,
+  "debug": {
+    "board": "HALLEY7-M-KIT X2600M 64MiB DDR2",
+    "regba_commit": "7f379052dc14366e622a96c7cf7fb6b5a7e918a3",
+    "binary": "halley7m_regba.bin",
+    "binary_bytes": 1567328,
+    "binary_sha256": "531ed42efd97316e85cd676bdc91ab78f56eec626d4691d958c77f5eeebb3a5f",
+    "entry": "0x80600000",
+    "heap_start": "0x812b3000",
+    "heap_end": "0x84000000",
+    "heap_before_task_allocation_bytes": 47501312,
+    "checks": "ELF ABI/entry, no undefined symbols, NOR size, DDR bounds, disabled state buffers discarded",
+    "hardware_validated": false
+  },
+  "host_regression_log": "build/hud-nor-host-final-20261018.log",
+  "nor_model_final_log": "build/hud-nor-flash-host-final-20261018.log",
+  "ram_smoke": {
+    "pass": true,
+    "log": "build/hud-ram-20261018.log",
+    "results": {
+      "profile": {
+        "window_us": 5000829,
+        "busy_pct": 9.57,
+        "idle_pct": 90.43,
+        "accounted_pct": 100.0,
+        "task_count": 8,
+        "tasks": [
+          {
+            "name": "console",
+            "priority": 3,
+            "runtime_us": 491,
+            "cpu_pct": 0.0,
+            "stack_free_bytes": 12288
+          },
+          {
+            "name": "ReGBA",
+            "priority": 3,
+            "runtime_us": 474315,
+            "cpu_pct": 9.48,
+            "stack_free_bytes": 159672
+          },
+          {
+            "name": "IDLE",
+            "priority": 0,
+            "runtime_us": 4522539,
+            "cpu_pct": 90.43,
+            "stack_free_bytes": 1544
+          },
+          {
+            "name": "audio",
+            "priority": 6,
+            "runtime_us": 2223,
+            "cpu_pct": 0.04,
+            "stack_free_bytes": 3512
+          },
+          {
+            "name": "buttons",
+            "priority": 4,
+            "runtime_us": 1265,
+            "cpu_pct": 0.02,
+            "stack_free_bytes": 2504
+          },
+          {
+            "name": "filesystem",
+            "priority": 3,
+            "runtime_us": 0,
+            "cpu_pct": 0.0,
+            "stack_free_bytes": 12536
+          },
+          {
+            "name": "Tmr Svc",
+            "priority": 2,
+            "runtime_us": 0,
+            "cpu_pct": 0.0,
+            "stack_free_bytes": 2512
+          },
+          {
+            "name": "battery_save",
+            "priority": 2,
+            "runtime_us": 0,
+            "cpu_pct": 0.0,
+            "stack_free_bytes": 7640
+          }
+        ],
+        "host_seconds": 5.070105100021465
+      },
+      "observed_fps": 59.62922774073212,
+      "rwtest": "/GBA/TEST/SDTEST29.BIN"
+    }
+  },
+  "nor_install": {
+    "status": "programmed_and_verified",
+    "offset": 262144,
+    "bytes": 915536,
+    "erase_bytes": 917504,
+    "crc32": "3d721f71",
+    "sha256": "71e4e75d6b20fe6bf1bb5655d324387507e07e9bab345a00badfa2268ac371c4",
+    "bootcmd": "sfcnor read 0x40000 0xdf850 0x80600000;go 0x80600000",
+    "environment_crc_verified": true,
+    "bootloader_prefix_crc32": "3a3c3918",
+    "rootfs_crc32": "8618c73f",
+    "original_backup": "E:\\GitProject\\X2600\\build\\nor-backups\\20261016T024011Z\\nor-original.bin",
+    "original_backup_sha256": "5efd956157cf88fc8a55dd3695f75b216e184a9fa15bee00149680c740077926",
+    "cold_boot_verified": false,
+    "program_log": "build/flash-regba-nor-20261018-resume.log",
+    "verification_log": "build/flash-regba-nor-20261018-verify.log"
+  },
+  "nor_automatic_reset_boot": {
+    "pass": true,
+    "log": "build/flash-regba-nor-20261018-verify.log"
+  },
+  "nor_boot_smoke": {
+    "pass": true,
+    "log": "build/hud-nor-boot-20261018.log",
+    "results": {
+      "profile": {
+        "window_us": 5000833,
+        "busy_pct": 9.57,
+        "idle_pct": 90.43,
+        "accounted_pct": 100.0,
+        "task_count": 8,
+        "tasks": [
+          {
+            "name": "console",
+            "priority": 3,
+            "runtime_us": 489,
+            "cpu_pct": 0.0,
+            "stack_free_bytes": 12288
+          },
+          {
+            "name": "ReGBA",
+            "priority": 3,
+            "runtime_us": 474153,
+            "cpu_pct": 9.48,
+            "stack_free_bytes": 159672
+          },
+          {
+            "name": "IDLE",
+            "priority": 0,
+            "runtime_us": 4522656,
+            "cpu_pct": 90.43,
+            "stack_free_bytes": 1544
+          },
+          {
+            "name": "audio",
+            "priority": 6,
+            "runtime_us": 2232,
+            "cpu_pct": 0.04,
+            "stack_free_bytes": 3512
+          },
+          {
+            "name": "buttons",
+            "priority": 4,
+            "runtime_us": 1303,
+            "cpu_pct": 0.02,
+            "stack_free_bytes": 2504
+          },
+          {
+            "name": "filesystem",
+            "priority": 3,
+            "runtime_us": 0,
+            "cpu_pct": 0.0,
+            "stack_free_bytes": 12536
+          },
+          {
+            "name": "Tmr Svc",
+            "priority": 2,
+            "runtime_us": 0,
+            "cpu_pct": 0.0,
+            "stack_free_bytes": 2512
+          },
+          {
+            "name": "battery_save",
+            "priority": 2,
+            "runtime_us": 0,
+            "cpu_pct": 0.0,
+            "stack_free_bytes": 7640
+          }
+        ],
+        "host_seconds": 5.068618800025433
+      },
+      "observed_fps": 59.84185791681183,
+      "rwtest": "/GBA/TEST/SDTEST30.BIN"
+    }
+  },
+  "cold_boot_verified": true,
+  "manual_hud_confirmed": true,
+  "cpu_definition": "whole-system non-Idle runtime share, percent",
+  "fps_definition": "completed GBA emulation frames per wall second, independent of 30Hz LCD presentation",
+  "hud_location": "top black border, rows320..383",
+  "hud_period_ms": 1000,
+  "scope_limits": [
+    "current-version 30-minute soak not repeated",
+    "actual in-game save-point restore not verified in this round"
+  ],
+  "new_nor_boot_stream_observed": true,
+  "cold_boot_log": "build/hud-nor-cold-20261018.log",
+  "manual_play_samples": {
+    "log": "build/hud-nor-cold-status-20261018.log",
+    "records": [
+      {
+        "clock": {
+          "time_us": "196357239",
+          "tick": "196320",
+          "heap_free": "26083960",
+          "tasks": "8",
+          "console_stack_free": "12288"
+        },
+        "ui": {
+          "enabled": "1",
+          "showing": "0",
+          "page": "3",
+          "loaded": "1",
+          "result": "0",
+          "path": "/gba_game/test4.gba"
+        },
+        "core": {
+          "running": "1",
+          "frames": "7069",
+          "crc": "9410fba7",
+          "keys": "080",
+          "audio_requested": "1",
+          "serial_keys": "000",
+          "board_keys": "000",
+          "bt_keys": "080",
+          "audio_max_call_gap_us": "55588",
+          "audio_gap_native": "2559",
+          "audio_gap_pending": "210"
+        },
+        "stats": {
+          "running": "1",
+          "valid": "1",
+          "cpu_pct": "15.2",
+          "fps": "59.8",
+          "window_ms": "1003",
+          "window_frames": "60"
+        },
+        "btpad": {
+          "initialized": "1",
+          "connected": "1",
+          "data_valid": "1",
+          "keys": "082",
+          "stale": "0",
+          "timeout_ms": "0",
+          "x_right_sign": "1",
+          "y_up_sign": "1",
+          "axis_verified": "1"
+        },
+        "rx": {
+          "bytes": "69868",
+          "data_frames": "4656",
+          "link_frames": "4",
+          "checksum_errors": "0",
+          "length_errors": "0",
+          "ignored_frames": "0",
+          "resyncs": "0",
+          "uart_errors": "1",
+          "last_gap_ms": "13",
+          "max_gap_ms": "28580",
+          "data_age_ms": "10"
+        },
+        "save": {
+          "queued": "0",
+          "completed": "0",
+          "errors": "0",
+          "busy": "0",
+          "bytes": "0",
+          "crc32": "00000000",
+          "last_result": "0",
+          "path": "-"
+        },
+        "lcd": {
+          "active": "1",
+          "vblank": "5914",
+          "presented": "3711",
+          "skipped": "3518",
+          "underrun": "0",
+          "blit_us": "1292",
+          "max_us": "20592",
+          "allocated": "7372800"
+        },
+        "audio": {
+          "running": "1",
+          "muted": "0",
+          "rate": "44100",
+          "queued": "2400",
+          "in": "5217472",
+          "out": "5678880",
+          "DMA_done": "11826",
+          "queue_under": "1",
+          "FIFO_under": "1",
+          "errors": "0",
+          "timeouts": "0",
+          "nonzero": "4738463",
+          "peak": "32768"
+        }
+      },
+      {
+        "clock": {
+          "time_us": "201406080",
+          "tick": "201368",
+          "heap_free": "26083960",
+          "tasks": "8",
+          "console_stack_free": "12288"
+        },
+        "ui": {
+          "enabled": "1",
+          "showing": "0",
+          "page": "3",
+          "loaded": "1",
+          "result": "0",
+          "path": "/gba_game/test4.gba"
+        },
+        "core": {
+          "running": "1",
+          "frames": "7371",
+          "crc": "4f2ddb40",
+          "keys": "082",
+          "audio_requested": "1",
+          "serial_keys": "000",
+          "board_keys": "000",
+          "bt_keys": "082",
+          "audio_max_call_gap_us": "55588",
+          "audio_gap_native": "2559",
+          "audio_gap_pending": "210"
+        },
+        "stats": {
+          "running": "1",
+          "valid": "1",
+          "cpu_pct": "13.5",
+          "fps": "59.8",
+          "window_ms": "1002",
+          "window_frames": "60"
+        },
+        "btpad": {
+          "initialized": "1",
+          "connected": "1",
+          "data_valid": "1",
+          "keys": "082",
+          "stale": "0",
+          "timeout_ms": "0",
+          "x_right_sign": "1",
+          "y_up_sign": "1",
+          "axis_verified": "1"
+        },
+        "rx": {
+          "bytes": "74428",
+          "data_frames": "4960",
+          "link_frames": "4",
+          "checksum_errors": "0",
+          "length_errors": "0",
+          "ignored_frames": "0",
+          "resyncs": "0",
+          "uart_errors": "1",
+          "last_gap_ms": "15",
+          "max_gap_ms": "28580",
+          "data_age_ms": "18"
+        },
+        "save": {
+          "queued": "0",
+          "completed": "0",
+          "errors": "0",
+          "busy": "0",
+          "bytes": "0",
+          "crc32": "00000000",
+          "last_result": "0",
+          "path": "-"
+        },
+        "lcd": {
+          "active": "1",
+          "vblank": "6067",
+          "presented": "3864",
+          "skipped": "3667",
+          "underrun": "0",
+          "blit_us": "2071",
+          "max_us": "20592",
+          "allocated": "7372800"
+        },
+        "audio": {
+          "running": "1",
+          "muted": "0",
+          "rate": "44100",
+          "queued": "2400",
+          "in": "5439736",
+          "out": "5920800",
+          "DMA_done": "12330",
+          "queue_under": "1",
+          "FIFO_under": "1",
+          "errors": "0",
+          "timeouts": "0",
+          "nonzero": "4958001",
+          "peak": "32768"
+        }
+      },
+      {
+        "clock": {
+          "time_us": "206457922",
+          "tick": "206419",
+          "heap_free": "26083960",
+          "tasks": "8",
+          "console_stack_free": "12288"
+        },
+        "ui": {
+          "enabled": "1",
+          "showing": "0",
+          "page": "3",
+          "loaded": "1",
+          "result": "0",
+          "path": "/gba_game/test4.gba"
+        },
+        "core": {
+          "running": "1",
+          "frames": "7673",
+          "crc": "4d1f469a",
+          "keys": "010",
+          "audio_requested": "1",
+          "serial_keys": "000",
+          "board_keys": "000",
+          "bt_keys": "010",
+          "audio_max_call_gap_us": "55588",
+          "audio_gap_native": "2559",
+          "audio_gap_pending": "210"
+        },
+        "stats": {
+          "running": "1",
+          "valid": "1",
+          "cpu_pct": "16.0",
+          "fps": "59.8",
+          "window_ms": "1002",
+          "window_frames": "60"
+        },
+        "btpad": {
+          "initialized": "1",
+          "connected": "1",
+          "data_valid": "1",
+          "keys": "010",
+          "stale": "0",
+          "timeout_ms": "0",
+          "x_right_sign": "1",
+          "y_up_sign": "1",
+          "axis_verified": "1"
+        },
+        "rx": {
+          "bytes": "78073",
+          "data_frames": "5203",
+          "link_frames": "4",
+          "checksum_errors": "0",
+          "length_errors": "0",
+          "ignored_frames": "0",
+          "resyncs": "0",
+          "uart_errors": "1",
+          "last_gap_ms": "15",
+          "max_gap_ms": "28580",
+          "data_age_ms": "29"
+        },
+        "save": {
+          "queued": "0",
+          "completed": "0",
+          "errors": "0",
+          "busy": "0",
+          "bytes": "0",
+          "crc32": "00000000",
+          "last_result": "0",
+          "path": "-"
+        },
+        "lcd": {
+          "active": "1",
+          "vblank": "6220",
+          "presented": "4017",
+          "skipped": "3816",
+          "underrun": "0",
+          "blit_us": "2037",
+          "max_us": "20592",
+          "allocated": "7372800"
+        },
+        "audio": {
+          "running": "1",
+          "muted": "0",
+          "rate": "44100",
+          "queued": "2400",
+          "in": "5662882",
+          "out": "6163680",
+          "DMA_done": "12836",
+          "queue_under": "1",
+          "FIFO_under": "1",
+          "errors": "0",
+          "timeouts": "0",
+          "nonzero": "5180938",
+          "peak": "32768"
+        }
+      }
+    ],
+    "note": "User confirmed actual power cycle, readable CPU/FPS, normal game and controller. The composite cold monitor stopped on one pre-connection UART error; three later physical-play samples show stable UART=1 and audio underrun counters=1/1, not cleared or treated as zero."
+  },
+  "observed_manual_play_counters": {
+    "uart_errors": 1,
+    "uart_error_before_first_data": true,
+    "audio_queue_underruns": 1,
+    "audio_fifo_underruns": 1,
+    "audio_dma_errors": 0,
+    "audio_timeouts": 0,
+    "lcd_underruns": 0,
+    "stable_across_three_followup_samples": true
+  },
+  "status": "requested_features_complete",
+  "manual_controller_confirmed": true,
+  "user_confirmation": "已断电上电，CPU/FPS 显示清晰，游戏和手柄正常",
+  "final_state": {
+    "rom": "/gba_game/test4.gba",
+    "running": true,
+    "audio_enabled": true,
+    "com52_released": true,
+    "boot_source": "NOR through original SPL/U-Boot"
+  }
+}

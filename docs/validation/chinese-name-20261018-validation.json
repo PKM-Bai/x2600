@@ -1,0 +1,1546 @@
+{
+  "board": "HALLEY7-M-KIT X2600M 64MiB DDR2",
+  "date": "2026-10-18",
+  "binary_bytes": 2301840,
+  "binary_crc32": "a85324e3",
+  "binary_sha256": "edfe5e456b8ebd14581bf58b60843bc26cbd68b17ec2186579aac2ac1acc3819",
+  "release_initial_heap": 46768128,
+  "debug": {
+    "board": "HALLEY7-M-KIT X2600M 64MiB DDR2",
+    "regba_commit": "7f379052dc14366e622a96c7cf7fb6b5a7e918a3",
+    "binary": "halley7m_regba.bin",
+    "binary_bytes": 2955712,
+    "binary_sha256": "572142a1e14cedcf43b3ce7abe2af1aacb4df70f0bd5dc72280d5cebc5b39786",
+    "entry": "0x80600000",
+    "heap_start": "0x81406000",
+    "heap_end": "0x84000000",
+    "heap_before_task_allocation_bytes": 46112768,
+    "checks": "ELF ABI/entry, no undefined symbols, NOR size, DDR bounds, disabled state buffers discarded",
+    "hardware_validated": false
+  },
+  "host_regression_log": "build/chinese-name-host-20261018.log",
+  "nor_model_final_log": "build/chinese-name-nor-host-20261018.log",
+  "ram_upload": {
+    "crc_and_length_verified": true,
+    "application_started": true,
+    "log": "build/ramload-chinese-name-20261018.log",
+    "user_confirmed_chinese_rom_names": true,
+    "user_feedback": "RAM 加载的固件显示游戏列表，游戏文件确实都变成了中文显示，没有问题。",
+    "automated_smoke_completed": false,
+    "interruption": "User disconnected board power after visually checking the list; COM52 disappeared during the first automated status read. The board then booted the previous NOR image.",
+    "interrupted_log": "build/chinese-name-ram-20261018.log"
+  },
+  "font": {
+    "source": "third_party/ReGBA/source/tools/unifont.hex.gz",
+    "bmp_glyphs": 34869
+  },
+  "application_paths": "UTF-8; strict UTF-16 conversion only in the single FatFs owner",
+  "filename_limit_utf8_bytes": 255,
+  "storage_path_limit_utf8_bytes": 512,
+  "rom_entry_path_limit_utf8_bytes": 511,
+  "user_acceptance": {
+    "date": "2026-10-18",
+    "feedback": "正常",
+    "physical_power_cycle_confirmed": true,
+    "chinese_rom_list_confirmed": true,
+    "chinese_loading_title_confirmed": true,
+    "dragon_ball_game_picture_confirmed": true
+  },
+  "requested_filename_fix_complete": true,
+  "nor_install": {
+    "log": "build/flash-chinese-name-20261018.log",
+    "results": {
+      "status": "programmed_and_verified",
+      "offset": 262144,
+      "bytes": 2301840,
+      "erase_bytes": 2326528,
+      "crc32": "a85324e3",
+      "sha256": "edfe5e456b8ebd14581bf58b60843bc26cbd68b17ec2186579aac2ac1acc3819",
+      "bootcmd": "sfcnor read 0x40000 0x231f90 0x80600000;go 0x80600000",
+      "previous_bytes": 915536,
+      "previous_crc32": "3d721f71",
+      "previous_sha256": "71e4e75d6b20fe6bf1bb5655d324387507e07e9bab345a00badfa2268ac371c4",
+      "environment_crc_verified": true,
+      "bootloader_prefix_crc32": "3a3c3918",
+      "rootfs_crc32": "8618c73f",
+      "original_backup": "E:\\GitProject\\X2600\\build\\nor-backups\\20261016T024011Z\\nor-original.bin",
+      "original_backup_sha256": "5efd956157cf88fc8a55dd3695f75b216e184a9fa15bee00149680c740077926",
+      "cold_boot_verified": false
+    }
+  },
+  "nor_smoke": {
+    "log": "build/chinese-name-nor-20261018.log",
+    "results": {
+      "pass": true,
+      "inventory": [
+        {
+          "directory": false,
+          "bytes": 19030368,
+          "name": "火焰纹章 - 烈火之剑[CGP](简)(JP)(145.19Mb).gba"
+        },
+        {
+          "directory": false,
+          "bytes": 8518208,
+          "name": "口袋妖怪 - 蓝宝石[Elite&口袋妖怪网](386)(简)(JP)(64.98Mb).gba"
+        },
+        {
+          "directory": false,
+          "bytes": 9382468,
+          "name": "逆转裁判[CGP](简)(JP)(71.58Mb).gba"
+        },
+        {
+          "directory": false,
+          "bytes": 10144316,
+          "name": "逆转裁判2[CGP](简)(JP)(77.39Mb).gba"
+        },
+        {
+          "directory": false,
+          "bytes": 9482992,
+          "name": "逆转裁判3[星组](简)(JP)(72.34Mb).gba"
+        },
+        {
+          "directory": false,
+          "bytes": 16777216,
+          "name": "赛尔达传说 - 缩小帽[CGP](简)(JP)(128Mb).gba"
+        },
+        {
+          "directory": false,
+          "bytes": 33554432,
+          "name": "口袋妖怪究极绿宝石-v5.4.gba"
+        },
+        {
+          "directory": false,
+          "bytes": 14357872,
+          "name": "龙珠大冒险.gba"
+        }
+      ],
+      "checks": [
+        {
+          "path": "/GBA/SAVES/龙珠大冒险.sav",
+          "bytes": 32768,
+          "crc32": "a2d2225d"
+        },
+        {
+          "path": "/GBA/SAVES/龙珠大冒险.sav",
+          "bytes": 32768,
+          "crc32": "a2d2225d"
+        },
+        {
+          "path": "/GBA/SAVES/龙珠大冒险.sav.bak",
+          "bytes": 32768,
+          "crc32": "a2d2225d"
+        }
+      ],
+      "records": [
+        {
+          "clock": {
+            "time_us": 190344240,
+            "tick": 190309,
+            "heap_free": 29676152,
+            "tasks": 8,
+            "console_stack_free": 12288
+          },
+          "ui": {
+            "enabled": 1,
+            "showing": 0,
+            "page": 3,
+            "loaded": 1,
+            "result": 0,
+            "path": "/gba_game/逆转裁判[CGP](简)(JP)(71.58Mb).gba"
+          },
+          "core": {
+            "running": 1,
+            "frames": 4677,
+            "crc": 3468598874,
+            "keys": 0,
+            "audio_requested": 1,
+            "serial_keys": 0,
+            "board_keys": 0,
+            "bt_keys": 0,
+            "audio_max_call_gap_us": 20685,
+            "audio_gap_native": 965,
+            "audio_gap_pending": 0
+          },
+          "backup": {
+            "dirty": 0,
+            "in_flight": 0,
+            "requested": 0,
+            "autosave_idle_ms": 2000
+          },
+          "stats": {
+            "running": 1,
+            "valid": 1,
+            "cpu_pct": "11.3",
+            "fps": "59.8",
+            "window_ms": 1003,
+            "window_frames": 60
+          },
+          "rx": {
+            "bytes": 0,
+            "data_frames": 0,
+            "link_frames": 0,
+            "checksum_errors": 0,
+            "length_errors": 0,
+            "ignored_frames": 0,
+            "resyncs": 0,
+            "uart_errors": 0,
+            "last_gap_ms": 0,
+            "max_gap_ms": 0,
+            "data_age_ms": 4294967295
+          },
+          "save": {
+            "queued": 0,
+            "completed": 0,
+            "errors": 0,
+            "busy": 0,
+            "bytes": 0,
+            "crc32": 0,
+            "last_result": 0,
+            "path": "-"
+          },
+          "lcd": {
+            "active": 1,
+            "vblank": 5732,
+            "presented": 2450,
+            "skipped": 2323,
+            "underrun": 0,
+            "blit_us": 970,
+            "max_us": 20621,
+            "allocated": 7372800
+          },
+          "audio": {
+            "running": 1,
+            "muted": 0,
+            "rate": 44100,
+            "queued": 2880,
+            "in": 3451708,
+            "out": 3756960,
+            "DMA_done": 7821,
+            "queue_under": 0,
+            "FIFO_under": 0,
+            "errors": 0,
+            "timeouts": 0,
+            "nonzero": 0,
+            "peak": 0
+          }
+        },
+        {
+          "clock": {
+            "time_us": 191044351,
+            "tick": 191009,
+            "heap_free": 29676152,
+            "tasks": 8,
+            "console_stack_free": 12288
+          },
+          "ui": {
+            "enabled": 1,
+            "showing": 1,
+            "page": 1,
+            "loaded": 1,
+            "result": 0,
+            "path": "/gba_game/逆转裁判[CGP](简)(JP)(71.58Mb).gba"
+          },
+          "core": {
+            "running": 0,
+            "frames": 4688,
+            "crc": 1830116832,
+            "keys": 0,
+            "audio_requested": 1,
+            "serial_keys": 0,
+            "board_keys": 0,
+            "bt_keys": 0,
+            "audio_max_call_gap_us": 20685,
+            "audio_gap_native": 965,
+            "audio_gap_pending": 0
+          },
+          "backup": {
+            "dirty": 0,
+            "in_flight": 0,
+            "requested": 0,
+            "autosave_idle_ms": 2000
+          },
+          "stats": {
+            "running": 0,
+            "valid": 1,
+            "cpu_pct": "11.3",
+            "fps": "59.8",
+            "window_ms": 1003,
+            "window_frames": 60
+          },
+          "rx": {
+            "bytes": 0,
+            "data_frames": 0,
+            "link_frames": 0,
+            "checksum_errors": 0,
+            "length_errors": 0,
+            "ignored_frames": 0,
+            "resyncs": 0,
+            "uart_errors": 0,
+            "last_gap_ms": 0,
+            "max_gap_ms": 0,
+            "data_age_ms": 4294967295
+          },
+          "save": {
+            "queued": 0,
+            "completed": 0,
+            "errors": 0,
+            "busy": 0,
+            "bytes": 0,
+            "crc32": 0,
+            "last_result": 0,
+            "path": "-"
+          },
+          "lcd": {
+            "active": 1,
+            "vblank": 5754,
+            "presented": 2453,
+            "skipped": 2326,
+            "underrun": 0,
+            "blit_us": 3868,
+            "max_us": 20621,
+            "allocated": 7372800
+          },
+          "audio": {
+            "running": 0,
+            "muted": 0,
+            "rate": 44100,
+            "queued": 0,
+            "in": 3460087,
+            "out": 3766080,
+            "DMA_done": 7841,
+            "queue_under": 0,
+            "FIFO_under": 0,
+            "errors": 0,
+            "timeouts": 0,
+            "nonzero": 0,
+            "peak": 0
+          }
+        },
+        {
+          "clock": {
+            "time_us": 193125697,
+            "tick": 193090,
+            "heap_free": 39081608,
+            "tasks": 8,
+            "console_stack_free": 12288
+          },
+          "ui": {
+            "enabled": 1,
+            "showing": 1,
+            "page": 0,
+            "loaded": 0,
+            "result": 0,
+            "path": "-"
+          },
+          "core": {
+            "running": 0,
+            "frames": 4688,
+            "crc": 1830116832,
+            "keys": 0,
+            "audio_requested": 1,
+            "serial_keys": 0,
+            "board_keys": 0,
+            "bt_keys": 0,
+            "audio_max_call_gap_us": 20685,
+            "audio_gap_native": 965,
+            "audio_gap_pending": 0
+          },
+          "backup": {
+            "dirty": 0,
+            "in_flight": 0,
+            "requested": 0,
+            "autosave_idle_ms": 2000
+          },
+          "stats": {
+            "running": 0,
+            "valid": 1,
+            "cpu_pct": "11.3",
+            "fps": "59.8",
+            "window_ms": 1003,
+            "window_frames": 60
+          },
+          "rx": {
+            "bytes": 0,
+            "data_frames": 0,
+            "link_frames": 0,
+            "checksum_errors": 0,
+            "length_errors": 0,
+            "ignored_frames": 0,
+            "resyncs": 0,
+            "uart_errors": 0,
+            "last_gap_ms": 0,
+            "max_gap_ms": 0,
+            "data_age_ms": 4294967295
+          },
+          "save": {
+            "queued": 0,
+            "completed": 0,
+            "errors": 0,
+            "busy": 0,
+            "bytes": 0,
+            "crc32": 0,
+            "last_result": 0,
+            "path": "-"
+          },
+          "lcd": {
+            "active": 1,
+            "vblank": 5816,
+            "presented": 2460,
+            "skipped": 2327,
+            "underrun": 0,
+            "blit_us": 4678,
+            "max_us": 20621,
+            "allocated": 7372800
+          },
+          "audio": {
+            "running": 0,
+            "muted": 0,
+            "rate": 44100,
+            "queued": 0,
+            "in": 3460087,
+            "out": 3766080,
+            "DMA_done": 7841,
+            "queue_under": 0,
+            "FIFO_under": 0,
+            "errors": 0,
+            "timeouts": 0,
+            "nonzero": 0,
+            "peak": 0
+          }
+        },
+        {
+          "clock": {
+            "time_us": 212799983,
+            "tick": 212761,
+            "heap_free": 24695416,
+            "tasks": 8,
+            "console_stack_free": 12288
+          },
+          "ui": {
+            "enabled": 1,
+            "showing": 0,
+            "page": 3,
+            "loaded": 1,
+            "result": 0,
+            "path": "/gba_game/龙珠大冒险.gba"
+          },
+          "core": {
+            "running": 1,
+            "frames": 224,
+            "crc": 901377804,
+            "keys": 0,
+            "audio_requested": 1,
+            "serial_keys": 0,
+            "board_keys": 0,
+            "bt_keys": 0,
+            "audio_max_call_gap_us": 20688,
+            "audio_gap_native": 965,
+            "audio_gap_pending": 0
+          },
+          "backup": {
+            "dirty": 0,
+            "in_flight": 0,
+            "requested": 0,
+            "autosave_idle_ms": 2000
+          },
+          "stats": {
+            "running": 1,
+            "valid": 1,
+            "cpu_pct": "8.7",
+            "fps": "59.7",
+            "window_ms": 1004,
+            "window_frames": 60
+          },
+          "rx": {
+            "bytes": 0,
+            "data_frames": 0,
+            "link_frames": 0,
+            "checksum_errors": 0,
+            "length_errors": 0,
+            "ignored_frames": 0,
+            "resyncs": 0,
+            "uart_errors": 0,
+            "last_gap_ms": 0,
+            "max_gap_ms": 0,
+            "data_age_ms": 4294967295
+          },
+          "save": {
+            "queued": 1,
+            "completed": 1,
+            "errors": 0,
+            "busy": 0,
+            "bytes": 32768,
+            "crc32": 2731680349,
+            "last_result": 0,
+            "path": "/GBA/SAVES/龙珠大冒险.sav"
+          },
+          "lcd": {
+            "active": 1,
+            "vblank": 6412,
+            "presented": 2693,
+            "skipped": 2452,
+            "underrun": 0,
+            "blit_us": 954,
+            "max_us": 20621,
+            "allocated": 7372800
+          },
+          "audio": {
+            "running": 1,
+            "muted": 0,
+            "rate": 44100,
+            "queued": 2880,
+            "in": 164053,
+            "out": 178560,
+            "DMA_done": 366,
+            "queue_under": 0,
+            "FIFO_under": 0,
+            "errors": 0,
+            "timeouts": 0,
+            "nonzero": 0,
+            "peak": 0
+          }
+        },
+        {
+          "clock": {
+            "time_us": 213486092,
+            "tick": 213447,
+            "heap_free": 24695416,
+            "tasks": 8,
+            "console_stack_free": 12288
+          },
+          "ui": {
+            "enabled": 1,
+            "showing": 1,
+            "page": 1,
+            "loaded": 1,
+            "result": 0,
+            "path": "/gba_game/龙珠大冒险.gba"
+          },
+          "core": {
+            "running": 0,
+            "frames": 235,
+            "crc": 850795874,
+            "keys": 0,
+            "audio_requested": 1,
+            "serial_keys": 0,
+            "board_keys": 0,
+            "bt_keys": 0,
+            "audio_max_call_gap_us": 20688,
+            "audio_gap_native": 965,
+            "audio_gap_pending": 0
+          },
+          "backup": {
+            "dirty": 0,
+            "in_flight": 0,
+            "requested": 0,
+            "autosave_idle_ms": 2000
+          },
+          "stats": {
+            "running": 0,
+            "valid": 1,
+            "cpu_pct": "8.7",
+            "fps": "59.7",
+            "window_ms": 1004,
+            "window_frames": 60
+          },
+          "rx": {
+            "bytes": 0,
+            "data_frames": 0,
+            "link_frames": 0,
+            "checksum_errors": 0,
+            "length_errors": 0,
+            "ignored_frames": 0,
+            "resyncs": 0,
+            "uart_errors": 0,
+            "last_gap_ms": 0,
+            "max_gap_ms": 0,
+            "data_age_ms": 4294967295
+          },
+          "save": {
+            "queued": 1,
+            "completed": 1,
+            "errors": 0,
+            "busy": 0,
+            "bytes": 32768,
+            "crc32": 2731680349,
+            "last_result": 0,
+            "path": "/GBA/SAVES/龙珠大冒险.sav"
+          },
+          "lcd": {
+            "active": 1,
+            "vblank": 6433,
+            "presented": 2696,
+            "skipped": 2454,
+            "underrun": 0,
+            "blit_us": 3816,
+            "max_us": 20621,
+            "allocated": 7372800
+          },
+          "audio": {
+            "running": 0,
+            "muted": 0,
+            "rate": 44100,
+            "queued": 0,
+            "in": 171991,
+            "out": 187200,
+            "DMA_done": 385,
+            "queue_under": 0,
+            "FIFO_under": 0,
+            "errors": 0,
+            "timeouts": 0,
+            "nonzero": 387,
+            "peak": 18368
+          }
+        },
+        {
+          "clock": {
+            "time_us": 214950335,
+            "tick": 214911,
+            "heap_free": 24695416,
+            "tasks": 8,
+            "console_stack_free": 12288
+          },
+          "ui": {
+            "enabled": 1,
+            "showing": 1,
+            "page": 3,
+            "loaded": 1,
+            "result": 0,
+            "path": "/gba_game/龙珠大冒险.gba"
+          },
+          "core": {
+            "running": 0,
+            "frames": 235,
+            "crc": 850795874,
+            "keys": 0,
+            "audio_requested": 1,
+            "serial_keys": 0,
+            "board_keys": 0,
+            "bt_keys": 0,
+            "audio_max_call_gap_us": 20688,
+            "audio_gap_native": 965,
+            "audio_gap_pending": 0
+          },
+          "backup": {
+            "dirty": 0,
+            "in_flight": 0,
+            "requested": 0,
+            "autosave_idle_ms": 2000
+          },
+          "stats": {
+            "running": 0,
+            "valid": 1,
+            "cpu_pct": "8.7",
+            "fps": "59.7",
+            "window_ms": 1004,
+            "window_frames": 60
+          },
+          "rx": {
+            "bytes": 0,
+            "data_frames": 0,
+            "link_frames": 0,
+            "checksum_errors": 0,
+            "length_errors": 0,
+            "ignored_frames": 0,
+            "resyncs": 0,
+            "uart_errors": 0,
+            "last_gap_ms": 0,
+            "max_gap_ms": 0,
+            "data_age_ms": 4294967295
+          },
+          "save": {
+            "queued": 2,
+            "completed": 2,
+            "errors": 0,
+            "busy": 0,
+            "bytes": 32768,
+            "crc32": 2731680349,
+            "last_result": 0,
+            "path": "/GBA/SAVES/龙珠大冒险.sav"
+          },
+          "lcd": {
+            "active": 1,
+            "vblank": 6477,
+            "presented": 2699,
+            "skipped": 2454,
+            "underrun": 0,
+            "blit_us": 4025,
+            "max_us": 20621,
+            "allocated": 7372800
+          },
+          "audio": {
+            "running": 0,
+            "muted": 0,
+            "rate": 44100,
+            "queued": 0,
+            "in": 171991,
+            "out": 187200,
+            "DMA_done": 385,
+            "queue_under": 0,
+            "FIFO_under": 0,
+            "errors": 0,
+            "timeouts": 0,
+            "nonzero": 387,
+            "peak": 18368
+          }
+        },
+        {
+          "clock": {
+            "time_us": 216774638,
+            "tick": 216735,
+            "heap_free": 24695416,
+            "tasks": 8,
+            "console_stack_free": 12288
+          },
+          "ui": {
+            "enabled": 1,
+            "showing": 1,
+            "page": 3,
+            "loaded": 1,
+            "result": 0,
+            "path": "/gba_game/龙珠大冒险.gba"
+          },
+          "core": {
+            "running": 0,
+            "frames": 235,
+            "crc": 850795874,
+            "keys": 0,
+            "audio_requested": 1,
+            "serial_keys": 0,
+            "board_keys": 0,
+            "bt_keys": 0,
+            "audio_max_call_gap_us": 20688,
+            "audio_gap_native": 965,
+            "audio_gap_pending": 0
+          },
+          "backup": {
+            "dirty": 0,
+            "in_flight": 0,
+            "requested": 0,
+            "autosave_idle_ms": 2000
+          },
+          "stats": {
+            "running": 0,
+            "valid": 1,
+            "cpu_pct": "8.7",
+            "fps": "59.7",
+            "window_ms": 1004,
+            "window_frames": 60
+          },
+          "rx": {
+            "bytes": 0,
+            "data_frames": 0,
+            "link_frames": 0,
+            "checksum_errors": 0,
+            "length_errors": 0,
+            "ignored_frames": 0,
+            "resyncs": 0,
+            "uart_errors": 0,
+            "last_gap_ms": 0,
+            "max_gap_ms": 0,
+            "data_age_ms": 4294967295
+          },
+          "save": {
+            "queued": 3,
+            "completed": 3,
+            "errors": 0,
+            "busy": 0,
+            "bytes": 32768,
+            "crc32": 2731680349,
+            "last_result": 0,
+            "path": "/GBA/SAVES/龙珠大冒险.sav"
+          },
+          "lcd": {
+            "active": 1,
+            "vblank": 6533,
+            "presented": 2703,
+            "skipped": 2454,
+            "underrun": 0,
+            "blit_us": 4019,
+            "max_us": 20621,
+            "allocated": 7372800
+          },
+          "audio": {
+            "running": 0,
+            "muted": 0,
+            "rate": 44100,
+            "queued": 0,
+            "in": 171991,
+            "out": 187200,
+            "DMA_done": 385,
+            "queue_under": 0,
+            "FIFO_under": 0,
+            "errors": 0,
+            "timeouts": 0,
+            "nonzero": 387,
+            "peak": 18368
+          }
+        },
+        {
+          "clock": {
+            "time_us": 218344899,
+            "tick": 218305,
+            "heap_free": 24695416,
+            "tasks": 8,
+            "console_stack_free": 12288
+          },
+          "ui": {
+            "enabled": 1,
+            "showing": 1,
+            "page": 0,
+            "loaded": 1,
+            "result": 0,
+            "path": "/gba_game/龙珠大冒险.gba"
+          },
+          "core": {
+            "running": 0,
+            "frames": 235,
+            "crc": 850795874,
+            "keys": 0,
+            "audio_requested": 1,
+            "serial_keys": 0,
+            "board_keys": 0,
+            "bt_keys": 0,
+            "audio_max_call_gap_us": 20688,
+            "audio_gap_native": 965,
+            "audio_gap_pending": 0
+          },
+          "backup": {
+            "dirty": 0,
+            "in_flight": 0,
+            "requested": 0,
+            "autosave_idle_ms": 2000
+          },
+          "stats": {
+            "running": 0,
+            "valid": 1,
+            "cpu_pct": "8.7",
+            "fps": "59.7",
+            "window_ms": 1004,
+            "window_frames": 60
+          },
+          "rx": {
+            "bytes": 0,
+            "data_frames": 0,
+            "link_frames": 0,
+            "checksum_errors": 0,
+            "length_errors": 0,
+            "ignored_frames": 0,
+            "resyncs": 0,
+            "uart_errors": 0,
+            "last_gap_ms": 0,
+            "max_gap_ms": 0,
+            "data_age_ms": 4294967295
+          },
+          "save": {
+            "queued": 3,
+            "completed": 3,
+            "errors": 0,
+            "busy": 0,
+            "bytes": 32768,
+            "crc32": 2731680349,
+            "last_result": 0,
+            "path": "/GBA/SAVES/龙珠大冒险.sav"
+          },
+          "lcd": {
+            "active": 1,
+            "vblank": 6580,
+            "presented": 2708,
+            "skipped": 2454,
+            "underrun": 0,
+            "blit_us": 4646,
+            "max_us": 20621,
+            "allocated": 7372800
+          },
+          "audio": {
+            "running": 0,
+            "muted": 0,
+            "rate": 44100,
+            "queued": 0,
+            "in": 171991,
+            "out": 187200,
+            "DMA_done": 385,
+            "queue_under": 0,
+            "FIFO_under": 0,
+            "errors": 0,
+            "timeouts": 0,
+            "nonzero": 387,
+            "peak": 18368
+          }
+        },
+        {
+          "clock": {
+            "time_us": 252814646,
+            "tick": 252769,
+            "heap_free": 5526136,
+            "tasks": 8,
+            "console_stack_free": 12288
+          },
+          "ui": {
+            "enabled": 1,
+            "showing": 0,
+            "page": 3,
+            "loaded": 1,
+            "result": 0,
+            "path": "/gba_game/口袋妖怪究极绿宝石-v5.4.gba"
+          },
+          "core": {
+            "running": 1,
+            "frames": 225,
+            "crc": 901377804,
+            "keys": 0,
+            "audio_requested": 1,
+            "serial_keys": 0,
+            "board_keys": 0,
+            "bt_keys": 0,
+            "audio_max_call_gap_us": 24345,
+            "audio_gap_native": 2301,
+            "audio_gap_pending": 68
+          },
+          "backup": {
+            "dirty": 0,
+            "in_flight": 0,
+            "requested": 0,
+            "autosave_idle_ms": 2000
+          },
+          "stats": {
+            "running": 1,
+            "valid": 1,
+            "cpu_pct": "17.6",
+            "fps": "59.5",
+            "window_ms": 1007,
+            "window_frames": 60
+          },
+          "rx": {
+            "bytes": 0,
+            "data_frames": 0,
+            "link_frames": 0,
+            "checksum_errors": 0,
+            "length_errors": 0,
+            "ignored_frames": 0,
+            "resyncs": 0,
+            "uart_errors": 0,
+            "last_gap_ms": 0,
+            "max_gap_ms": 0,
+            "data_age_ms": 4294967295
+          },
+          "save": {
+            "queued": 3,
+            "completed": 3,
+            "errors": 0,
+            "busy": 0,
+            "bytes": 32768,
+            "crc32": 2731680349,
+            "last_result": 0,
+            "path": "/GBA/SAVES/龙珠大冒险.sav"
+          },
+          "lcd": {
+            "active": 1,
+            "vblank": 7624,
+            "presented": 3091,
+            "skipped": 2581,
+            "underrun": 0,
+            "blit_us": 978,
+            "max_us": 20673,
+            "allocated": 7372800
+          },
+          "audio": {
+            "running": 1,
+            "muted": 0,
+            "rate": 44100,
+            "queued": 2400,
+            "in": 164053,
+            "out": 178560,
+            "DMA_done": 367,
+            "queue_under": 0,
+            "FIFO_under": 0,
+            "errors": 0,
+            "timeouts": 0,
+            "nonzero": 0,
+            "peak": 0
+          }
+        },
+        {
+          "clock": {
+            "time_us": 253500758,
+            "tick": 253455,
+            "heap_free": 5526136,
+            "tasks": 8,
+            "console_stack_free": 12288
+          },
+          "ui": {
+            "enabled": 1,
+            "showing": 1,
+            "page": 1,
+            "loaded": 1,
+            "result": 0,
+            "path": "/gba_game/口袋妖怪究极绿宝石-v5.4.gba"
+          },
+          "core": {
+            "running": 0,
+            "frames": 235,
+            "crc": 1397677785,
+            "keys": 0,
+            "audio_requested": 1,
+            "serial_keys": 0,
+            "board_keys": 0,
+            "bt_keys": 0,
+            "audio_max_call_gap_us": 24345,
+            "audio_gap_native": 2301,
+            "audio_gap_pending": 68
+          },
+          "backup": {
+            "dirty": 0,
+            "in_flight": 0,
+            "requested": 0,
+            "autosave_idle_ms": 2000
+          },
+          "stats": {
+            "running": 0,
+            "valid": 1,
+            "cpu_pct": "17.6",
+            "fps": "59.5",
+            "window_ms": 1007,
+            "window_frames": 60
+          },
+          "rx": {
+            "bytes": 0,
+            "data_frames": 0,
+            "link_frames": 0,
+            "checksum_errors": 0,
+            "length_errors": 0,
+            "ignored_frames": 0,
+            "resyncs": 0,
+            "uart_errors": 0,
+            "last_gap_ms": 0,
+            "max_gap_ms": 0,
+            "data_age_ms": 4294967295
+          },
+          "save": {
+            "queued": 3,
+            "completed": 3,
+            "errors": 0,
+            "busy": 0,
+            "bytes": 32768,
+            "crc32": 2731680349,
+            "last_result": 0,
+            "path": "/GBA/SAVES/龙珠大冒险.sav"
+          },
+          "lcd": {
+            "active": 1,
+            "vblank": 7644,
+            "presented": 3094,
+            "skipped": 2583,
+            "underrun": 0,
+            "blit_us": 3851,
+            "max_us": 20673,
+            "allocated": 7372800
+          },
+          "audio": {
+            "running": 0,
+            "muted": 0,
+            "rate": 44100,
+            "queued": 0,
+            "in": 171991,
+            "out": 187200,
+            "DMA_done": 386,
+            "queue_under": 0,
+            "FIFO_under": 0,
+            "errors": 0,
+            "timeouts": 0,
+            "nonzero": 5858,
+            "peak": 4320
+          }
+        },
+        {
+          "clock": {
+            "time_us": 254663952,
+            "tick": 254618,
+            "heap_free": 5526136,
+            "tasks": 8,
+            "console_stack_free": 12288
+          },
+          "ui": {
+            "enabled": 1,
+            "showing": 1,
+            "page": 0,
+            "loaded": 1,
+            "result": 0,
+            "path": "/gba_game/口袋妖怪究极绿宝石-v5.4.gba"
+          },
+          "core": {
+            "running": 0,
+            "frames": 235,
+            "crc": 1397677785,
+            "keys": 0,
+            "audio_requested": 1,
+            "serial_keys": 0,
+            "board_keys": 0,
+            "bt_keys": 0,
+            "audio_max_call_gap_us": 24345,
+            "audio_gap_native": 2301,
+            "audio_gap_pending": 68
+          },
+          "backup": {
+            "dirty": 0,
+            "in_flight": 0,
+            "requested": 0,
+            "autosave_idle_ms": 2000
+          },
+          "stats": {
+            "running": 0,
+            "valid": 1,
+            "cpu_pct": "17.6",
+            "fps": "59.5",
+            "window_ms": 1007,
+            "window_frames": 60
+          },
+          "rx": {
+            "bytes": 0,
+            "data_frames": 0,
+            "link_frames": 0,
+            "checksum_errors": 0,
+            "length_errors": 0,
+            "ignored_frames": 0,
+            "resyncs": 0,
+            "uart_errors": 0,
+            "last_gap_ms": 0,
+            "max_gap_ms": 0,
+            "data_age_ms": 4294967295
+          },
+          "save": {
+            "queued": 3,
+            "completed": 3,
+            "errors": 0,
+            "busy": 0,
+            "bytes": 32768,
+            "crc32": 2731680349,
+            "last_result": 0,
+            "path": "/GBA/SAVES/龙珠大冒险.sav"
+          },
+          "lcd": {
+            "active": 1,
+            "vblank": 7680,
+            "presented": 3098,
+            "skipped": 2584,
+            "underrun": 0,
+            "blit_us": 4677,
+            "max_us": 20673,
+            "allocated": 7372800
+          },
+          "audio": {
+            "running": 0,
+            "muted": 0,
+            "rate": 44100,
+            "queued": 0,
+            "in": 171991,
+            "out": 187200,
+            "DMA_done": 386,
+            "queue_under": 0,
+            "FIFO_under": 0,
+            "errors": 0,
+            "timeouts": 0,
+            "nonzero": 5858,
+            "peak": 4320
+          }
+        },
+        {
+          "clock": {
+            "time_us": 273417084,
+            "tick": 273370,
+            "heap_free": 24695416,
+            "tasks": 8,
+            "console_stack_free": 12288
+          },
+          "ui": {
+            "enabled": 1,
+            "showing": 0,
+            "page": 3,
+            "loaded": 1,
+            "result": 0,
+            "path": "/gba_game/龙珠大冒险.gba"
+          },
+          "core": {
+            "running": 1,
+            "frames": 224,
+            "crc": 901377804,
+            "keys": 0,
+            "audio_requested": 1,
+            "serial_keys": 0,
+            "board_keys": 0,
+            "bt_keys": 0,
+            "audio_max_call_gap_us": 20653,
+            "audio_gap_native": 965,
+            "audio_gap_pending": 0
+          },
+          "backup": {
+            "dirty": 0,
+            "in_flight": 0,
+            "requested": 0,
+            "autosave_idle_ms": 2000
+          },
+          "stats": {
+            "running": 1,
+            "valid": 1,
+            "cpu_pct": "8.6",
+            "fps": "59.7",
+            "window_ms": 1005,
+            "window_frames": 60
+          },
+          "rx": {
+            "bytes": 0,
+            "data_frames": 0,
+            "link_frames": 0,
+            "checksum_errors": 0,
+            "length_errors": 0,
+            "ignored_frames": 0,
+            "resyncs": 0,
+            "uart_errors": 0,
+            "last_gap_ms": 0,
+            "max_gap_ms": 0,
+            "data_age_ms": 4294967295
+          },
+          "save": {
+            "queued": 3,
+            "completed": 3,
+            "errors": 0,
+            "busy": 0,
+            "bytes": 32768,
+            "crc32": 2731680349,
+            "last_result": 0,
+            "path": "/GBA/SAVES/龙珠大冒险.sav"
+          },
+          "lcd": {
+            "active": 1,
+            "vblank": 8247,
+            "presented": 3335,
+            "skipped": 2728,
+            "underrun": 0,
+            "blit_us": 1999,
+            "max_us": 20673,
+            "allocated": 7372800
+          },
+          "audio": {
+            "running": 1,
+            "muted": 0,
+            "rate": 44100,
+            "queued": 2880,
+            "in": 164053,
+            "out": 178560,
+            "DMA_done": 366,
+            "queue_under": 0,
+            "FIFO_under": 0,
+            "errors": 0,
+            "timeouts": 0,
+            "nonzero": 0,
+            "peak": 0
+          }
+        },
+        {
+          "clock": {
+            "time_us": 274131197,
+            "tick": 274084,
+            "heap_free": 24695416,
+            "tasks": 8,
+            "console_stack_free": 12288
+          },
+          "ui": {
+            "enabled": 1,
+            "showing": 1,
+            "page": 1,
+            "loaded": 1,
+            "result": 0,
+            "path": "/gba_game/龙珠大冒险.gba"
+          },
+          "core": {
+            "running": 0,
+            "frames": 235,
+            "crc": 850795874,
+            "keys": 0,
+            "audio_requested": 1,
+            "serial_keys": 0,
+            "board_keys": 0,
+            "bt_keys": 0,
+            "audio_max_call_gap_us": 20653,
+            "audio_gap_native": 965,
+            "audio_gap_pending": 0
+          },
+          "backup": {
+            "dirty": 0,
+            "in_flight": 0,
+            "requested": 0,
+            "autosave_idle_ms": 2000
+          },
+          "stats": {
+            "running": 0,
+            "valid": 1,
+            "cpu_pct": "8.6",
+            "fps": "59.7",
+            "window_ms": 1005,
+            "window_frames": 60
+          },
+          "rx": {
+            "bytes": 0,
+            "data_frames": 0,
+            "link_frames": 0,
+            "checksum_errors": 0,
+            "length_errors": 0,
+            "ignored_frames": 0,
+            "resyncs": 0,
+            "uart_errors": 0,
+            "last_gap_ms": 0,
+            "max_gap_ms": 0,
+            "data_age_ms": 4294967295
+          },
+          "save": {
+            "queued": 3,
+            "completed": 3,
+            "errors": 0,
+            "busy": 0,
+            "bytes": 32768,
+            "crc32": 2731680349,
+            "last_result": 0,
+            "path": "/GBA/SAVES/龙珠大冒险.sav"
+          },
+          "lcd": {
+            "active": 1,
+            "vblank": 8269,
+            "presented": 3338,
+            "skipped": 2731,
+            "underrun": 0,
+            "blit_us": 3815,
+            "max_us": 20673,
+            "allocated": 7372800
+          },
+          "audio": {
+            "running": 0,
+            "muted": 0,
+            "rate": 44100,
+            "queued": 0,
+            "in": 171991,
+            "out": 187200,
+            "DMA_done": 385,
+            "queue_under": 0,
+            "FIFO_under": 0,
+            "errors": 0,
+            "timeouts": 0,
+            "nonzero": 3008,
+            "peak": 22704
+          }
+        },
+        {
+          "clock": {
+            "time_us": 276215543,
+            "tick": 276168,
+            "heap_free": 39081608,
+            "tasks": 8,
+            "console_stack_free": 12288
+          },
+          "ui": {
+            "enabled": 1,
+            "showing": 1,
+            "page": 0,
+            "loaded": 0,
+            "result": 0,
+            "path": "-"
+          },
+          "core": {
+            "running": 0,
+            "frames": 235,
+            "crc": 850795874,
+            "keys": 0,
+            "audio_requested": 1,
+            "serial_keys": 0,
+            "board_keys": 0,
+            "bt_keys": 0,
+            "audio_max_call_gap_us": 20653,
+            "audio_gap_native": 965,
+            "audio_gap_pending": 0
+          },
+          "backup": {
+            "dirty": 0,
+            "in_flight": 0,
+            "requested": 0,
+            "autosave_idle_ms": 2000
+          },
+          "stats": {
+            "running": 0,
+            "valid": 1,
+            "cpu_pct": "8.6",
+            "fps": "59.7",
+            "window_ms": 1005,
+            "window_frames": 60
+          },
+          "rx": {
+            "bytes": 0,
+            "data_frames": 0,
+            "link_frames": 0,
+            "checksum_errors": 0,
+            "length_errors": 0,
+            "ignored_frames": 0,
+            "resyncs": 0,
+            "uart_errors": 0,
+            "last_gap_ms": 0,
+            "max_gap_ms": 0,
+            "data_age_ms": 4294967295
+          },
+          "save": {
+            "queued": 3,
+            "completed": 3,
+            "errors": 0,
+            "busy": 0,
+            "bytes": 32768,
+            "crc32": 2731680349,
+            "last_result": 0,
+            "path": "/GBA/SAVES/龙珠大冒险.sav"
+          },
+          "lcd": {
+            "active": 1,
+            "vblank": 8332,
+            "presented": 3345,
+            "skipped": 2732,
+            "underrun": 0,
+            "blit_us": 4675,
+            "max_us": 20673,
+            "allocated": 7372800
+          },
+          "audio": {
+            "running": 0,
+            "muted": 0,
+            "rate": 44100,
+            "queued": 0,
+            "in": 171991,
+            "out": 187200,
+            "DMA_done": 385,
+            "queue_under": 0,
+            "FIFO_under": 0,
+            "errors": 0,
+            "timeouts": 0,
+            "nonzero": 3008,
+            "peak": 22704
+          }
+        }
+      ]
+    }
+  },
+  "cold_boot": {
+    "log": "build/chinese-name-cold-20261018.log",
+    "results": {
+      "pass": true,
+      "new_spl_boot_observed": true,
+      "new_nor_image_length_observed": true,
+      "inventory": [
+        {
+          "bytes": 19030368,
+          "name": "火焰纹章 - 烈火之剑[CGP](简)(JP)(145.19Mb).gba"
+        },
+        {
+          "bytes": 8518208,
+          "name": "口袋妖怪 - 蓝宝石[Elite&口袋妖怪网](386)(简)(JP)(64.98Mb).gba"
+        },
+        {
+          "bytes": 9382468,
+          "name": "逆转裁判[CGP](简)(JP)(71.58Mb).gba"
+        },
+        {
+          "bytes": 10144316,
+          "name": "逆转裁判2[CGP](简)(JP)(77.39Mb).gba"
+        },
+        {
+          "bytes": 9482992,
+          "name": "逆转裁判3[星组](简)(JP)(72.34Mb).gba"
+        },
+        {
+          "bytes": 16777216,
+          "name": "赛尔达传说 - 缩小帽[CGP](简)(JP)(128Mb).gba"
+        },
+        {
+          "bytes": 33554432,
+          "name": "口袋妖怪究极绿宝石-v5.4.gba"
+        },
+        {
+          "bytes": 14357872,
+          "name": "龙珠大冒险.gba"
+        }
+      ],
+      "state": {
+        "clock": {
+          "time_us": 2101868,
+          "tick": 2097,
+          "heap_free": 39082040,
+          "tasks": 8,
+          "console_stack_free": 12936
+        },
+        "core": {
+          "running": 0,
+          "frames": 0,
+          "crc": 0,
+          "keys": 0,
+          "audio_requested": 1,
+          "serial_keys": 0,
+          "board_keys": 0,
+          "bt_keys": 0,
+          "audio_max_call_gap_us": 0,
+          "audio_gap_native": 0,
+          "audio_gap_pending": 0
+        },
+        "backup": {
+          "dirty": 0,
+          "in_flight": 0,
+          "requested": 0,
+          "autosave_idle_ms": 2000
+        },
+        "save": {
+          "queued": 0,
+          "completed": 0,
+          "errors": 0,
+          "busy": 0,
+          "bytes": 0,
+          "crc32": 0,
+          "last_result": 0,
+          "path": "-"
+        },
+        "lcd": {
+          "active": 1,
+          "vblank": 34,
+          "presented": 1,
+          "skipped": 0,
+          "underrun": 0,
+          "blit_us": 4714,
+          "max_us": 4714,
+          "allocated": 7372800
+        },
+        "audio": {
+          "running": 0,
+          "muted": 0,
+          "rate": 0,
+          "queued": 0,
+          "in": 0,
+          "out": 0,
+          "DMA_done": 0,
+          "queue_under": 0,
+          "FIFO_under": 0,
+          "errors": 0,
+          "timeouts": 0,
+          "nonzero": 0,
+          "peak": 0
+        },
+        "audio_timing": {
+          "max_ready_gap_us": 0,
+          "underrun_ready_gap_us": 0,
+          "max_dma_restart_us": 0,
+          "first_queue_underrun_us": 0,
+          "last_ready_periods": 0,
+          "last_ready_active": 0,
+          "last_ready_dma_age_us": 0,
+          "first_under_ready_periods": 0,
+          "first_under_active": 0,
+          "first_under_dma_age_us": 0,
+          "first_fifo_underrun_us": 0,
+          "first_fifo_completed_periods": 0
+        }
+      },
+      "persisted_chinese_sav_bak_crc32": "a2d2225d"
+    }
+  }
+}

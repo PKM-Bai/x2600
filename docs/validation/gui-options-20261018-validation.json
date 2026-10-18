@@ -1,0 +1,511 @@
+{
+  "date": "2026-10-18",
+  "binary_crc32": "178853ea",
+  "release": {
+    "board": "HALLEY7-M-KIT X2600M 64MiB DDR2",
+    "regba_commit": "7f379052dc14366e622a96c7cf7fb6b5a7e918a3",
+    "binary": "halley7m_regba.bin",
+    "binary_bytes": 2306352,
+    "binary_sha256": "7517d55258594d485a86b4d7eecb1a8f32abf34674fcccf9727396a5f97e16eb",
+    "entry": "0x80600000",
+    "heap_start": "0x81367000",
+    "heap_end": "0x84000000",
+    "heap_before_task_allocation_bytes": 46764032,
+    "checks": "ELF ABI/entry, no undefined symbols, NOR size, DDR bounds, disabled state buffers discarded",
+    "hardware_validated": false
+  },
+  "debug": {
+    "board": "HALLEY7-M-KIT X2600M 64MiB DDR2",
+    "regba_commit": "7f379052dc14366e622a96c7cf7fb6b5a7e918a3",
+    "binary": "halley7m_regba.bin",
+    "binary_bytes": 2961200,
+    "binary_sha256": "b722c10696029c53ba4f34e6a183fa785ffcb2f8b652dd4cd4045d07632bbe48",
+    "entry": "0x80600000",
+    "heap_start": "0x81407000",
+    "heap_end": "0x84000000",
+    "heap_before_task_allocation_bytes": 46108672,
+    "checks": "ELF ABI/entry, no undefined symbols, NOR size, DDR bounds, disabled state buffers discarded",
+    "hardware_validated": false
+  },
+  "release_build_log": "build/gui-options-Release-20261018.log",
+  "debug_build_log": "build/gui-options-Debug-20261018.log",
+  "host_regression_log": "build/gui-options-host-20261018.log",
+  "ram_upload_log": "build/ramload-gui-options-20261018.log",
+  "ram_gui_smoke": {
+    "pass": true,
+    "json": "build/gui-options-ram-final-20261018-194231.json",
+    "measurements": [
+      {
+        "step": "normal-1x",
+        "stats": {
+          "running": 1,
+          "valid": 1,
+          "cpu_pct": 8.2,
+          "fps": 59.8,
+          "window_ms": 1003,
+          "window_frames": 60
+        },
+        "playback": {
+          "volume": 100,
+          "frameskip": 0,
+          "speed": 1,
+          "emulated": 227,
+          "drawn": 227,
+          "fast_audio_silent": 0
+        },
+        "audio": {
+          "running": 1,
+          "muted": 0,
+          "rate": 44100,
+          "queued": 1920,
+          "in": 164053,
+          "out": 178560,
+          "DMA_done": 368,
+          "queue_under": 0,
+          "FIFO_under": 0,
+          "errors": 0,
+          "timeouts": 0,
+          "nonzero": 0,
+          "peak": 0,
+          "volume": 100
+        }
+      },
+      {
+        "step": "skip1-running",
+        "stats": {
+          "running": 1,
+          "valid": 1,
+          "cpu_pct": 8.8,
+          "fps": 59.8,
+          "window_ms": 1004,
+          "window_frames": 60
+        },
+        "playback": {
+          "volume": 100,
+          "frameskip": 1,
+          "speed": 1,
+          "emulated": 244,
+          "drawn": 122,
+          "fast_audio_silent": 0
+        },
+        "audio": {
+          "running": 1,
+          "muted": 0,
+          "rate": 44100,
+          "queued": 2400,
+          "in": 177283,
+          "out": 192960,
+          "DMA_done": 397,
+          "queue_under": 0,
+          "FIFO_under": 0,
+          "errors": 0,
+          "timeouts": 0,
+          "nonzero": 150449,
+          "peak": 32768,
+          "volume": 100
+        }
+      },
+      {
+        "step": "speed2-running",
+        "stats": {
+          "running": 1,
+          "valid": 1,
+          "cpu_pct": 16.0,
+          "fps": 119.0,
+          "window_ms": 1000,
+          "window_frames": 119
+        },
+        "playback": {
+          "volume": 100,
+          "frameskip": 0,
+          "speed": 2,
+          "emulated": 520,
+          "drawn": 520,
+          "fast_audio_silent": 1
+        },
+        "audio": {
+          "running": 0,
+          "muted": 0,
+          "rate": 44100,
+          "queued": 0,
+          "in": 185600,
+          "out": 202013,
+          "DMA_done": 416,
+          "queue_under": 0,
+          "FIFO_under": 0,
+          "errors": 0,
+          "timeouts": 0,
+          "nonzero": 157857,
+          "peak": 32768,
+          "volume": 100
+        }
+      },
+      {
+        "step": "speed4-running",
+        "stats": {
+          "running": 1,
+          "valid": 1,
+          "cpu_pct": 29.6,
+          "fps": 239.0,
+          "window_ms": 1004,
+          "window_frames": 240
+        },
+        "playback": {
+          "volume": 100,
+          "frameskip": 0,
+          "speed": 4,
+          "emulated": 1047,
+          "drawn": 1047,
+          "fast_audio_silent": 1
+        },
+        "audio": {
+          "running": 0,
+          "muted": 0,
+          "rate": 44100,
+          "queued": 0,
+          "in": 185600,
+          "out": 202013,
+          "DMA_done": 416,
+          "queue_under": 0,
+          "FIFO_under": 0,
+          "errors": 0,
+          "timeouts": 0,
+          "nonzero": 157857,
+          "peak": 32768,
+          "volume": 100
+        }
+      },
+      {
+        "step": "normal-audio-restored",
+        "stats": {
+          "running": 1,
+          "valid": 1,
+          "cpu_pct": 10.5,
+          "fps": 59.6,
+          "window_ms": 1006,
+          "window_frames": 60
+        },
+        "playback": {
+          "volume": 100,
+          "frameskip": 0,
+          "speed": 1,
+          "emulated": 242,
+          "drawn": 242,
+          "fast_audio_silent": 0
+        },
+        "audio": {
+          "running": 1,
+          "muted": 0,
+          "rate": 44100,
+          "queued": 2400,
+          "in": 175960,
+          "out": 191520,
+          "DMA_done": 394,
+          "queue_under": 0,
+          "FIFO_under": 0,
+          "errors": 0,
+          "timeouts": 0,
+          "nonzero": 158313,
+          "peak": 24656,
+          "volume": 100
+        }
+      }
+    ],
+    "cached_reload_seconds": 0.3230778000142891,
+    "save": {
+      "path": "/GBA/SAVES/龙珠大冒险.sav",
+      "crc32": 4101067160,
+      "bytes": 32768
+    }
+  },
+  "native_reload_diagnostics": {
+    "pass": true,
+    "json": "build/gui-reload-diagnostic-20261018.json",
+    "types": [
+      {
+        "kind": "sram",
+        "pass": true,
+        "write_B_to_pause_seconds": 0.9269039999926463,
+        "reloaded_guest": {
+          "magic": 1398166611,
+          "kind": 1,
+          "bytes": 32768,
+          "state": 1,
+          "marker": 1396790849,
+          "count": 9,
+          "expected_marker": 1396790849,
+          "expected_count": 9,
+          "mismatch": 4294967295,
+          "writes": 0,
+          "frames": 14,
+          "keys": 0,
+          "boot_marker": 1396790849,
+          "boot_count": 9,
+          "action": 0,
+          "checks": 1
+        },
+        "card_after_reload": {
+          "path": "/GBA/SAVES/__save_sram.sav",
+          "bytes": 32768,
+          "crc32": 2631161962,
+          "expected_bytes": 32768,
+          "expected_crc32": 2631161962
+        }
+      },
+      {
+        "kind": "flash",
+        "pass": true,
+        "write_B_to_pause_seconds": 1.2153133999963757,
+        "reloaded_guest": {
+          "magic": 1398166611,
+          "kind": 2,
+          "bytes": 65536,
+          "state": 1,
+          "marker": 1396790849,
+          "count": 9,
+          "expected_marker": 1396790849,
+          "expected_count": 9,
+          "mismatch": 4294967295,
+          "writes": 0,
+          "frames": 10,
+          "keys": 0,
+          "boot_marker": 1396790849,
+          "boot_count": 9,
+          "action": 0,
+          "checks": 1
+        },
+        "card_after_reload": {
+          "path": "/GBA/SAVES/__save_flash.sav",
+          "bytes": 65536,
+          "crc32": 1810528823,
+          "expected_bytes": 65536,
+          "expected_crc32": 1810528823
+        }
+      },
+      {
+        "kind": "eeprom",
+        "pass": true,
+        "write_B_to_pause_seconds": 0.6431884000194259,
+        "reloaded_guest": {
+          "magic": 1398166611,
+          "kind": 3,
+          "bytes": 512,
+          "state": 1,
+          "marker": 1396790849,
+          "count": 9,
+          "expected_marker": 1396790849,
+          "expected_count": 9,
+          "mismatch": 4294967295,
+          "writes": 0,
+          "frames": 17,
+          "keys": 0,
+          "boot_marker": 1396790849,
+          "boot_count": 9,
+          "action": 0,
+          "checks": 1
+        },
+        "card_after_reload": {
+          "path": "/GBA/SAVES/__save_eeprom.sav",
+          "bytes": 512,
+          "crc32": 3611134307,
+          "expected_bytes": 512,
+          "expected_crc32": 3611134307
+        }
+      }
+    ]
+  },
+  "large_rom_flash_save": {
+    "json": "build/gui-options-large-20261018.json",
+    "pass": true,
+    "load_seconds": 28.25817879999522,
+    "reload_seconds": 0.32305629999609664,
+    "path": "/gba_game/口袋妖怪究极绿宝石-v5.4.gba",
+    "save_bytes": 131072,
+    "save_crc32": "d5343e3a",
+    "free_heap": 5522040
+  },
+  "manual_acceptance": {
+    "status": "passed",
+    "feedback": "菜单、音量、加速和声音恢复均正常",
+    "menu_clear": true,
+    "physical_volume_change": true,
+    "physical_fast_forward": true,
+    "normal_speed_audio_restored": true
+  },
+  "requested_features_complete": true,
+  "nor_install": {
+    "status": "programmed_and_verified",
+    "offset": 262144,
+    "bytes": 2306352,
+    "erase_bytes": 2326528,
+    "crc32": "178853ea",
+    "sha256": "7517d55258594d485a86b4d7eecb1a8f32abf34674fcccf9727396a5f97e16eb",
+    "bootcmd": "sfcnor read 0x40000 0x233130 0x80600000;go 0x80600000",
+    "previous_bytes": 2301840,
+    "previous_crc32": "c77de25d",
+    "previous_sha256": "1665da02a8d52b22476f3f79fb6f2155f230b2b3847f6f8551f80dcfff70abb8",
+    "environment_crc_verified": true,
+    "bootloader_prefix_crc32": "3a3c3918",
+    "rootfs_crc32": "8618c73f",
+    "original_backup": "E:\\GitProject\\X2600\\build\\nor-backups\\20261016T024011Z\\nor-original.bin",
+    "original_backup_sha256": "5efd956157cf88fc8a55dd3695f75b216e184a9fa15bee00149680c740077926",
+    "cold_boot_verified": false
+  },
+  "nor_boot_check": {
+    "pass": true,
+    "records": [
+      {
+        "step": "NOR-library",
+        "state": {
+          "clock": {
+            "time_us": 21378027,
+            "tick": 21370,
+            "heap_free": 39077944,
+            "tasks": 8,
+            "console_stack_free": 12928
+          },
+          "ui": {
+            "enabled": 1,
+            "showing": 1,
+            "page": 0,
+            "loaded": 0,
+            "result": 0,
+            "path": "-"
+          },
+          "core": {
+            "running": 0,
+            "frames": 0,
+            "crc": 0,
+            "keys": 0,
+            "audio_requested": 1,
+            "serial_keys": 0,
+            "board_keys": 0,
+            "bt_keys": 0,
+            "audio_max_call_gap_us": 0,
+            "audio_gap_native": 0,
+            "audio_gap_pending": 0
+          },
+          "backup": {
+            "dirty": 0,
+            "in_flight": 0,
+            "requested": 0,
+            "autosave_idle_ms": 2000
+          },
+          "playback": {
+            "volume": 100,
+            "frameskip": 0,
+            "speed": 1,
+            "emulated": 0,
+            "drawn": 0,
+            "fast_audio_silent": 0
+          },
+          "game_stats": {
+            "running": 0,
+            "valid": 0,
+            "cpu_pct": 0.0,
+            "fps": 0.0,
+            "window_ms": 0,
+            "window_frames": 0
+          },
+          "btpad": {
+            "initialized": 1,
+            "connected": 0,
+            "data_valid": 0,
+            "keys": 0,
+            "stale": 0,
+            "timeout_ms": 0,
+            "x_right_sign": 1,
+            "y_up_sign": 1,
+            "axis_verified": 1
+          },
+          "rx": {
+            "bytes": 0,
+            "data_frames": 0,
+            "link_frames": 0,
+            "checksum_errors": 0,
+            "length_errors": 0,
+            "ignored_frames": 0,
+            "resyncs": 0,
+            "uart_errors": 0,
+            "last_gap_ms": 0,
+            "max_gap_ms": 0,
+            "data_age_ms": 4294967295
+          },
+          "save": {
+            "queued": 0,
+            "completed": 0,
+            "errors": 0,
+            "busy": 0,
+            "bytes": 0,
+            "crc32": 0,
+            "last_result": 0,
+            "path": "-"
+          },
+          "lcd": {
+            "active": 1,
+            "vblank": 618,
+            "presented": 1,
+            "skipped": 0,
+            "underrun": 0,
+            "blit_us": 4713,
+            "max_us": 4713,
+            "allocated": 7372800
+          },
+          "audio": {
+            "running": 0,
+            "muted": 0,
+            "rate": 0,
+            "queued": 0,
+            "in": 0,
+            "out": 0,
+            "DMA_done": 0,
+            "queue_under": 0,
+            "FIFO_under": 0,
+            "errors": 0,
+            "timeouts": 0,
+            "nonzero": 0,
+            "peak": 0,
+            "volume": 100
+          },
+          "audio_timing": {
+            "max_ready_gap_us": 0,
+            "underrun_ready_gap_us": 0,
+            "max_dma_restart_us": 0,
+            "first_queue_underrun_us": 0,
+            "last_ready_periods": 0,
+            "last_ready_active": 0,
+            "last_ready_dma_age_us": 0,
+            "first_under_ready_periods": 0,
+            "first_under_active": 0,
+            "first_under_dma_age_us": 0,
+            "first_fifo_underrun_us": 0,
+            "first_fifo_completed_periods": 0
+          }
+        }
+      }
+    ],
+    "persisted_diagnostic_files": [
+      {
+        "path": "/GBA/SAVES/__save_sram.sav",
+        "bytes": 32768,
+        "crc32": 2631161962,
+        "expected_bytes": 32768,
+        "expected_crc32": 2631161962
+      },
+      {
+        "path": "/GBA/SAVES/__save_flash.sav",
+        "bytes": 65536,
+        "crc32": 1810528823,
+        "expected_bytes": 65536,
+        "expected_crc32": 1810528823
+      },
+      {
+        "path": "/GBA/SAVES/__save_eeprom.sav",
+        "bytes": 512,
+        "crc32": 3611134307,
+        "expected_bytes": 512,
+        "expected_crc32": 3611134307
+      }
+    ]
+  }
+}

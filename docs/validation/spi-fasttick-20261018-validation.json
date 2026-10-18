@@ -1,0 +1,149 @@
+{
+  "board": "HALLEY7-M X2600M 64MiB",
+  "date": "2026-10-18",
+  "variant": "spi-fasttick",
+  "binary_bytes": 913680,
+  "binary_sha256": "4336d87f3a415c62ba21051a4560c62e2988799a6bbb8adac226de311581e0ca",
+  "binary_crc32": "83547b73",
+  "ram_load_log": "build/ramload-spi-fasttick-20261018.log",
+  "benchmark": "build/spi-fasttick-benchmark-20261018.json",
+  "status": "PASS",
+  "spi_hz": 18750000,
+  "loads": [
+    {
+      "path": "/gba_game/test-pokemon.gba",
+      "bytes": 8388608,
+      "seconds": 7.369177300017327
+    },
+    {
+      "path": "/gba_game/test4.gba",
+      "bytes": 14357872,
+      "seconds": 12.369380899996031
+    },
+    {
+      "path": "/gba_game/test1.gba",
+      "bytes": 33554432,
+      "seconds": 29.292458200012334
+    },
+    {
+      "path": "/gba_game/test-pokemon.gba",
+      "bytes": 8388608,
+      "seconds": 7.387911500001792
+    },
+    {
+      "path": "/gba_game/test1.gba",
+      "bytes": 33554432,
+      "seconds": 29.347974000003887
+    }
+  ],
+  "checks": [
+    {
+      "path": "/gba_game/test-pokemon.gba",
+      "bytes": 8388608,
+      "crc32": "fd1eeb78",
+      "seconds": 5.723771700024372
+    },
+    {
+      "rwtest": "/GBA/TEST/SDTEST27.BIN",
+      "bytes": 131072,
+      "crc32": "29df376d"
+    },
+    {
+      "path": "/GBA/SAVES/test-pokemon.sav",
+      "bytes": 131072,
+      "crc32": "154803cc",
+      "seconds": 0.09566270001232624
+    },
+    {
+      "path": "/gba_game/test4.gba",
+      "bytes": 14357872,
+      "crc32": "2cf3dede",
+      "seconds": 9.592689799988875
+    },
+    {
+      "path": "/GBA/SAVES/test4.sav",
+      "bytes": 32768,
+      "crc32": "8c5ac31d",
+      "seconds": 0.031535299989627674
+    },
+    {
+      "path": "/gba_game/test1.gba",
+      "bytes": 33554432,
+      "crc32": "fc7b376f",
+      "seconds": 23.230272599990712
+    },
+    {
+      "path": "/GBA/SAVES/test-pokemon.sav",
+      "bytes": 131072,
+      "crc32": "154803cc",
+      "seconds": 0.09536279999883845
+    },
+    {
+      "rwtest": "/GBA/TEST/SDTEST28.BIN",
+      "bytes": 131072,
+      "crc32": "29df376d"
+    },
+    {
+      "path": "/GBA/TEST/SDTEST00.BIN",
+      "bytes": 131072,
+      "crc32": "29df376d",
+      "seconds": 0.09552299999631941
+    }
+  ],
+  "heap_before": 40470584,
+  "heap_after_exit": 40470152,
+  "retained_file_pool_bytes": 432,
+  "saves": {
+    "queued": 3,
+    "completed": 3,
+    "errors": 0,
+    "busy": 0,
+    "bytes": 131072,
+    "crc32": 357041100,
+    "last_result": 0,
+    "path": "/GBA/SAVES/test-pokemon.sav"
+  },
+  "audio_and_lcd_errors": 0,
+  "driven_by": "existing serial keys/menu commands through production GUI",
+  "manual_controller_this_boot": false,
+  "gui_30_minute_soak_this_version": false,
+  "actual_in_game_progress_restore_this_version": false,
+  "nor_written": false,
+  "baseline": {
+    "crc32": "1f242dd3",
+    "spi_hz": 7031250,
+    "validation": "build/firmware-revisions/gui-final-20261018-validation.json",
+    "loads_seconds": [
+      15.878106999996817,
+      27.061455199989723,
+      63.219320300006075,
+      15.880769200011855
+    ]
+  },
+  "comparison": [
+    {
+      "bytes": 8388608,
+      "path": "/gba_game/test-pokemon.gba",
+      "baseline_seconds": 15.878106999996817,
+      "optimized_seconds": 7.369177300017327,
+      "speed_factor": 2.1546648090499168,
+      "time_reduction_percent": 53.58906889833401
+    },
+    {
+      "bytes": 14357872,
+      "path": "/gba_game/test4.gba",
+      "baseline_seconds": 27.061455199989723,
+      "optimized_seconds": 12.369380899996031,
+      "speed_factor": 2.187777659914928,
+      "time_reduction_percent": 54.291516074860866
+    },
+    {
+      "bytes": 33554432,
+      "path": "/gba_game/test1.gba",
+      "baseline_seconds": 63.219320300006075,
+      "optimized_seconds": 29.292458200012334,
+      "speed_factor": 2.158211505102684,
+      "time_reduction_percent": 53.665338284237265
+    }
+  ]
+}

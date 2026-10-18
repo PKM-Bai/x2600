@@ -1,0 +1,48 @@
+{
+  "board": "HALLEY7-M X2600M 64MiB",
+  "date": "2026-10-18",
+  "binary_bytes": 912416,
+  "binary_sha256": "6eebdc1372ab01e29be54c896f1b061f0c29952b30820866a54a29308f4e7939",
+  "binary_crc32": "1f242dd3",
+  "ram_load_log": "build/ramload-gui-final-20261018-reboot.log",
+  "gui_test_log": "build\\gui-final-switch32-20261018.log",
+  "gui_test_status": "PASS",
+  "sequence": [
+    "8MiB Pokemon",
+    "GUI save and full-file readback CRC",
+    "14MiB test4",
+    "GUI save and full-file readback CRC",
+    "32MiB test1",
+    "8MiB Pokemon",
+    "GUI save and full-file readback CRC",
+    "GUI exit"
+  ],
+  "loads_seconds": [
+    15.878106999996817,
+    27.061455199989723,
+    63.219320300006075,
+    15.880769200011855
+  ],
+  "heap_before": 40470584,
+  "heap_after_exit": 40470152,
+  "retained_file_pool_bytes": 432,
+  "saves": {
+    "queued": 3,
+    "completed": 3,
+    "errors": 0,
+    "busy": 0,
+    "bytes": 131072,
+    "crc32": 357041100,
+    "last_result": 0,
+    "path": "/GBA/SAVES/test-pokemon.sav"
+  },
+  "audio_and_lcd_errors": 0,
+  "driven_by": "existing serial keys/menu commands through production GUI",
+  "manual_controller_this_boot": false,
+  "scope_limits": [
+    "GUI 30-minute soak not run",
+    "actual in-game progress restore not verified",
+    "previous 65b3e377 build had user confirmation of game picture, Y menu and save notice"
+  ],
+  "nor_written": false
+}
