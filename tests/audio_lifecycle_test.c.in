@@ -1,0 +1,257 @@
+#include <assert.h>
+#include <errno.h>
+#include <stdint.h>
+#include <setjmp.h>
+#include <stdio.h>
+#include <string.h>
+#include "audio.h"
+
+/* Inject the production functions. Hooks model a console stop at a task
+ * boundary, during the DAC settling delay, and at a cache-clean boundary.
+ */
+typedef int HAL_StatusTypeDef;
+enum { HAL_OK = 0 };
+enum period_state { PERIOD_FREE, PERIOD_FILLING, PERIOD_READY, PERIOD_PLAYING };
+static int16_t playback[AUDIO_PERIOD_COUNT][AUDIO_PERIOD_FRAMES];
+static volatile enum period_state periods[AUDIO_PERIOD_COUNT];
+static volatile int active_period = -1;
+static volatile unsigned ready_periods, read_period;
+static unsigned write_period, fill_frames;
+static volatile int running, output_muted;
+static int playback_enabled, initialized, primed, stream_started;
+static uint64_t dma_started_us, dma_finished_us, last_ready_us;
+static uint32_t stop_generation, source_rate, source_phase;
+static int source_previous_valid;
+static audio_stats_t counters;
+static int codec, aic, service_task;
+static unsigned critical_depth, notifications, dac_enabled, amplifier_enabled;
+static unsigned stop_on_exit, stop_on_delay, stop_on_init, stop_on_clean;
+static unsigned dma_stops;
+static int dac_result;
+static uint64_t now_us;
+static jmp_buf service_return;
+static unsigned service_iterations;
+
+static void enter_critical(void) { ++critical_depth; }
+static void exit_critical(void)
+{
+    assert(critical_depth);
+    --critical_depth;
+    if (!critical_depth && stop_on_exit) {
+        stop_on_exit = 0;
+        audio_stop();
+    }
+}
+#define taskENTER_CRITICAL() enter_critical()
+#define taskEXIT_CRITICAL() exit_critical()
+#define pdMS_TO_TICKS(n) (n)
+#define pdTRUE 1
+#define configASSERT(condition) assert(condition)
+#define __HAL_AIC_FLUSH_TXFIFO(p) ((void)(p))
+#define __HAL_AIC_CLEAR_TUR(p) ((void)(p))
+#define __HAL_AIC_DISABLE_TRANSMIT_DMA(p) ((void)(p))
+#define __HAL_AIC_DISABLE_REPLAY(p) ((void)(p))
+static void apply_output_state(void)
+{ amplifier_enabled = !output_muted && playback_enabled; }
+static void dma_clear_stop(void) { ++dma_stops; }
+static void HAL_ICODEC_DAC_Disable(int *p)
+{ (void)p; dac_enabled = 0; }
+static int HAL_ICODEC_DAC_Enable(int *p)
+{ (void)p; dac_enabled = dac_result == HAL_OK; return dac_result; }
+static int audio_failure(const char *stage, int result)
+{ (void)stage; (void)result; return -1; }
+int audio_init(void)
+{
+    initialized = 1;
+    if (stop_on_init) { stop_on_init = 0; audio_stop(); }
+    return 0;
+}
+static void vTaskDelay(unsigned ticks)
+{
+    assert(!critical_depth);
+    now_us += (uint64_t)ticks * 1000;
+    if (stop_on_delay) { stop_on_delay = 0; audio_stop(); }
+}
+static void CleanDCache_by_Addr(unsigned long *address, size_t size)
+{
+    (void)address; (void)size;
+    if (stop_on_clean) {
+        stop_on_clean = 0;
+        if (critical_depth) stop_on_exit = 1;
+        else audio_stop();
+    }
+}
+static uint64_t platform_time_us(void) { return now_us; }
+static void xTaskNotifyGive(int handle) { (void)handle; ++notifications; }
+static unsigned ulTaskNotifyTake(int clear, unsigned ticks)
+{
+    (void)clear; (void)ticks;
+    if (!service_iterations) longjmp(service_return, 1);
+    --service_iterations;
+    return 1;
+}
+static void count_fifo_underrun(void) { }
+static void start_period(unsigned period)
+{
+    (void)period;
+    dma_started_us = now_us;
+    stream_started = playback_enabled = 1;
+    apply_output_state();
+}
+
+@AUDIO_START_FUNCTION@
+
+@AUDIO_STOP_FUNCTION@
+
+@AUDIO_QUEUE_FUNCTION@
+
+@AUDIO_SERVICE_FUNCTION@
+
+static void service_step(void)
+{
+    service_iterations = 1;
+    if (!setjmp(service_return)) audio_service(NULL);
+    assert(!critical_depth);
+}
+
+static void publish_period(void)
+{
+    for (unsigned i = 0; i < AUDIO_PERIOD_FRAMES; ++i) assert(queue_sample(7));
+}
+
+static void finish_period(void)
+{
+    assert(active_period >= 0);
+    now_us = dma_started_us + 10000;
+    periods[active_period] = PERIOD_FREE;
+    active_period = -1;
+    service_step();
+}
+
+static void check_stopped(void)
+{
+    assert(!running && !playback_enabled && !amplifier_enabled && !dac_enabled);
+    assert(active_period == -1 && ready_periods == 0 && read_period == 0);
+    assert(write_period == 0 && fill_frames == 0 && primed == 0);
+    for (unsigned i = 0; i < AUDIO_PERIOD_COUNT; ++i)
+        assert(periods[i] == PERIOD_FREE);
+    assert(!critical_depth);
+}
+
+int main(void)
+{
+    output_muted = 1;
+    assert(audio_start() == 0);
+    assert(running && dac_enabled && !amplifier_enabled);
+    for (unsigned i = 0; i < AUDIO_PERIOD_COUNT * AUDIO_PERIOD_FRAMES; ++i) {
+        now_us += i % AUDIO_PERIOD_FRAMES == 0 ? 10000 : 0;
+        assert(queue_sample((int16_t)i));
+    }
+    assert(ready_periods == AUDIO_PERIOD_COUNT && notifications == AUDIO_PERIOD_COUNT);
+    assert(counters.output_frames == AUDIO_PERIOD_COUNT * AUDIO_PERIOD_FRAMES);
+    assert(counters.max_ready_gap_us == 10000);
+    assert(counters.last_ready_periods == AUDIO_PERIOD_COUNT);
+    assert(!counters.last_ready_active && !counters.last_ready_dma_age_us);
+    assert(!queue_sample(1)); /* full ring retains every previous sample */
+    assert(playback[0][0] == 0 && playback[0][479] == 479);
+    audio_stop();
+    check_stopped();
+    assert(output_muted == 1 && !queue_sample(2));
+
+    /* A stop after claiming a partial period must not leave a dangling fill. */
+    assert(audio_start() == 0);
+    stop_on_exit = 1;
+    assert(queue_sample(123));
+    check_stopped();
+
+    /* A stop while cleaning a full period cannot publish an orphan READY. */
+    assert(audio_start() == 0);
+    for (unsigned i = 0; i < AUDIO_PERIOD_FRAMES - 1; ++i) assert(queue_sample(7));
+    stop_on_clean = 1;
+    assert(queue_sample(8));
+    check_stopped();
+
+    /* A console stop during the 300 ms wait cannot be overwritten by start. */
+    stop_on_delay = 1;
+    assert(audio_start() == -ECANCELED);
+    check_stopped();
+
+    initialized = 0;
+    stop_on_init = 1;
+    assert(audio_start() == -ECANCELED);
+    check_stopped();
+
+    dac_result = -1;
+    assert(audio_start() == -1);
+    check_stopped();
+    dac_result = HAL_OK;
+    assert(audio_start() == 0);
+    assert(output_muted == 1 && !amplifier_enabled);
+    assert(!counters.output_frames && !counters.max_ready_gap_us);
+    assert(!counters.first_queue_underrun_us);
+    assert(!counters.first_fifo_underrun_us && !counters.first_fifo_completed_periods);
+    assert(!counters.last_ready_periods && !counters.first_under_ready_periods);
+    audio_stop();
+    check_stopped();
+
+    /* Single-step the production service loop. Four complete periods must
+     * wait; five start the unchanged 5760-byte ring, on startup and recovery.
+     */
+    assert(sizeof(playback) == 5760 && AUDIO_PRIME_PERIODS == 5);
+    assert(audio_start() == 0);
+    for (unsigned i = 0; i < AUDIO_PRIME_PERIODS - 1; ++i) {
+        now_us += 10000;
+        publish_period();
+        service_step();
+        assert(active_period < 0 && !primed);
+        assert(ready_periods == i + 1);
+    }
+    now_us += 10000;
+    publish_period();
+    service_step();
+    assert(active_period == 0 && primed && ready_periods == 4);
+    uint64_t first_start = now_us;
+    for (unsigned i = 0; i < 3; ++i) finish_period();
+    assert(!counters.queue_underruns && active_period >= 0);
+    now_us = first_start + 36000;
+    publish_period();
+    assert(counters.max_ready_gap_us == 36000);
+    assert(counters.last_ready_periods == 2 && counters.last_ready_active == 1);
+    assert(counters.last_ready_dma_age_us == 6000);
+    /* Drain intentionally, verifying the saved context belongs to the final
+     * publication and stays latched when subsequent publications occur.
+     */
+    for (unsigned i = 0; i < 3; ++i) finish_period();
+    assert(counters.queue_underruns == 1 && !primed && active_period < 0);
+    assert(counters.underrun_ready_gap_us == 24000);
+    uint64_t first_under = counters.first_queue_underrun_us;
+    assert(first_under == first_start + 60000);
+    assert(counters.first_under_ready_periods == 2 && counters.first_under_active == 1);
+    assert(counters.first_under_dma_age_us == 6000);
+    for (unsigned i = 0; i < AUDIO_PRIME_PERIODS - 1; ++i) {
+        now_us += 10000;
+        publish_period();
+        service_step();
+        assert(active_period < 0 && !primed);
+    }
+    now_us += 10000;
+    publish_period();
+    service_step();
+    assert(active_period >= 0 && primed && ready_periods == 4);
+    assert(counters.last_ready_periods == 5 && !counters.last_ready_active);
+    for (unsigned i = 0; i < AUDIO_PRIME_PERIODS; ++i) finish_period();
+    assert(counters.queue_underruns == 2);
+    assert(counters.first_queue_underrun_us == first_under);
+    assert(counters.first_under_ready_periods == 2 && counters.first_under_active == 1);
+    assert(counters.first_under_dma_age_us == 6000);
+    audio_stop();
+    check_stopped();
+    assert(audio_start() == 0);
+    assert(!counters.first_queue_underrun_us && !counters.first_under_ready_periods);
+    assert(!counters.first_under_active && !counters.first_under_dma_age_us);
+    assert(!counters.last_ready_periods && !counters.last_ready_active);
+    audio_stop();
+    check_stopped();
+    printf("PASS: production audio start/stop/queue/service; backpressure, stop interleavings, cancellation, mute retention, five-period prefill/recovery, 36ms producer pause, first-underrun snapshot/reset\n");
+    return 0;
+}

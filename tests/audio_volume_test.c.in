@@ -1,0 +1,169 @@
+#include <assert.h>
+#include <errno.h>
+#include <limits.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+#include "audio.h"
+
+#define CHECK(condition, message) do { if (!(condition)) { \
+    printf("FAIL: %s (line %u)\n", message, (unsigned)__LINE__); return 1; \
+} } while (0)
+typedef int HAL_StatusTypeDef;
+enum { HAL_OK = 0 };
+enum period_state { PERIOD_FREE, PERIOD_FILLING, PERIOD_READY, PERIOD_PLAYING };
+typedef struct { struct { unsigned dgain; } Playback; } codec_t;
+static codec_t codec;
+static int aic, amplifier;
+static int16_t playback[AUDIO_PERIOD_COUNT][AUDIO_PERIOD_FRAMES];
+static volatile enum period_state periods[AUDIO_PERIOD_COUNT];
+static volatile int active_period = -1;
+static volatile unsigned ready_periods, read_period;
+static unsigned write_period, fill_frames;
+static volatile int running, output_muted;
+@AUDIO_VOLUME_STATE@
+static int playback_enabled, initialized, primed, stream_started;
+static uint32_t stop_generation, source_rate, source_phase;
+static int source_previous_valid;
+static uint64_t dma_finished_us, last_ready_us;
+static audio_stats_t counters;
+static unsigned critical_depth, gain_writes, hardware_gain, dac_muted, amp_enabled;
+static unsigned delay_calls, enable_calls, configured_gain;
+static unsigned during_init = UINT_MAX;
+
+#define taskENTER_CRITICAL() (++critical_depth)
+#define taskEXIT_CRITICAL() do { assert(critical_depth); --critical_depth; } while (0)
+#define pdMS_TO_TICKS(n) (n)
+#define __HAL_ICODEC_DAC_MUTE_ENABLE(p) do { (void)(p); dac_muted = 1; } while (0)
+#define __HAL_ICODEC_DAC_MUTE_DISABLE(p) do { (void)(p); dac_muted = 0; } while (0)
+#define __HAL_AIC_DISABLE_TRANSMIT_DMA(p) ((void)(p))
+#define __HAL_AIC_DISABLE_REPLAY(p) ((void)(p))
+#define __HAL_AIC_FLUSH_TXFIFO(p) ((void)(p))
+#define __HAL_AIC_CLEAR_TUR(p) ((void)(p))
+static void HAL_AIC_PlaybackDisable(int *handle, int power)
+{ (void)handle; (void)power; assert(critical_depth); amp_enabled = 0; }
+static void HAL_AIC_PlaybackEnable(int *handle, int power)
+{ (void)handle; (void)power; assert(critical_depth); amp_enabled = 1; }
+static int HAL_ICODEC_DAC_SetDigGain(codec_t *handle, unsigned gain)
+{
+    assert(handle == &codec && critical_depth && gain <= 200u);
+    hardware_gain = gain;
+    ++gain_writes;
+    return HAL_OK;
+}
+static int HAL_ICODEC_DAC_Enable(codec_t *handle)
+{ (void)handle; ++enable_calls; return HAL_OK; }
+static void HAL_ICODEC_DAC_Disable(codec_t *handle) { (void)handle; }
+static void dma_clear_stop(void) { }
+static int audio_failure(const char *stage, int result)
+{ (void)stage; (void)result; return -1; }
+static void vTaskDelay(unsigned ticks)
+{ assert(!critical_depth && ticks == 300u); ++delay_calls; }
+
+@AUDIO_VOLUME_FUNCTIONS@
+
+/* Other codec bring-up operations are hardware stubs. These two injected
+ * source blocks are the real initial gain selection and final publication,
+ * with another task changing volume while initialization is in progress.
+ */
+int audio_init(void)
+{
+    if (initialized) return 0;
+@AUDIO_INIT_GAIN@
+    configured_gain = hardware_gain = codec.Playback.dgain;
+    if (during_init != UINT_MAX) {
+        unsigned percent = during_init;
+        during_init = UINT_MAX;
+        assert(audio_set_volume(percent) == 0);
+    }
+@AUDIO_INIT_PUBLISH@
+    return 0;
+}
+
+static void model_ready_playback(void)
+{
+    taskENTER_CRITICAL();
+    playback_enabled = 1;
+    apply_output_state();
+    taskEXIT_CRITICAL();
+}
+
+int main(void)
+{
+    audio_stats_t stats;
+    CHECK(audio_get_volume() == 100u && !initialized, "default volume changed");
+    CHECK(audio_set_volume(101) == -EINVAL && audio_set_volume(UINT_MAX) == -EINVAL &&
+          audio_get_volume() == 100u && !gain_writes, "invalid pre-init volume accepted");
+    CHECK(audio_set_volume(50) == 0 && audio_get_volume() == 50u &&
+          !initialized && !gain_writes && !enable_calls,
+          "pre-init setter touched hardware or started playback");
+    CHECK(audio_start() == 0 && configured_gain == 170u && hardware_gain == 170u &&
+          running && !amp_enabled && dac_muted && delay_calls == 1,
+          "initialization ignored the cached volume or bypassed prefill gating");
+    model_ready_playback();
+    CHECK(amp_enabled && !dac_muted, "ready playback stayed muted");
+
+    ready_periods = 2;
+    fill_frames = 17;
+    active_period = 0;
+    counters.input_frames = 123;
+    counters.output_frames = 456;
+    unsigned before_delay = delay_calls, before_enable = enable_calls;
+    CHECK(audio_set_volume(0) == 0 && hardware_gain == 0u &&
+          dac_muted && !amp_enabled && !output_muted,
+          "zero volume did not gate DAC/amplifier independently");
+    audio_get_stats(&stats);
+    CHECK(stats.volume_percent == 0u && stats.muted == 1u && stats.running &&
+          stats.queued_frames == 3u * AUDIO_PERIOD_FRAMES + 17u &&
+          stats.input_frames == 123 && stats.output_frames == 456,
+          "volume zero changed PCM queue/counters or effective mute stats");
+    CHECK(audio_set_volume(10) == 0 && hardware_gain == 146u && amp_enabled && !dac_muted,
+          "10 percent gain or unmute differs");
+    CHECK(audio_set_volume(50) == 0 && hardware_gain == 170u &&
+          audio_set_volume(100) == 0 && hardware_gain == 200u,
+          "50/100 percent gain differs");
+    CHECK(delay_calls == before_delay && enable_calls == before_enable &&
+          active_period == 0 && ready_periods == 2 && fill_frames == 17,
+          "runtime volume restarted or discarded the stream");
+
+    audio_set_muted(1);
+    CHECK(audio_set_volume(0) == 0 && audio_set_volume(80) == 0 &&
+          hardware_gain == 188u && output_muted && dac_muted && !amp_enabled,
+          "changing volume overrode explicit mute");
+    audio_set_muted(0);
+    CHECK(amp_enabled && !dac_muted && audio_get_volume() == 80u,
+          "explicit unmute lost volume");
+    CHECK(audio_set_volume(0) == 0, "zero volume failed");
+    audio_set_muted(1);
+    audio_set_muted(0);
+    CHECK(dac_muted && !amp_enabled && audio_get_volume() == 0u,
+          "explicit mute toggle bypassed zero volume");
+    unsigned before_writes = gain_writes;
+    CHECK(audio_set_volume(101) == -EINVAL && !audio_get_volume() &&
+          gain_writes == before_writes && dac_muted && !amp_enabled,
+          "invalid initialized volume changed output");
+
+    CHECK(audio_set_volume(60) == 0 && hardware_gain == 176u, "60 percent gain differs");
+    audio_stop();
+    CHECK(audio_get_volume() == 60u && !running && !amp_enabled && !output_muted,
+          "stop reset volume or explicit mute");
+    CHECK(audio_start() == 0 && audio_get_volume() == 60u && hardware_gain == 176u,
+          "restart lost volume");
+    model_ready_playback();
+    CHECK(amp_enabled, "restart failed to restore output");
+
+    audio_stop();
+    initialized = 0;
+    CHECK(audio_set_volume(20) == 0, "pre-init race setup failed");
+    during_init = 90;
+    CHECK(audio_start() == 0 && configured_gain == 152u && hardware_gain == 194u &&
+          audio_get_volume() == 90u,
+          "initialization overwrote a concurrent latest-volume request");
+    model_ready_playback();
+    audio_get_stats(&stats);
+    CHECK(stats.volume_percent == 90u && !stats.muted && amp_enabled &&
+          !critical_depth, "volume stats or critical-section balance differs");
+    audio_stop();
+    puts("PASS: production audio volume; pre/init/runtime, 0/10/50/100 mapping, independent mute/amplifier, queue preserved, stop/start retention, init race and bounds");
+    return 0;
+}

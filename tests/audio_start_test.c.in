@@ -1,0 +1,149 @@
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+#include "audio.h"
+
+#define CHECK(condition, message) do { if (!(condition)) { \
+    printf("FAIL: %s (line %u)\n", message, (unsigned)__LINE__); return 1; \
+} } while (0)
+static int16_t playback[AUDIO_PERIOD_COUNT][AUDIO_PERIOD_FRAMES];
+static uint32_t descriptor[16];
+static struct { void *DescSrcAddress; size_t DataLength; } descriptor_config;
+static struct { unsigned Channel; } channel_config;
+typedef struct {
+    struct { struct { uintptr_t DDAn, DCSn; } CHANNEL[1]; } Channel;
+    struct { uintptr_t DDS; } GCR;
+} dma_regs_t;
+static dma_regs_t dma_registers;
+static struct { dma_regs_t *Instance; } dma;
+static int aic;
+static audio_stats_t counters;
+static int stream_started, playback_enabled;
+static uint64_t dma_started_us, dma_finished_us, now_us;
+static unsigned replay, dma_request, fifo_count, fifo_writes, flushes, tur;
+static unsigned clears_while_replaying, bad_prefill;
+static int16_t fifo[64], output[AUDIO_PERIOD_FRAMES * 3];
+static size_t output_count;
+static const int16_t *dma_source;
+static size_t dma_frames;
+
+static void apply_output_state(void) { }
+static void dma_clear_stop(void) { }
+static uint64_t platform_time_us(void) { return now_us; }
+static void CleanDCache_by_Addr(unsigned long *address, size_t bytes)
+{ (void)address; (void)bytes; }
+static void HAL_DMA_Initdescriptor(void *handle, unsigned channel)
+{
+    (void)handle; (void)channel;
+    dma_source = descriptor_config.DescSrcAddress;
+    dma_frames = descriptor_config.DataLength / sizeof(int16_t);
+}
+static void append_dma(void)
+{
+    memcpy(output + output_count, dma_source, dma_frames * sizeof(int16_t));
+    output_count += dma_frames;
+}
+static void write_register(uintptr_t *address, uintptr_t value)
+{
+    *address = value;
+    if (address == &dma_registers.Channel.CHANNEL[0].DCSn && replay && dma_request)
+        append_dma();
+}
+static void fifo_write(uint16_t sample)
+{
+    if (replay || dma_request) ++bad_prefill;
+    fifo[fifo_count++] = (int16_t)sample;
+    ++fifo_writes;
+}
+static void fifo_flush(void) { fifo_count = 0; ++flushes; }
+static void clear_tur(void) { if (replay) ++clears_while_replaying; tur = 0; }
+static void enable_replay(void)
+{
+    replay = 1;
+    /* DMA arbitration may delay its first write past a sample boundary.
+     * ENB was set by HAL_AIC_Init: opening replay now reads an empty FIFO
+     * unless the CPU has actually prefilled it. Do not let DMA win the race
+     * artificially just because its request bit was written first.
+     */
+    if (!fifo_count) tur = 1;
+    memcpy(output + output_count, fifo, fifo_count * sizeof(int16_t));
+    output_count += fifo_count;
+    fifo_count = 0;
+    if (dma_request) append_dma();
+}
+#define DCSn_DES8 1u
+#define DCSn_CTE 2u
+#define VIRT_TO_PHYS(address) ((uintptr_t)(address))
+#define WRITE_REG(address, value) write_register(&(address), (uintptr_t)(value))
+#define __HAL_AIC_DISABLE_REPLAY(p) do { (void)(p); replay = 0; } while (0)
+#define __HAL_AIC_DISABLE_TRANSMIT_DMA(p) do { (void)(p); dma_request = 0; } while (0)
+#define __HAL_AIC_FLUSH_TXFIFO(p) do { (void)(p); fifo_flush(); } while (0)
+#define __HAL_AIC_CLEAR_TUR(p) do { (void)(p); clear_tur(); } while (0)
+#define __HAL_AIC_WRITE_TX_FIFO(p, sample) do { (void)(p); fifo_write(sample); } while (0)
+#define __HAL_AIC_ENABLE_TRANSMIT_DMA(p) do { (void)(p); dma_request = 1; } while (0)
+#define __HAL_AIC_ENABLE_REPLAY(p) do { (void)(p); enable_replay(); } while (0)
+#define __HAL_AIC_ENABLE(p) ((void)(p))
+#define __HAL_AIC_READ_TUR(p) ((void)(p), tur)
+@AUDIO_FIFO_COUNT_FUNCTION@
+
+@AUDIO_PERIOD_START_FUNCTION@
+
+int main(void)
+{
+    for (unsigned period = 0; period < 3; ++period)
+        for (unsigned i = 0; i < AUDIO_PERIOD_FRAMES; ++i)
+            playback[period][i] = (int16_t)((period * AUDIO_PERIOD_FRAMES + i) * 131u + 32768u);
+    dma.Instance = &dma_registers;
+    descriptor_config.DataLength = sizeof(playback[0]);
+    now_us = 1000;
+    start_period(0);
+    CHECK(!tur, "replay enabled before FIFO prefill");
+    CHECK(!bad_prefill && fifo_writes == 16 && flushes == 1,
+          "first period did not prefill with replay/DMA stopped");
+    CHECK(dma_source == playback[0] + 16 && dma_frames == AUDIO_PERIOD_FRAMES - 16,
+          "first DMA duplicated or skipped the CPU prefix");
+    CHECK(output_count == AUDIO_PERIOD_FRAMES && !clears_while_replaying,
+          "first period inserted data or cleared a running underrun");
+    for (unsigned i = 0; i < AUDIO_PERIOD_FRAMES; ++i)
+        CHECK(output[i] == playback[0][i], "first period PCM is not contiguous");
+
+    now_us += 10000;
+    start_period(1);
+    CHECK(fifo_writes == 16 && flushes == 1 && !tur,
+          "ordinary DMA handover repeated FIFO prefill/flush");
+    CHECK(dma_source == playback[1] && dma_frames == AUDIO_PERIOD_FRAMES &&
+          output_count == AUDIO_PERIOD_FRAMES * 2,
+          "ordinary period descriptor/data length changed");
+    for (unsigned i = 0; i < AUDIO_PERIOD_FRAMES; ++i)
+        CHECK(output[AUDIO_PERIOD_FRAMES + i] == playback[1][i],
+              "handover PCM is not contiguous");
+
+    replay = dma_request = stream_started = playback_enabled = 0;
+    now_us += 10000;
+    start_period(2);
+    CHECK(fifo_writes == 32 && flushes == 2 && !tur,
+          "restarted stream did not repeat the initial prefill");
+    CHECK(output_count == AUDIO_PERIOD_FRAMES * 3, "restart sample count differs");
+    for (unsigned i = 0; i < AUDIO_PERIOD_FRAMES; ++i)
+        CHECK(output[AUDIO_PERIOD_FRAMES * 2 + i] == playback[2][i],
+              "restart PCM is not contiguous");
+
+    /* Genuine runtime flags must be counted, cleared, and latched once. */
+    now_us += 500;
+    counters.completed_periods = 1;
+    tur = 1;
+    count_fifo_underrun();
+    CHECK(counters.fifo_underruns == 1 && !tur &&
+          counters.first_fifo_underrun_us == now_us &&
+          counters.first_fifo_completed_periods == 1, "first runtime TUR context lost");
+    uint64_t first_time = now_us;
+    now_us += 10000;
+    counters.completed_periods = 2;
+    tur = 1;
+    count_fifo_underrun();
+    CHECK(counters.fifo_underruns == 2 && !tur &&
+          counters.first_fifo_underrun_us == first_time &&
+          counters.first_fifo_completed_periods == 1, "later TUR overwrote first context");
+    puts("PASS: production start_period; FIFO before replay, exact first/handover/restart PCM, real TUR counted and first context retained");
+    return 0;
+}

@@ -1,0 +1,78 @@
+
+#include <stdint.h>
+#include <stddef.h>
+#include <stdio.h>
+#include <stdlib.h>
+#define AUDIO_OUTPUT_RATE 48000u
+static int running;
+static uint32_t source_rate, source_phase;
+static int16_t source_previous;
+static int source_previous_valid;
+static struct {uint32_t input_rate,input_frames,output_frames,input_nonzero_frames,input_peak;} counters;
+static int16_t captured[40000];
+static size_t output_count, queue_used, queue_capacity;
+static int queue_sample(int16_t value) {
+    if(queue_used==queue_capacity) return 0;
+    captured[output_count++]=value; ++queue_used; ++counters.output_frames; return 1;
+}
+@AUDIO_SUBMIT_FUNCTION@
+
+static int16_t mix(const int16_t* samples, size_t i) {
+    return (int16_t)(((int32_t)samples[i*2]+samples[i*2+1])/2);
+}
+static int check(uint32_t rate, size_t chunk, size_t capacity) {
+    const size_t count=4097;
+    int16_t input[8194];
+    for(size_t i=0;i<count;i++) {
+        input[i*2]=(int16_t)((i*17881u+32768u)&65535u);
+        input[i*2+1]=(int16_t)((i*33103u+32768u)&65535u);
+    }
+    source_rate=source_phase=0; source_previous_valid=0;
+    counters.input_frames=counters.output_frames=0;
+    counters.input_nonzero_frames=counters.input_peak=0;
+    output_count=queue_used=0; queue_capacity=capacity; running=1;
+    size_t consumed=0,calls=0;
+    while(consumed<count) {
+        size_t remaining=count-consumed;
+        size_t n=remaining<chunk?remaining:chunk;
+        consumed+=audio_submit_stereo(input+2*consumed,n,rate);
+        if(++calls>100000) return 1;
+        if(queue_used==capacity) queue_used=0;
+    }
+    size_t expected_count=((count-1)*48000u+rate-1)/rate;
+    if(output_count!=expected_count || counters.input_frames!=count ||
+       counters.output_frames!=expected_count) {
+        printf("bad count rate=%u chunk=%zu cap=%zu: %zu/%zu\n",rate,chunk,capacity,output_count,expected_count);
+        return 1;
+    }
+    for(size_t i=0;i<expected_count;i++) {
+        uint64_t time=(uint64_t)i*rate;
+        size_t left=(size_t)(time/48000u);
+        uint32_t remainder=(uint32_t)(time%48000u);
+        int32_t a=mix(input,left),b=mix(input,left+1);
+        int16_t expected=(int16_t)(a+((int64_t)(b-a)*remainder)/48000u);
+        if(captured[i]!=expected) {
+            printf("bad sample rate=%u chunk=%zu cap=%zu sample=%zu: %d/%d\n",rate,chunk,capacity,i,captured[i],expected);
+            return 1;
+        }
+    }
+    if(audio_submit_stereo(input,1,rate==44100?48000:44100)!=0) return 1;
+    if(audio_submit_stereo(NULL,1,rate)!=0) return 1;
+    if(audio_submit_stereo(input,1,0)!=0) return 1;
+    if(audio_submit_stereo(input,1,192001)!=0) return 1;
+    return 0;
+}
+int main(void) {
+    const uint32_t rates[]={8000,32768,44100,48000,88200,96000,192000};
+    const size_t chunks[]={1,7,480,512,4097};
+    const size_t caps[]={1,113,480,1920};
+    unsigned tests=0;
+    for(size_t r=0;r<sizeof(rates)/sizeof(rates[0]);r++)
+      for(size_t c=0;c<sizeof(chunks)/sizeof(chunks[0]);c++)
+        for(size_t k=0;k<sizeof(caps)/sizeof(caps[0]);k++) {
+            if(check(rates[r],chunks[c],caps[k])) return 1;
+            ++tests;
+        }
+    printf("PASS: %u rate/chunk/backpressure combinations, exact sample oracle; null/rate-change/range checks\n",tests);
+    return 0;
+}
