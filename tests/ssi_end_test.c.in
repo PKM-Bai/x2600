@@ -1,0 +1,441 @@
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+
+typedef enum { HAL_OK, HAL_ERROR, HAL_BUSY, HAL_TIMEOUT } HAL_StatusTypeDef;
+enum { HAL_SPI_STATE_READY = 1, HAL_SPI_STATE_BUSY_RX = 4,
+       HAL_SPI_STATE_BUSY_TX_RX = 5, HAL_SPI_STATE_ERROR = 6 };
+enum { SPI_DATASIZE_8BIT = 8, SPI_DATASIZE_16BIT = 16, SPI_DATASIZE_32BIT = 32 };
+#define HAL_SPI_ERROR_NONE 0u
+#define HAL_MAX_DELAY UINT32_MAX
+#define SSISR_END_Msk 0x80u
+#define SSISR_BUSY_Msk 0x40u
+#define SSISR_TUNDR_Msk 2u
+#define SSISR_ROVER_Msk 1u
+#define SSICR0_DISREV_Msk 1u
+#define SSICR1_UNFIN_Msk 0x00800000u
+typedef struct { uint32_t SSICR0, SSICR1, SSISR; } SPI_TypeDef;
+typedef struct SPI_HandleTypeDef {
+    SPI_TypeDef *Instance;
+    struct { unsigned DataSize; } Init;
+    unsigned Lock, State;
+    uint32_t ErrorCode;
+    uint8_t *pTxBuffPtr, *pRxBuffPtr;
+    uint16_t TxXferCount, RxXferCount, TxXferSize, RxXferSize;
+    void (*TxISR)(struct SPI_HandleTypeDef *);
+    void (*RxISR)(struct SPI_HandleTypeDef *);
+} SPI_HandleTypeDef;
+
+static SPI_TypeDef registers;
+static SPI_HandleTypeDef handle;
+static uint32_t tick_ms, data_ticks, end_after_polls, end_polls, pending_rx_ticks;
+static uint64_t tick_base;
+static unsigned started, finish_sent, rx_done, cleanup_calls, flush_calls;
+static unsigned early_cleanup, early_flush, unlocked;
+static unsigned tx_calls, rx_calls, early_finish, snapshot_calls;
+static uint32_t snapshot_cr0, snapshot_cr1, snapshot_status;
+static unsigned snapshot_tx_left, snapshot_rx_left;
+static unsigned final_underrun, final_overrun, final_clear_calls, overrun_seen;
+static uint8_t sent_byte;
+enum { FIFO_DEPTH = 128 };
+static uint8_t fifo_tx[FIFO_DEPTH], fifo_rx[FIFO_DEPTH];
+static unsigned fifo_mode, fifo_tx_read, fifo_tx_write, fifo_rx_read, fifo_rx_write;
+static unsigned fifo_tx_count, fifo_rx_count, fifo_rx_max, inflight_max;
+static unsigned fifo_clock_polls, fifo_preemptions, fifo_overruns;
+
+#define CHECK(condition, message) do { if (!(condition)) { \
+    printf("FAIL: %s (line %u)\n", message, (unsigned)__LINE__); return 1; \
+} } while (0)
+#define __HAL_Lock(p) do { if (*(p)) return HAL_BUSY; *(p) = 1; } while (0)
+#define __HAL_UnLock(p) do { *(p) = 0; ++unlocked; } while (0)
+
+/* The model clock stays in its uint32 domain. Both the original transfer
+ * loop and the added END loop read the same clock and original tickstart.
+ */
+static void shift_fifo(void)
+{
+    if (!fifo_tx_count) return;
+    uint8_t byte = fifo_tx[fifo_tx_read++ % FIFO_DEPTH];
+    --fifo_tx_count;
+    if (fifo_rx_count == FIFO_DEPTH) {
+        ++fifo_overruns;
+        registers.SSISR |= SSISR_ROVER_Msk;
+        return;
+    }
+    fifo_rx[fifo_rx_write++ % FIFO_DEPTH] = (uint8_t)(byte ^ 0xa5u);
+    if (++fifo_rx_count > fifo_rx_max) fifo_rx_max = fifo_rx_count;
+}
+static uint32_t elapsed_tick(void)
+{
+    if (fifo_mode && started && (handle.TxXferCount || handle.RxXferCount)) {
+        ++fifo_clock_polls;
+        /* CPU polls faster than the wire. Time continues while waiting for
+         * RX, including the old unbounded loop after an actual FIFO overrun.
+         */
+        tick_ms = fifo_clock_polls / 100u;
+        if ((fifo_clock_polls % 8u) == 0) shift_fifo();
+    }
+    return tick_ms;
+}
+/* The SDK clock returns uint64_t, while the SSI-specific task clock wraps
+ * in uint32_t milliseconds. Both read the same modeled time progression.
+ */
+uint64_t HAL_GetTick(void) { return tick_base + elapsed_tick(); }
+uint32_t regba_ssi_poll_tick(void) { return (uint32_t)(tick_base + elapsed_tick()); }
+static uint32_t controller_status(SPI_HandleTypeDef *spi)
+{
+    if (rx_done && !(spi->Instance->SSISR & SSISR_END_Msk)) {
+        ++end_polls;
+        tick_ms = data_ticks + end_polls;
+        /* G's observed 0x5a: final RX is present, but the sticky underrun
+         * keeps BUSY/END at the hold state until software clears TUNDR.
+         */
+        if (!(spi->Instance->SSISR & SSISR_TUNDR_Msk) && end_polls >= end_after_polls)
+            spi->Instance->SSISR = (spi->Instance->SSISR | SSISR_END_Msk) & ~SSISR_BUSY_Msk;
+    }
+    return spi->Instance->SSISR;
+}
+static void tx_byte(SPI_HandleTypeDef *spi)
+{
+    sent_byte = *spi->pTxBuffPtr++;
+    --spi->TxXferCount;
+    ++tx_calls;
+    if (fifo_mode) {
+        fifo_tx[fifo_tx_write++ % FIFO_DEPTH] = sent_byte;
+        ++fifo_tx_count;
+        if (tx_calls - rx_calls > inflight_max) inflight_max = tx_calls - rx_calls;
+    }
+}
+static void rx_byte(SPI_HandleTypeDef *spi)
+{
+    ++rx_calls;
+    if (fifo_mode) {
+        *spi->pRxBuffPtr++ = fifo_rx[fifo_rx_read++ % FIFO_DEPTH];
+        --fifo_rx_count;
+    } else {
+        *spi->pRxBuffPtr++ = (uint8_t)(sent_byte ^ 0xa5u);
+    }
+    if (pending_rx_ticks) {
+        tick_ms = pending_rx_ticks;
+        spi->Instance->SSISR = 0x0000005au;
+    }
+    if (--spi->RxXferCount == 0) {
+        rx_done = 1;
+        tick_ms = data_ticks;
+        /* BUSY=0/END=0 is the crucial interval state: 0x18, as on the board.
+         * The RX byte is available while completion of the clock/frame tail
+         * is deliberately delayed until subsequent status polls.
+         */
+        spi->Instance->SSISR = 0x18u | (end_after_polls ? 0 : SSISR_END_Msk);
+        if (final_underrun)
+            spi->Instance->SSISR = 0x5au | (final_overrun ? SSISR_ROVER_Msk : 0);
+    }
+}
+static void disable_receive(SPI_HandleTypeDef *spi)
+{
+    if (started) {
+        ++cleanup_calls;
+        if (!(spi->Instance->SSISR & SSISR_END_Msk)) ++early_cleanup;
+        spi->Instance->SSICR0 |= SSICR0_DISREV_Msk;
+    }
+}
+static void flush_fifo(SPI_HandleTypeDef *spi)
+{
+    if (started) {
+        ++flush_calls;
+        if (!(spi->Instance->SSISR & SSISR_END_Msk)) ++early_flush;
+        spi->Instance->SSISR = 0x98u;
+    }
+}
+void regba_ssi_timeout_snapshot(SPI_HandleTypeDef *spi)
+{
+    ++snapshot_calls;
+    snapshot_status = spi->Instance->SSISR;
+    snapshot_cr0 = spi->Instance->SSICR0;
+    snapshot_cr1 = spi->Instance->SSICR1;
+    snapshot_tx_left = spi->TxXferCount;
+    snapshot_rx_left = spi->RxXferCount;
+}
+static void finish_transfer(SPI_HandleTypeDef *spi)
+{
+    if (spi->TxXferCount || spi->RxXferCount) ++early_finish;
+    spi->Instance->SSICR1 &= ~SSICR1_UNFIN_Msk;
+    finish_sent = 1;
+}
+static void clear_tx_error(SPI_HandleTypeDef *spi)
+{
+    if (rx_done && finish_sent) ++final_clear_calls;
+    spi->Instance->SSISR &= ~SSISR_TUNDR_Msk;
+}
+static unsigned receive_error(SPI_HandleTypeDef *spi)
+{
+    if (!(spi->Instance->SSISR & SSISR_ROVER_Msk)) return 0;
+    ++overrun_seen;
+    return 1;
+}
+static unsigned tx_fifo_full(void)
+{ return fifo_mode && fifo_tx_count == FIFO_DEPTH; }
+static unsigned rx_fifo_empty(SPI_HandleTypeDef *spi)
+{
+    if (!fifo_mode) return spi->RxXferCount <= spi->TxXferCount;
+    if (!fifo_preemptions && fifo_clock_polls >= 200u) {
+        /* The task is descheduled after the next TX write, before its RX
+         * read. All remaining queued clocks complete while it cannot drain
+         * RX. FIFO capacity and wire ordering are independent of the guard.
+         */
+        ++fifo_preemptions;
+        while (fifo_tx_count) shift_fifo();
+    }
+    return fifo_rx_count == 0;
+}
+#define SPI_TxISR_8BIT tx_byte
+#define SPI_TxISR_16BIT tx_byte
+#define SPI_TxISR_32BIT tx_byte
+#define SPI_TxISR_BIT tx_byte
+#define SPI_RxISR_8BIT rx_byte
+#define SPI_RxISR_16BIT rx_byte
+#define SPI_RxISR_32BIT rx_byte
+#define SPI_RxISR_BIT rx_byte
+#define __HAL_SPI_CLEAR_TFIFO(h) flush_fifo(h)
+#define __HAL_SPI_CLEAR_RFIFO(h) flush_fifo(h)
+#define __HAL_SPI_CLEAR_ERROR(h) ((void)(h))
+#define __HAL_SPI_ENABLE_RECEIVE(h) ((h)->Instance->SSICR0 &= ~SSICR0_DISREV_Msk)
+#define __HAL_SPI_START_TRANSFER(h) do { \
+    (h)->Instance->SSICR1 |= SSICR1_UNFIN_Msk; started = 1; \
+} while (0)
+#define __HAL_SPI_FINISH_TRANSFER(h) finish_transfer(h)
+#define __HAL_SPI_TX_FIFO_IS_FULL(h) ((void)(h), tx_fifo_full())
+#define __HAL_SPI_RX_FIFO_IS_EMPTY(h) rx_fifo_empty(h)
+#define __HAL_SPI_IS_TX_ERROR(h) ((h)->Instance->SSISR & SSISR_TUNDR_Msk)
+#define __HAL_SPI_CLEAR_TX_ERROR(h) clear_tx_error(h)
+#define __HAL_SPI_IS_RX_ERROR(h) receive_error(h)
+#define __HAL_SPI_DISABLE_RECEIVE(h) disable_receive(h)
+#define __HAL_SPI_GET_STATUS(h) controller_status(h)
+
+@SSI_FUNCTION@
+
+static void prepare(uint32_t transfer_ms, uint32_t polls_before_end)
+{
+    memset(&handle, 0, sizeof(handle));
+    memset(&registers, 0, sizeof(registers));
+    handle.Instance = &registers;
+    handle.Init.DataSize = SPI_DATASIZE_8BIT;
+    handle.State = HAL_SPI_STATE_READY;
+    tick_ms = end_polls = 0;
+    tick_base = 0;
+    pending_rx_ticks = 0;
+    data_ticks = transfer_ms;
+    end_after_polls = polls_before_end;
+    started = finish_sent = rx_done = cleanup_calls = flush_calls = 0;
+    early_cleanup = early_flush = unlocked = 0;
+    tx_calls = rx_calls = early_finish = snapshot_calls = 0;
+    snapshot_cr0 = snapshot_cr1 = snapshot_status = 0;
+    snapshot_tx_left = snapshot_rx_left = 0;
+    final_underrun = final_overrun = final_clear_calls = overrun_seen = 0;
+    fifo_mode = fifo_tx_read = fifo_tx_write = fifo_rx_read = fifo_rx_write = 0;
+    fifo_tx_count = fifo_rx_count = fifo_rx_max = inflight_max = 0;
+    fifo_clock_polls = fifo_preemptions = fifo_overruns = 0;
+}
+
+int main(int argc, char **argv)
+{
+    uint8_t tx[512], rx[512];
+    const unsigned sizes[] = { 1, 64, 512 };
+    for (unsigned i = 0; i < sizeof(tx); ++i) tx[i] = (uint8_t)(i * 7u);
+    if (argc == 2 && !strcmp(argv[1], "wrap")) {
+        /* Start just before the low 32-bit wrap, after the wall clock has
+         * already crossed one epoch. Only elapsed uint32_t time is relevant.
+         */
+        prepare(0, 3);
+        tick_base = UINT64_C(0x1fffffffe);
+        CHECK(HAL_SPI_TransmitReceive(&handle, tx, rx, 512, 5) == HAL_OK,
+              "wrapped END completion failed");
+        CHECK(tick_ms == 3 && end_polls == 3 && tx_calls == 512 && rx_calls == 512 &&
+              !early_finish && !early_cleanup && !early_flush && !snapshot_calls,
+              "wrapped completion changed exact data or FINISH/END ordering");
+        for (unsigned i = 0; i < sizeof(tx); ++i)
+            CHECK(rx[i] == (uint8_t)(tx[i] ^ 0xa5u), "wrapped transfer data changed");
+
+        prepare(0, UINT32_MAX);
+        tick_base = UINT64_C(0x1fffffffe);
+        CHECK(HAL_SPI_TransmitReceive(&handle, tx, rx, 1, 5) == HAL_TIMEOUT &&
+              tick_ms == 5 && end_polls == 5 && snapshot_calls == 1 && unlocked == 1,
+              "wrapped END timeout changed the original deadline");
+
+        prepare(0, 0);
+        tick_base = UINT64_C(0x1fffffffe);
+        pending_rx_ticks = 5;
+        CHECK(HAL_SPI_TransmitReceive(&handle, tx, rx, 512, 5) == HAL_TIMEOUT &&
+              tx_calls == 1 && rx_calls == 1 && snapshot_calls == 1,
+              "wrapped unfinished transfer ignored its deadline");
+
+        prepare(5, 0);
+        tick_base = UINT64_C(0x1fffffffe);
+        CHECK(HAL_SPI_TransmitReceive(&handle, tx, rx, 512, 5) == HAL_OK &&
+              !handle.TxXferCount && !handle.RxXferCount && !snapshot_calls,
+              "wrapped completed transfer lost completion priority");
+
+        prepare(0, 3);
+        tick_base = UINT64_C(0x1fffffffe);
+        CHECK(HAL_SPI_TransmitReceive(&handle, tx, rx, 1, HAL_MAX_DELAY) == HAL_OK &&
+              tick_ms == 3 && !snapshot_calls,
+              "wrapped HAL_MAX_DELAY changed semantics");
+        prepare(0, 3);
+        tick_base = UINT64_C(0x1fffffffe);
+        CHECK(HAL_SPI_TransmitReceive(&handle, tx, rx, 1, 0) == HAL_TIMEOUT &&
+              snapshot_calls == 1 && unlocked == 1 && !handle.Lock,
+              "wrapped zero timeout changed semantics");
+        puts("PASS: SSI uint32 task tick; low-bit wrap, shared deadline, pending timeout, completion priority, MAX/zero timeout");
+        return 0;
+    }
+    if (argc == 2 && !strcmp(argv[1], "window")) {
+        prepare(0, 3);
+        fifo_mode = 1;
+        HAL_StatusTypeDef result = HAL_SPI_TransmitReceive(&handle, tx, rx, 512, 100);
+        CHECK(!fifo_overruns, "RX FIFO overrun under task preemption");
+        CHECK(result == HAL_OK, "512-byte FIFO transfer failed");
+        CHECK(fifo_preemptions == 1 && inflight_max == 64 && fifo_rx_max == 64,
+              "64-character in-flight/RX limits were not exercised");
+        CHECK(tx_calls == 512 && rx_calls == 512 && !fifo_tx_count && !fifo_rx_count,
+              "512-byte FIFO transfer changed exact character counts");
+        CHECK(!early_finish && finish_sent && !early_cleanup && !early_flush &&
+              !snapshot_calls && handle.State == HAL_SPI_STATE_READY &&
+              unlocked == 1 && !handle.Lock,
+              "512-byte FIFO transfer changed FINISH/END/cleanup");
+        for (unsigned i = 0; i < sizeof(tx); ++i)
+            CHECK(rx[i] == (uint8_t)(tx[i] ^ 0xa5u), "512-byte FIFO data changed");
+        puts("PASS: SSI 512-byte window; task preemption, max in-flight/RX 64, exact bytes, FINISH/END cleanup");
+        return 0;
+    }
+    if (argc == 2 && !strcmp(argv[1], "underrun")) {
+        for (unsigned index = 0; index < sizeof(sizes) / sizeof(sizes[0]); ++index) {
+            unsigned size = sizes[index];
+            prepare(0, 3);
+            final_underrun = 1;
+            CHECK(HAL_SPI_TransmitReceive(&handle, tx, rx, (uint16_t)size, 10) == HAL_OK,
+                  "final underrun prevented END");
+            CHECK(tx_calls == size && rx_calls == size && final_clear_calls == 1 &&
+                  !early_finish && !early_cleanup && !early_flush && !snapshot_calls,
+                  "final underrun fix added data or changed completion ordering");
+            CHECK(!handle.TxXferCount && !handle.RxXferCount &&
+                  handle.State == HAL_SPI_STATE_READY && unlocked == 1 && handle.Lock == 0,
+                  "final underrun completion changed counts/state/unlock");
+        }
+        prepare(0, 3);
+        final_underrun = final_overrun = 1;
+        CHECK(HAL_SPI_TransmitReceive(&handle, tx, rx, 1, 10) == HAL_ERROR &&
+              final_clear_calls == 1 && overrun_seen == 1,
+              "final TX underrun clear masked RX overrun");
+        puts("PASS: SSI final underrun; observed BUSY/END hold cleared after FINISH, exact 1/64/512 bytes, RX overrun preserved");
+        return 0;
+    }
+    if (argc == 2 && !strcmp(argv[1], "finish")) {
+        for (unsigned index = 0; index < sizeof(sizes) / sizeof(sizes[0]); ++index) {
+            unsigned size = sizes[index];
+            prepare(0, 3);
+            CHECK(HAL_SPI_TransmitReceive(&handle, tx, rx, (uint16_t)size, 10) == HAL_OK,
+                  "deferred FINISH transfer failed");
+            CHECK(!early_finish && finish_sent, "FINISH preceded final RX");
+            CHECK(tx_calls == size && rx_calls == size,
+                  "deferred FINISH changed number of data characters");
+            CHECK(!early_cleanup && !early_flush && !snapshot_calls,
+                  "normal completion changed END cleanup or called timeout hook");
+        }
+
+        prepare(0, 0);
+        pending_rx_ticks = 100;
+        registers.SSICR0 = 0x00008180u; /* RX enabled before the failure. */
+        registers.SSICR1 = 0x30000030u;
+        CHECK(HAL_SPI_TransmitReceive(&handle, tx, rx, 64, 100) == HAL_TIMEOUT,
+              "unfinished transfer changed timeout result");
+        CHECK(tx_calls == 1 && rx_calls == 1 && !finish_sent,
+              "timeout added data or prematurely finished transfer");
+        CHECK(snapshot_calls == 1 && snapshot_cr0 == 0x00008180u &&
+              snapshot_cr1 == (0x30000030u | SSICR1_UNFIN_Msk) &&
+              snapshot_status == 0x0000005au &&
+              snapshot_tx_left == 63 && snapshot_rx_left == 63,
+              "timeout snapshot did not preserve pre-cleanup registers/counts");
+        CHECK(registers.SSICR0 == (snapshot_cr0 | SSICR0_DISREV_Msk) &&
+              registers.SSISR == 0x98u && cleanup_calls == 1 && flush_calls == 2 &&
+              unlocked == 1 && handle.Lock == 0,
+              "timeout cleanup or unlock changed");
+        puts("PASS: SSI deferred FINISH; exact 1/64/512 bytes, RX before FINISH, END before cleanup, raw timeout snapshot");
+        return 0;
+    }
+    if (argc == 2 && !strcmp(argv[1], "deadline")) {
+        /* A task can resume late with more RX/TX still pending. The finite
+         * deadline must still stop this actual production polling loop.
+         */
+        prepare(0, 0);
+        pending_rx_ticks = 100;
+        CHECK(HAL_SPI_TransmitReceive(&handle, tx, rx, 64, 100) == HAL_TIMEOUT,
+              "unfinished transfer ignored expired deadline");
+        CHECK(handle.TxXferCount == 63 && handle.RxXferCount == 63 &&
+              unlocked == 1 && handle.Lock == 0,
+              "pending timeout lost counts or failed to unlock");
+
+        /* The last byte and END are already available when polling resumes
+         * at the deadline. Completed work must not become HAL_TIMEOUT.
+         */
+        prepare(100, 0);
+        CHECK(HAL_SPI_TransmitReceive(&handle, tx, rx, 64, 100) == HAL_OK,
+              "completed transfer rejected at expired deadline");
+        CHECK(!handle.TxXferCount && !handle.RxXferCount &&
+              handle.State == HAL_SPI_STATE_READY && !early_cleanup &&
+              !early_flush && unlocked == 1 && handle.Lock == 0,
+              "late completion changed cleanup/state");
+        for (unsigned i = 0; i < 64; ++i)
+            CHECK(rx[i] == (uint8_t)(tx[i] ^ 0xa5u), "late completion data changed");
+        puts("PASS: SSI deadline; unfinished transfer times out, completed transfer succeeds");
+        return 0;
+    }
+    /* END is already set when the last RX byte arrives: preserve fast path. */
+    prepare(0, 0);
+    CHECK(HAL_SPI_TransmitReceive(&handle, tx, rx, 1, 10) == HAL_OK,
+          "immediately complete transfer failed");
+    CHECK(!early_cleanup && !early_flush && !end_polls && unlocked == 1,
+          "immediate completion changed cleanup/unlock");
+
+    for (unsigned index = 0; index < sizeof(sizes) / sizeof(sizes[0]); ++index) {
+        unsigned size = sizes[index];
+        prepare(0, 3);
+        CHECK(HAL_SPI_TransmitReceive(&handle, tx, rx, (uint16_t)size, 10) == HAL_OK,
+              "delayed END transfer failed");
+        CHECK(!early_cleanup && !early_flush, "normal cleanup preceded END");
+        CHECK(end_polls == 3 && finish_sent && unlocked == 1 && handle.Lock == 0,
+              "END wait or unlock sequence differs");
+        CHECK(cleanup_calls == 1 && flush_calls == 2 && handle.State == HAL_SPI_STATE_READY,
+              "successful transfer cleanup/state differs");
+        for (unsigned i = 0; i < size; ++i)
+            CHECK(rx[i] == (uint8_t)(tx[i] ^ 0xa5u), "transfer data changed");
+    }
+
+    prepare(0, UINT32_MAX); /* END never arrives within the finite timeout. */
+    CHECK(HAL_SPI_TransmitReceive(&handle, tx, rx, 1, 5) == HAL_TIMEOUT,
+          "missing END did not time out");
+    CHECK(tick_ms == 5 && end_polls == 5 && unlocked == 1 && handle.Lock == 0,
+          "END timeout exceeded deadline or failed to unlock");
+    CHECK(cleanup_calls == 1 && flush_calls == 2 && early_cleanup == 1,
+          "timeout did not use existing error cleanup");
+    CHECK(handle.State == HAL_SPI_STATE_BUSY_TX_RX,
+          "timeout unexpectedly advertised READY before caller recovery");
+
+    prepare(8, 4); /* END at t=12; the ORIGINAL t=10 deadline must win. */
+    CHECK(HAL_SPI_TransmitReceive(&handle, tx, rx, 1, 10) == HAL_TIMEOUT,
+          "END phase received a new timeout budget");
+    CHECK(tick_ms == 10 && end_polls == 2 && unlocked == 1,
+          "END phase did not share original tickstart");
+
+    prepare(8, 4);
+    CHECK(HAL_SPI_TransmitReceive(&handle, tx, rx, 1, HAL_MAX_DELAY) == HAL_OK,
+          "HAL_MAX_DELAY rejected delayed END");
+    CHECK(tick_ms == 12 && !early_cleanup && !early_flush && unlocked == 1,
+          "HAL_MAX_DELAY completion ordering differs");
+
+    prepare(0, 3);
+    CHECK(HAL_SPI_TransmitReceive(&handle, tx, rx, 1, 0) == HAL_TIMEOUT,
+          "zero timeout lost existing timeout semantics");
+    CHECK(unlocked == 1 && handle.Lock == 0, "zero timeout remained locked");
+    puts("PASS: generated SSI polling function; immediate/interval END ordering, 1/64/512 bytes, shared timeout, error cleanup/unlock, HAL_MAX_DELAY/zero timeout");
+    return 0;
+}

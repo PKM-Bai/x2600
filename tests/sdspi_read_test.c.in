@@ -1,0 +1,443 @@
+/* Actual SD command/read/write functions are injected below. The card model
+ * owns its byte stream and CRC oracle; no target driver or card is accessed. */
+#include <errno.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+static void check(int condition, const char *message)
+{
+    if (!condition) {
+        fprintf(stderr, "FAIL: %s\n", message);
+        exit(1);
+    }
+}
+
+@TRACE_TYPE@
+
+static uint32_t sectors;
+static int initialized, block_addressed, io_error;
+static uint64_t now_us;
+enum { CARD_SECTORS = 32, BLOCK_BYTES = 512, MAX_COMMANDS = 128, HAL_OK = 0 };
+static uint8_t media[CARD_SECTORS][BLOCK_BYTES];
+static struct {
+    int cs_low, high_capacity, stream, reading;
+    unsigned sector, position, block;
+    unsigned commands[MAX_COMMANDS], arguments[MAX_COMMANDS], command_count;
+    uint8_t reply[32];
+    unsigned reply_size, reply_at, busy, stop_busy_polls, stop_calls, recovery;
+    unsigned stop_position, stop_block;
+    int stop_busy_active, writing;
+    uint8_t pending[BLOCK_BYTES];
+    unsigned write_sector;
+} card;
+static struct {
+    int bad_crc_block, bad_token_block, payload_failure_block;
+    uint8_t bad_token, read_r1, stop_r1;
+    int lost_read_r1, read_packet_failure, stop_packet_failure;
+    int stop_busy_timeout, cleanup_failure, select_timeout;
+} fault;
+
+typedef struct { uint32_t SSICR0, SSICR1, SSISR; } mock_registers_t;
+static mock_registers_t registers;
+static struct {
+    mock_registers_t *Instance;
+    uint32_t State, ErrorCode;
+} spi;
+#define READ_REG(value) (value)
+#define PB_Instance ((void *)1)
+
+static uint16_t crc16_oracle(const uint8_t *data, size_t size)
+{
+    unsigned remainder = 0;
+    for (size_t i = 0; i < size; ++i) {
+        for (unsigned mask = 0x80; mask; mask >>= 1) {
+            unsigned feedback = ((remainder >> 15) & 1u) ^ !!(data[i] & mask);
+            remainder = (remainder << 1) & 0xffffu;
+            if (feedback) remainder ^= 0x1021u;
+        }
+    }
+    return (uint16_t)remainder;
+}
+
+static uint64_t platform_time_us(void) { return now_us; }
+static void vTaskDelay(unsigned ticks) { now_us += (uint64_t)ticks * 1000u; }
+static unsigned speed_calls, speed_divisor;
+static int speed_result;
+static int set_speed(unsigned divisor)
+{
+    check(divisor >= 1 && divisor <= 256, "SSI divider must fit SSIGR");
+    ++speed_calls; speed_divisor = divisor;
+    return speed_result;
+}
+
+static void LL_GPIO_setOutputPin(void *port, unsigned pin)
+{
+    (void)port;
+    check(pin == 0, "only SD chip select may be changed");
+    check(!card.stream, "CMD18 stream deselected before CMD12");
+    card.cs_low = card.reading = card.writing = card.stop_busy_active = 0;
+    card.reply_size = card.reply_at = card.busy = 0;
+}
+static void LL_GPIO_clearOutputPin(void *port, unsigned pin)
+{ (void)port; check(pin == 0, "only SD chip select may be changed"); card.cs_low = 1; }
+static uint32_t LL_GPIO_getPinMaskLevel(void *port)
+{ (void)port; return card.cs_low ? 0u : 1u; }
+
+static void reply_byte(uint8_t byte)
+{
+    check(card.reply_size < sizeof(card.reply), "card response queue capacity");
+    card.reply[card.reply_size++] = byte;
+}
+
+static void accept_command(const uint8_t packet[6])
+{
+    unsigned cmd = packet[0] & 63u;
+    uint32_t argument = (uint32_t)packet[1] << 24 | (uint32_t)packet[2] << 16 |
+                        (uint32_t)packet[3] << 8 | packet[4];
+    check(card.cs_low, "command requires asserted CS");
+    check(card.command_count < MAX_COMMANDS, "command history capacity");
+    card.commands[card.command_count] = cmd;
+    card.arguments[card.command_count++] = argument;
+    card.reply_at = card.reply_size = 0;
+    if (cmd == 12) {
+        check(card.stream, "CMD12 must terminate an active or uncertain CMD18");
+        ++card.stop_calls;
+        card.stop_position = card.position; card.stop_block = card.block;
+        card.stream = card.reading = 0;
+        reply_byte(0x7e); /* Looks like R1: must be discarded, exactly once. */
+        reply_byte(fault.stop_r1);
+        card.busy = 3;
+        card.stop_busy_active = 1;
+        return;
+    }
+    check(!card.stream && !card.reading && !card.writing,
+          "next command starts at a clean card boundary");
+    if (cmd == 17 || cmd == 18 || cmd == 24) {
+        if (!card.high_capacity)
+            check(argument % BLOCK_BYTES == 0, "SDSC command address is in bytes");
+        unsigned sector = card.high_capacity ? argument : argument / BLOCK_BYTES;
+        check(sector < CARD_SECTORS, "fixture command address in card range");
+        reply_byte(0xff);
+        if (cmd == 24) {
+            reply_byte(0);
+            card.writing = 1;
+            card.write_sector = sector;
+        } else {
+            if (fault.lost_read_r1) {
+                for (unsigned i = 0; i < 10; ++i) reply_byte(0xff);
+            } else reply_byte(fault.read_r1);
+            card.sector = sector;
+            card.position = card.block = 0;
+            card.reading = fault.read_r1 == 0;
+            card.stream = cmd == 18 && card.reading;
+        }
+    } else if (cmd == 13) {
+        reply_byte(0); reply_byte(0);
+    } else check(0, "unexpected SD command");
+}
+
+static uint8_t card_byte(void)
+{
+    if (!card.cs_low) return 0xff;
+    if (card.reply_at < card.reply_size) return card.reply[card.reply_at++];
+    if (card.stop_busy_active) {
+        ++card.stop_busy_polls;
+        if (fault.stop_busy_timeout) return 0;
+        if (card.busy) { --card.busy; return 0; }
+        card.stop_busy_active = 0;
+        return 0xff;
+    }
+    if (card.busy) { --card.busy; return 0; }
+    if (fault.select_timeout && !card.reading) return 0;
+    if (!card.reading) return 0xff;
+    check(card.sector < CARD_SECTORS, "stream remains within fixture card");
+    unsigned position = card.position++;
+    uint8_t result;
+    if (!position) {
+        result = fault.bad_token_block >= 0 && card.block == (unsigned)fault.bad_token_block
+                     ? fault.bad_token : 0xfe;
+    } else if (position <= BLOCK_BYTES) result = media[card.sector][position - 1u];
+    else {
+        uint16_t crc = crc16_oracle(media[card.sector], BLOCK_BYTES);
+        if (fault.bad_crc_block >= 0 && card.block == (unsigned)fault.bad_crc_block) crc ^= 1u;
+        result = position == BLOCK_BYTES + 1u ? (uint8_t)(crc >> 8) : (uint8_t)crc;
+        if (position == BLOCK_BYTES + 2u) {
+            card.position = 0;
+            ++card.block; ++card.sector;
+            if (!card.stream) card.reading = 0;
+        }
+    }
+    return result;
+}
+
+static int transport_failure(void)
+{
+    io_error = -ETIMEDOUT;
+    ++card.recovery;
+    /* Match the transport's controller recovery: CS high, with uncertain
+     * CMD18 state still requiring a stop command after reasserting CS. */
+    card.cs_low = card.reading = 0;
+    card.reply_at = card.reply_size = 0;
+    return io_error;
+}
+
+static int exchange(const uint8_t *tx, uint8_t *rx, size_t size)
+{
+    now_us += 100;
+    if (tx && size == 6 && (tx[0] & 0xc0) == 0x40) {
+        unsigned cmd = tx[0] & 63u;
+        accept_command(tx);
+        if ((cmd == 18 && fault.read_packet_failure) ||
+            (cmd == 12 && fault.stop_packet_failure)) return transport_failure();
+        return 0;
+    }
+    if (card.cs_low && card.writing && tx) {
+        if (card.writing == 1) {
+            check(size == 2 && tx[0] == 0xff && tx[1] == 0xfe, "CMD24 data token");
+            card.writing = 2;
+        } else if (card.writing == 2) {
+            check(size == BLOCK_BYTES, "CMD24 complete payload");
+            memcpy(card.pending, tx, size); card.writing = 3;
+        } else {
+            check(size == 2, "CMD24 CRC length");
+            check(((unsigned)tx[0] << 8 | tx[1]) == crc16_oracle(card.pending, BLOCK_BYTES),
+                  "CMD24 payload CRC uses independent oracle");
+            memcpy(media[card.write_sector], card.pending, BLOCK_BYTES);
+            card.writing = 0;
+            card.reply_at = card.reply_size = 0;
+            reply_byte(0x05); card.busy = 2;
+        }
+        return 0;
+    }
+    if (rx && size == BLOCK_BYTES && card.reading && fault.payload_failure_block >= 0 &&
+        card.block == (unsigned)fault.payload_failure_block) return transport_failure();
+    if (!card.cs_low && card.stop_calls && fault.cleanup_failure) return transport_failure();
+    for (size_t i = 0; i < size; ++i) {
+        uint8_t value = card_byte();
+        if (rx) rx[i] = value;
+        if (tx) check(tx[i] == 0xff, "non-command dummy transmit value");
+    }
+    return 0;
+}
+
+static int trace_finish(int result)
+{
+    check(!card.cs_low, "public SD call must release CS on every return");
+    return result;
+}
+
+@PRODUCTION_FUNCTIONS@
+
+static void clear_faults(void)
+{
+    memset(&fault, 0, sizeof(fault));
+    fault.bad_crc_block = fault.bad_token_block = fault.payload_failure_block = -1;
+}
+
+static void reset_card(int high_capacity)
+{
+    memset(&card, 0, sizeof(card));
+    memset(&spi, 0, sizeof(spi));
+    spi.Instance = &registers;
+    clear_faults();
+    card.high_capacity = block_addressed = high_capacity;
+    initialized = 1; sectors = CARD_SECTORS; io_error = 0; now_us = 0;
+    for (unsigned sector = 0; sector < CARD_SECTORS; ++sector)
+        for (unsigned i = 0; i < BLOCK_BYTES; ++i)
+            media[sector][i] = (uint8_t)(sector * 71u + i * 13u + (i >> 3));
+}
+
+static void next_read_and_write(void)
+{
+    uint8_t readback[BLOCK_BYTES], written[BLOCK_BYTES];
+    clear_faults();
+    check(!card.cs_low && !card.stream, "return leaves a reusable card boundary");
+    check(sdspi_read(readback, 7, 1) == 0 && !memcmp(readback, media[7], sizeof(readback)),
+          "next CMD17 after previous read/stop result");
+    for (unsigned i = 0; i < BLOCK_BYTES; ++i) written[i] = (uint8_t)(i ^ 0xa5u);
+    check(sdspi_write(written, 9, 1) == 0, "next CMD24 after previous read/stop result");
+    check(sdspi_sync() == 0, "next CMD13 boundary");
+    check(sdspi_read(readback, 9, 1) == 0 && !memcmp(readback, written, sizeof(written)),
+          "write/readback data after recovered read");
+    check(!card.cs_low && !card.stream, "follow-up calls release CS");
+}
+
+static void test_crc(void)
+{
+    uint8_t data[4112];
+    const size_t lengths[] = {0,1,2,3,7,15,16,31,64,255,256,511,512,513,1024,4096};
+    uint32_t random = 0x12345678u;
+    check(sdspi_crc16((const uint8_t *)"123456789", 9) == 0x31c3, "CRC16 oracle known vector");
+    check(sdspi_crc16(NULL, 0) == 0, "CRC16 oracle empty input");
+    for (unsigned pattern = 0; pattern < 4; ++pattern) {
+        for (size_t i = 0; i < sizeof(data); ++i) {
+            random ^= random << 13; random ^= random >> 17; random ^= random << 5;
+            data[i] = pattern == 0 ? 0 : pattern == 1 ? 0xff : pattern == 2 ? (uint8_t)i : (uint8_t)random;
+        }
+        for (unsigned offset = 0; offset < 16; ++offset)
+            for (unsigned n = 0; n < sizeof(lengths)/sizeof(lengths[0]); ++n)
+                check(sdspi_crc16(data + offset, lengths[n]) == crc16_oracle(data + offset, lengths[n]),
+                      "CRC16 oracle lengths/patterns/unaligned buffers");
+    }
+    for (unsigned n = 0; n < 257; ++n) {
+        random ^= random << 13; random ^= random >> 17; random ^= random << 5;
+        size_t size = random % 4097u;
+        check(sdspi_crc16(data, size) == crc16_oracle(data, size), "CRC16 oracle randomized lengths");
+    }
+}
+
+static void test_clock(void)
+{
+    const struct { uint8_t encoded; unsigned divisor; } valid[] = {
+        {0x32, 3}, {0x5a, 3}, {0x0a, 6}, {0x09, 57}, {0x30, 225}
+    };
+    uint8_t csd[16] = {0};
+    speed_result = 0;
+    for (unsigned i = 0; i < sizeof(valid)/sizeof(valid[0]); ++i) {
+        csd[3] = valid[i].encoded; speed_calls = 0;
+        check(set_data_speed(csd) == 0 && speed_calls == 1 && speed_divisor == valid[i].divisor,
+              "CSD 25/50MHz and lower speed use bounded ceiling divider");
+    }
+    const uint8_t invalid[] = {0xb2, 0x0c, 0x02};
+    for (unsigned i = 0; i < sizeof(invalid); ++i) {
+        csd[3] = invalid[i]; speed_calls = 0;
+        check(set_data_speed(csd) == -EINVAL && !speed_calls,
+              "reserved CSD transfer-speed encodings rejected without changing SSI");
+    }
+    csd[3] = 0x08; speed_calls = 0;
+    check(set_data_speed(csd) == -ENOTSUP && !speed_calls,
+          "100kHz card below SSI divider range rejected without truncation");
+    csd[3] = 0x32; speed_result = -EIO;
+    check(set_data_speed(csd) == -EIO, "clock programming failure propagated");
+    speed_result = 0;
+}
+
+static void test_success(void)
+{
+    uint8_t output[3 * BLOCK_BYTES + 16];
+    reset_card(1);
+    memset(output, 0xa5, sizeof(output));
+    check(sdspi_read(output + 8, 2, 1) == 0, "CMD17 single-block read");
+    check(card.command_count == 1 && card.commands[0] == 17 && card.arguments[0] == 2,
+          "count1 issues one CMD17 and no CMD12");
+    check(!memcmp(output + 8, media[2], BLOCK_BYTES), "CMD17 payload");
+    check(output[7] == 0xa5 && output[8 + BLOCK_BYTES] == 0xa5, "single read buffer boundaries");
+    next_read_and_write();
+    for (unsigned high_capacity = 0; high_capacity < 2; ++high_capacity) {
+        reset_card((int)high_capacity);
+        memset(output, 0xa5, sizeof(output));
+        check(sdspi_read(output + 8, 3, 3) == 0, "CMD18 multi-block read");
+        check(card.command_count == 2 && card.commands[0] == 18 && card.commands[1] == 12,
+              "multi read uses exactly CMD18/CMD12");
+        check(card.arguments[0] == (high_capacity ? 3u : 3u * BLOCK_BYTES) && card.arguments[1] == 0,
+              "HC/SDSC addressing and stop argument");
+        check(!memcmp(output + 8, media[3], 3 * BLOCK_BYTES), "multi-block payload sequence");
+        check(output[7] == 0xa5 && output[sizeof(output)-1] == 0xa5, "multi read buffer boundaries");
+        check(card.stop_busy_polls >= 4 && trace.stop_attempted && trace.stop_result == 0,
+              "CMD12 discards stuff byte and drains R1b busy");
+        check(card.stop_position == 0 && card.stop_block == 3,
+              "CMD12 sends immediately after requested blocks without a pre-ready poll");
+        check(trace.done == 3, "successful multi-block completion count");
+        next_read_and_write();
+    }
+}
+
+static void test_read_errors(void)
+{
+    uint8_t output[3 * BLOCK_BYTES];
+    for (unsigned stop_failure = 0; stop_failure < 4; ++stop_failure) {
+        reset_card(1);
+        memset(output, 0xa5, sizeof(output));
+        fault.bad_crc_block = 1;
+        fault.stop_r1 = stop_failure == 1 ? 4 : 0;
+        fault.stop_busy_timeout = stop_failure == 2;
+        fault.stop_packet_failure = stop_failure == 3;
+        check(sdspi_read(output, 2, 3) == -EILSEQ, "original block CRC error has precedence over stop error");
+        check(trace.command == 18 && trace.done == 1 && trace.sector == 3 &&
+              !strcmp(trace.stage, "read-crc") && trace.crc_card != trace.crc_calculated,
+              "original failing block trace is preserved");
+        check(card.stop_calls == 1 && trace.stop_attempted, "CRC failure still sends one CMD12");
+        int expected = stop_failure == 1 ? -EIO : stop_failure >= 2 ? -ETIMEDOUT : 0;
+        check(trace.stop_result == expected, "stop failure remains separately observable");
+        check(output[2 * BLOCK_BYTES] == 0xa5, "CRC failure does not start later requested block");
+        next_read_and_write();
+    }
+    reset_card(1);
+    fault.bad_crc_block = 0;
+    check(sdspi_read(output, 2, 1) == -EILSEQ && card.stop_calls == 0,
+          "CMD17 CRC failure does not send CMD12");
+    next_read_and_write();
+    for (unsigned illegal = 0; illegal < 2; ++illegal) {
+        reset_card(1);
+        fault.bad_token_block = 0; fault.bad_token = illegal ? 0xfa : 0x0b;
+        check(sdspi_read(output, 2, 3) == -EIO && card.stop_calls == 1,
+              "data error/illegal token stops the multi-read");
+        if (illegal) check(trace.illegal_token && trace.extra_count == 16, "actual illegal-token diagnostics run");
+        next_read_and_write();
+    }
+    reset_card(1);
+    fault.payload_failure_block = 1; fault.stop_r1 = 4;
+    check(sdspi_read(output, 2, 3) == -ETIMEDOUT, "original payload transport error precedes stop rejection");
+    check(trace.done == 1 && trace.stop_result == -EIO && io_error == -ETIMEDOUT && card.recovery == 1,
+          "transport error trace and original io_error survive stop");
+    next_read_and_write();
+}
+
+static void test_stop_errors(void)
+{
+    uint8_t output[2 * BLOCK_BYTES];
+    for (unsigned failure = 0; failure < 4; ++failure) {
+        reset_card(1);
+        fault.stop_r1 = failure == 0 ? 4 : 0;
+        fault.stop_busy_timeout = failure == 1;
+        fault.stop_packet_failure = failure == 2;
+        fault.cleanup_failure = failure == 3;
+        int expected = failure == 0 ? -EIO : -ETIMEDOUT;
+        check(sdspi_read(output, 2, 2) == expected, "successful payload must report stop/cleanup failure");
+        check(trace.stop_attempted && trace.stop_result == expected, "stop result diagnostic");
+        next_read_and_write();
+    }
+    for (unsigned packet_failure = 0; packet_failure < 2; ++packet_failure) {
+        reset_card(1);
+        fault.lost_read_r1 = !packet_failure; fault.read_packet_failure = (int)packet_failure;
+        check(sdspi_read(output, 2, 2) == -ETIMEDOUT && card.stop_calls == 1,
+              "uncertain CMD18 packet/R1 failure still stops stream");
+        next_read_and_write();
+    }
+    reset_card(1);
+    fault.read_r1 = 4;
+    check(sdspi_read(output, 2, 2) == -EIO && !card.stop_calls,
+          "rejected CMD18 does not send a spurious stop");
+    next_read_and_write();
+    reset_card(1);
+    fault.select_timeout = 1;
+    check(sdspi_read(output, 2, 2) == -ETIMEDOUT && !card.command_count,
+          "pre-command select failure does not send CMD18 or CMD12");
+    next_read_and_write();
+}
+
+static void test_bounds(void)
+{
+    uint8_t output[BLOCK_BYTES];
+    reset_card(1);
+    memset(output, 0xa5, sizeof(output));
+    check(sdspi_read(output, 0, 0) == -EINVAL, "zero count rejected");
+    check(sdspi_read(output, CARD_SECTORS, 1) == -EINVAL, "sector past card rejected");
+    check(sdspi_read(output, CARD_SECTORS - 1u, 2) == -EINVAL, "end crossing rejected");
+    sectors = UINT32_MAX;
+    check(sdspi_read(output, UINT32_MAX - 2u, 4) == -EINVAL, "sector/count overflow rejected");
+    check(sdspi_read(output, 1, UINT32_MAX) == -EINVAL, "huge count rejected without arithmetic wrap");
+    initialized = 0;
+    check(sdspi_read(output, 0, 1) == -ENODEV, "uninitialized card rejected");
+    check(!card.command_count && !card.cs_low && output[0] == 0xa5,
+          "invalid requests do not touch bus or buffer");
+}
+
+int main(void)
+{
+    test_clock(); test_crc(); test_success(); test_read_errors(); test_stop_errors(); test_bounds();
+    puts("PASS: production SD CSD clock, CMD17/CMD18/CMD12 stuff/R1b, CRC16 oracle, read/stop errors, reuse/read/write/sync, CS, bounds");
+    return 0;
+}
