@@ -1,0 +1,12 @@
+diff --git a/include/configs/x2600m_halley7.h b/include/configs/x2600m_halley7.h
+--- a/include/configs/x2600m_halley7.h
++++ b/include/configs/x2600m_halley7.h
+@@ -172,7 +172,7 @@
+         /* Device tree not compiled into kernel support*/
+ 	    #define CONFIG_BOOTCOMMAND "set uImage 0x80a00000; set dtb 0x83000000; sfcnor read 0x40000 0x600000 $(uImage); sfcnor read 0x640000 0x20000 $(dtb); bootm $(uImage) - ${dtb}"
+     #else
+-	    #define CONFIG_BOOTCOMMAND "sfcnor read 0x40000 0x600000 0x80a00000 ;bootm 0x80a00000"
++	    #define CONFIG_BOOTCOMMAND "sfcnor read 0x40000 0x600000 0x80600000;go 0x80600000"
+     #endif
+   #elif defined(CONFIG_SPL_SFC_NAND)
+     #ifdef CONFIG_OF_LIBFDT

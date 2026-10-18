@@ -1,0 +1,10 @@
+{
+  "cmake.sourceDirectory": "${workspaceFolder}/projects/halley7m-hello",
+  "cmake.buildDirectory": "${workspaceFolder}/build/windows-${buildType}",
+  "cmake.generator": "MinGW Makefiles",
+  "cmake.configureSettings": {
+    "CMAKE_TOOLCHAIN_FILE": "${workspaceFolder}/cmake/xburst2-elf.cmake",
+    "CROSS_COMPILE": "${workspaceFolder}/toolchains/xburst2-windows/mips-ingenic-xburst2-elf-tools-x86_64-w64.r5.1.6/bin/mips-sde-elf-"
+  },
+  "C_Cpp.default.compileCommands": "${workspaceFolder}/build/windows-Release/compile_commands.json"
+}

@@ -1,0 +1,23 @@
+diff --git a/disk/part_efi.c b/disk/part_efi.c
+--- a/disk/part_efi.c
++++ b/disk/part_efi.c
+@@ -30,8 +30,8 @@
+  *
+  * This limits the maximum size of addressable storage to < 2 Terra Bytes
+  */
+-#include <asm/unaligned.h>
+ #include <common.h>
++#include <asm/unaligned.h>
+ #include <command.h>
+ #include <ide.h>
+ #include <malloc.h>
+diff --git a/arch/mips/config.mk b/arch/mips/config.mk
+--- a/arch/mips/config.mk
++++ b/arch/mips/config.mk
+@@ -71,5 +71,5 @@
+ PLATFORM_CPPFLAGS		+= -fno-pic -mno-abicalls
+ else
+-PLATFORM_CPPFLAGS		+= -fpic -mabicalls
++PLATFORM_CPPFLAGS		+= -fpic -mabicalls -Wa,-KPIC
+ LDFLAGS_FINAL			+= -pie
+ endif
