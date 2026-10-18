@@ -1,6 +1,7 @@
 /* Production frame callbacks + audio handoff, with only board/RTOS edges
  * replaced. Playback helpers are linked from the real core/playback.c. */
 #include "playback.h"
+#include "emu_backend.h"
 #include <stdbool.h>
 #include <stdint.h>
 #include <stddef.h>
@@ -12,10 +13,19 @@
 static uint16_t screen[240 * 160];
 static uint32_t GBAScreenPitch = 240;
 static uint32_t rendered_frames, drawn_frames, frame_crc, boundary_pending;
+static uint32_t session_rendered_frames, session_frame_crc, session_frame_limit;
 static unsigned playback_frameskip, playback_speed;
-static uint32_t stop_requested, audio_stop_pending, want_audio, frame_limit;
+static uint32_t stop_requested, audio_stop_pending, want_audio, frame_limit, save_requested, running;
 static int gui_enabled, gui_last_menu, gui_requested;
-static bool sound_started;
+static bool sound_started, audio_started, core_stop_requested;
+static bool IsGameLoaded, jump_valid;
+static int last_flush_result;
+static int last_run_reason;
+enum { CHANGED_PC_STATUS = 0 };
+static uint32_t reg[1], execute_cycles;
+static uint8_t ewram_data[32];
+static emu_backend_host_t host;
+static const emu_backend_ops_t *backend;
 static uint64_t start_us, next_frame_us;
 static jmp_buf return_to_task;
 static int16_t pending_pcm[256 * 2];
@@ -27,8 +37,16 @@ static unsigned failures, critical_depth, video_calls, crc_calls;
 static unsigned stats_calls, backup_calls, menu_calls, menu_down;
 static unsigned start_calls, stop_calls, discard_calls, discarded, loaded, submitted;
 static unsigned delay_calls, stop_on_delay;
+static unsigned begin_calls, end_calls, flush_calls, settle_calls, request_calls;
+static unsigned callback_active, callback_returned;
+static int flush_result, settle_result;
+static unsigned inject_save_on_flush;
 static uint32_t stats_frames, native_available;
 static uint64_t clock_us, start_latency;
+static size_t submission_limit;
+static bool integrated_run;
+static unsigned run_order_phase;
+static void execute_arm_translate(uint32_t cycles);
 
 static void expect(int condition, const char *message)
 {
@@ -49,6 +67,12 @@ static void vTaskDelay(unsigned ticks)
 static uint32_t crc32_bytes(const void *data, size_t size)
 {
     expect(data == screen && size == sizeof(screen), "CRC uses the framebuffer");
+    if (integrated_run && !jump_valid) {
+        expect(run_order_phase == 1 && end_calls == 1 && stop_calls == 1 &&
+               !audio_started && !sound_started && running && !flush_calls && !settle_calls,
+               "production run stops runtime accounting and audio before final CRC");
+        run_order_phase = 2;
+    }
     ++crc_calls; return 0x12345678u;
 }
 static void video_present_gba(const uint16_t *data, unsigned stride)
@@ -57,6 +81,8 @@ static void video_present_gba(const uint16_t *data, unsigned stride)
     ++video_calls;
 }
 static void game_stats_frame(uint32_t frames) { ++stats_calls; stats_frames = frames; }
+static void game_stats_begin(void) { ++begin_calls; }
+static void game_stats_end(void) { ++end_calls; }
 static void service_backup(void) { ++backup_calls; }
 static int gamepad_menu_down(void) { ++menu_calls; return menu_down != 0; }
 static uint32_t ReGBA_GetAudioSamplesAvailable(void) { return native_available; }
@@ -75,7 +101,8 @@ static size_t audio_submit_stereo(const int16_t *samples, size_t frames, uint32_
 {
     expect(samples >= pending_pcm && samples < pending_pcm + 512 && rate == 44100,
            "normal-speed audio keeps its PCM conversion contract");
-    submitted += (unsigned)frames; return frames;
+    size_t consumed = frames < submission_limit ? frames : submission_limit;
+    submitted += (unsigned)consumed; return consumed;
 }
 static int audio_start(void)
 {
@@ -85,15 +112,97 @@ static int audio_start(void)
 }
 static void audio_stop(void) { ++stop_calls; }
 
-@PRODUCTION_FUNCTIONS@
+@ADAPTER_FUNCTIONS@
+
+static void fixture_get_state(emu_backend_state_t *state)
+{
+    memset(state, 0, sizeof(*state));
+    state->frames = rendered_frames;
+    state->frame_crc = frame_crc;
+}
+static int fixture_flush(void)
+{
+    ++flush_calls;
+    expect(!audio_started && !sound_started && running,
+           "audio stops before final save, stopped state waits for save completion");
+    if (inject_save_on_flush && flush_calls == 1) save_requested = 1;
+    return flush_result;
+}
+static int fixture_settle(void)
+{
+    ++settle_calls;
+    expect(!audio_started && !sound_started && running,
+           "menu settles an existing save only after stopping audio");
+    return settle_result;
+}
+static int fixture_request_save(void) { ++request_calls; return 0; }
+static void host_stack_diagnostic(void *context, const char *where)
+{
+    (void)context;
+    expect(!strcmp(where, "after-run") || (integrated_run && !strcmp(where, "before-run")),
+           "run includes its before/after stack diagnostics");
+}
+
+static const emu_backend_ops_t fixture_backend = {
+    .audio_reset = backend_audio_reset, .set_audio_enabled = backend_set_audio_enabled,
+    .audio_update = ReGBA_AudioUpdate, .service_save = service_backup,
+    .request_save = fixture_request_save, .flush_save = fixture_flush,
+    .settle_save = fixture_settle, .get_state = fixture_get_state,
+};
+
+@SESSION_FUNCTIONS@
+
+static bool fixture_frame(void *context, uint32_t frames)
+{
+    expect(context == &host && !callback_active, "frame callback receives its context without reentry");
+    callback_active = 1;
+    bool stop = host_frame(context, frames);
+    callback_active = 0;
+    ++callback_returned;
+    return stop;
+}
+
+static void fixture_run_quiesce(void *context)
+{
+    expect(integrated_run && !jump_valid && run_order_phase == 0 &&
+           audio_started && sound_started, "production run unwinds before quiescing audio");
+    host_run_quiesce(context);
+    run_order_phase = 1;
+}
+static void fixture_run_end(void *context, int reason)
+{
+    expect(integrated_run && run_order_phase == 2,
+           "production run computes final CRC before end/persistence callback");
+    run_order_phase = 3;
+    host_run_end(context, reason);
+}
+
+/* Replace only native instruction execution. Real render/frame callbacks
+ * must return a stop decision before the production adapter unwinds. */
+static void execute_arm_translate(uint32_t cycles)
+{
+    expect(integrated_run && cycles == execute_cycles && reg[CHANGED_PC_STATUS] == 1 &&
+           jump_valid && running, "native execution enters an initialized active run");
+    sound_started = audio_started = true;
+    want_audio = 1;
+    for (unsigned frame = 0; frame < 3; ++frame) {
+        ReGBA_RenderScreen();
+        regba_frame_boundary();
+    }
+    expect(false, "frame limit unwinds production native execution");
+}
 
 static void reset_fixture(void)
 {
     rendered_frames = drawn_frames = frame_crc = boundary_pending = 0;
+    session_rendered_frames = session_frame_crc = session_frame_limit = 0;
     playback_frameskip = 0; playback_speed = 1;
-    stop_requested = audio_stop_pending = want_audio = frame_limit = 0;
+    stop_requested = audio_stop_pending = want_audio = frame_limit = save_requested = running = 0;
     gui_enabled = gui_last_menu = gui_requested = 0;
-    sound_started = false;
+    sound_started = audio_started = core_stop_requested = false;
+    IsGameLoaded = jump_valid = integrated_run = false;
+    last_flush_result = last_run_reason = 0;
+    run_order_phase = reg[CHANGED_PC_STATUS] = execute_cycles = 0;
     start_us = next_frame_us = 0;
     pcm_offset = pcm_frames = 0;
     audio_update_last_us = 0;
@@ -101,8 +210,20 @@ static void reset_fixture(void)
     critical_depth = video_calls = crc_calls = stats_calls = backup_calls = menu_calls = menu_down = 0;
     start_calls = stop_calls = discard_calls = discarded = loaded = submitted = 0;
     delay_calls = stop_on_delay = 0;
+    begin_calls = end_calls = flush_calls = settle_calls = request_calls = 0;
+    callback_active = callback_returned = 0;
+    flush_result = settle_result = 0;
+    inject_save_on_flush = 0;
     stats_frames = native_available = 0;
     clock_us = start_latency = 0;
+    submission_limit = SIZE_MAX;
+    backend = &fixture_backend;
+    host = (emu_backend_host_t){
+        .context = &host, .should_render = host_should_render, .video = host_video,
+        .audio_submit = host_audio_submit, .frame = fixture_frame,
+        .run_begin = host_run_begin, .run_quiesce = host_run_quiesce,
+        .run_end = host_run_end, .stack_diagnostic = host_stack_diagnostic,
+    };
 }
 
 static int boundary_result(void)
@@ -110,6 +231,7 @@ static int boundary_result(void)
     int result = setjmp(return_to_task);
     if (!result) regba_frame_boundary();
     expect(!critical_depth, "frame boundary releases all locks before return/stop");
+    expect(!callback_active, "adapter exits only after the host frame callback returns");
     return result;
 }
 
@@ -182,7 +304,7 @@ static void check_fast_audio(void)
 {
     static const unsigned fast[] = {2,4};
     for (unsigned i = 0; i < 2; ++i) {
-        reset_fixture(); playback_speed = fast[i]; want_audio = 1; sound_started = true;
+        reset_fixture(); playback_speed = fast[i]; want_audio = 1; sound_started = audio_started = true;
         clock_us = UINT64_C(10000000); pcm_frames = 256; pcm_offset = 17;
         native_available = 2048; rendered_frames = boundary_pending = 1;
         expect(boundary_result() == 0, "accelerated frame continues");
@@ -215,7 +337,7 @@ static void check_stop(void)
     reset_fixture(); rendered_frames = boundary_pending = 1; stop_requested = 1;
     expect(boundary_result() == 1 && stats_frames == 1 && stats_calls == 1 &&
            !backup_calls && !delay_calls, "explicit stop exits at boundary before more work or pacing");
-    reset_fixture(); clock_us = UINT64_C(10000000); frame_limit = rendered_frames = 3;
+    reset_fixture(); clock_us = UINT64_C(10000000); session_frame_limit = frame_limit = rendered_frames = 3;
     boundary_pending = 1;
     expect(boundary_result() == 1 && stats_frames == 3 && backup_calls == 1 && !delay_calls,
            "frame limit uses guest frames, including skipped drawing");
@@ -226,12 +348,93 @@ static void check_stop(void)
     reset_fixture(); rendered_frames = boundary_pending = 1; stop_on_delay = 2;
     expect(boundary_result() == 1 && delay_calls == 2 && backup_calls == 1,
            "stop interrupts pacing rather than waiting for the full frame deadline");
+    expect(callback_returned == 1, "the stop decision returns through the host before adapter unwinds");
+    reset_fixture(); rendered_frames = boundary_pending = 1; core_stop_requested = true;
+    expect(boundary_result() == 1 && !callback_returned && !stats_calls,
+           "engine-specific stop does not enter another host frame callback");
+}
+
+static void check_partial_pcm(void)
+{
+    reset_fixture(); sound_started = audio_started = true;
+    native_available = 1024;
+    submission_limit = 17;
+    expect(ReGBA_AudioUpdate() == 0 && pcm_frames == 256 && pcm_offset == 17 &&
+           loaded == 512 && native_available == 512 && submitted == 17,
+           "partial host consumption retains the converted PCM tail and native lookahead");
+    expect(pending_pcm[34] == 1968 && pending_pcm[35] == -1968,
+           "retained PCM tail preserves signed stereo sample values");
+    submission_limit = 0;
+    expect(ReGBA_AudioUpdate() == 0 && pcm_offset == 17 && loaded == 512 && submitted == 17,
+           "a full host queue preserves the entire remaining tail");
+    submission_limit = 39;
+    expect(ReGBA_AudioUpdate() == 0 && pcm_offset == 56 && submitted == 56 && loaded == 512,
+           "next host submission resumes at the exact unconsumed stereo frame");
+    submission_limit = SIZE_MAX;
+    expect(ReGBA_AudioUpdate() == 0 && pcm_offset == pcm_frames && submitted == 256 &&
+           loaded == 512 && native_available == 512,
+           "draining the tail neither duplicates samples nor consumes the native reserve");
+}
+
+static void check_run_lifecycle(void)
+{
+    reset_fixture(); clock_us = 1000000;
+    host.run_begin(host.context, 3);
+    expect(running && begin_calls == 1 && !end_calls && session_frame_limit == 3 &&
+           !session_rendered_frames && !session_frame_crc && start_us == clock_us,
+           "begin publishes the active session, frame limit and pacing anchor exactly once");
+    sound_started = audio_started = true;
+    rendered_frames = 3;
+    host.run_quiesce(host.context);
+    expect(end_calls == 1 && stop_calls == 1 && !audio_started && !sound_started &&
+           running && !flush_calls && !settle_calls,
+           "quiesce ends statistics and hardware audio before final CRC or persistence");
+    frame_crc = crc32_bytes(screen, sizeof(screen));
+    save_requested = 1;
+    inject_save_on_flush = 1;
+    host.run_end(host.context, 1);
+    expect(!running && !critical_depth && !save_requested && request_calls == 2 &&
+           flush_calls == 2 && !settle_calls && !last_flush_result &&
+           session_rendered_frames == 3 && session_frame_crc == 0x12345678u,
+           "late save accepted during flush completes before publishing stopped");
+
+    reset_fixture(); host.run_begin(host.context, 0);
+    gui_requested = 1;
+    host.run_quiesce(host.context);
+    host.run_end(host.context, 1);
+    expect(!running && begin_calls == 1 && end_calls == 1 && settle_calls == 1 &&
+           !flush_calls && !last_flush_result,
+           "menu pause settles an existing snapshot without replacing the old disk save");
+
+    reset_fixture(); host.run_begin(host.context, 0);
+    flush_result = -EIO;
+    host.run_quiesce(host.context);
+    host.run_end(host.context, 2);
+    expect(!running && last_flush_result == -EIO && flush_calls == 1 && !settle_calls,
+           "error exit retains final persistence failure for the UI and diagnostics");
+}
+
+static void check_production_run_order(void)
+{
+    reset_fixture();
+    integrated_run = IsGameLoaded = true;
+    execute_cycles = 7;
+    host.run_quiesce = fixture_run_quiesce;
+    host.run_end = fixture_run_end;
+    expect(run_game(3, false), "actual production run reaches its requested guest frame limit");
+    expect(run_order_phase == 3 && !running && !jump_valid && !callback_active &&
+           begin_calls == 1 && end_calls == 1 && callback_returned == 3 &&
+           stop_calls == 1 && crc_calls == 2 && flush_calls == 1 && !settle_calls &&
+           rendered_frames == 3 && session_rendered_frames == 3 &&
+           frame_crc == 0x12345678u && session_frame_crc == frame_crc,
+           "actual run joins adapter, host stop, final CRC and save without duplicated lifecycle work");
 }
 
 int main(void)
 {
-    check_render_phase(); check_targets(); check_fast_audio(); check_stop();
+    check_render_phase(); check_targets(); check_fast_audio(); check_stop(); check_partial_pcm();
+    check_run_lifecycle(); check_production_run_order();
     if (failures) return 1;
-    puts("playback PASS: stable scanline/preincrement phases0..3, every-frame service/FPS, exact1x/2x/4x/long targets, fast-audio drain/1x restore, stops");
+    puts("playback PASS: production backend/host callbacks, scanline/preincrement phases0..3, every-frame service/FPS, exact1x/2x/4x/long targets, fast-audio drain/1x restore, stop return order, partial PCM tail, run quiesce/save/late-request order, actual native-run finalization order");
     return 0;
 }

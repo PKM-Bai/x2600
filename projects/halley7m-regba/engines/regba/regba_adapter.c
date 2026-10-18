@@ -1,51 +1,24 @@
-/* X2600 FreeRTOS handheld frontend for ReGBA. GPL-2.0-or-later. */
+/* X2600 synchronous ReGBA adapter. GPL-2.0-or-later. */
 #include "common.h"
-#include "regba_core.h"
+#include "regba_adapter.h"
 #include "test_resources.h"
 #include "platform_runtime.h"
-#include "storage.h"
-#include "audio.h"
-#include "game_stats.h"
-#include "video.h"
-#include "buttons.h"
-#include "bt_gamepad.h"
 #include "battery_save.h"
-#include "handheld_ui.h"
-#include "playback.h"
 #include "resources.h"
 #include "FreeRTOS.h"
 #include "task.h"
-#include "queue.h"
 #include <stdarg.h>
 #include <setjmp.h>
 
+static emu_backend_host_t host;
 static uint16_t screen[240 * 160] __attribute__((aligned(64)));
 uint16_t *GBAScreen = screen;
 uint32_t GBAScreenPitch = 240;
-static QueueHandle_t commands;
-/* GCC -fstack-usage: one ARM/Thumb translator frame is 10472/10440 bytes.
- * Static branch linking recursively translates additional blocks. The old
- * 32KiB task stack could not fit even three levels plus task/IRQ context.
- * Keep the word count below FreeRTOS's uint16_t stack-depth limit. */
-enum { CORE_STACK_WORDS = 60 * 1024, CORE_STACK_BYTES = CORE_STACK_WORDS * sizeof(StackType_t) };
-static TaskHandle_t core_handle;
-static uintptr_t core_last_sp;
-extern uint32_t translation_recursion_level;
-enum command_type { CMD_LOAD, CMD_RUN, CMD_TEST, CMD_SAVE, CMD_TONE, CMD_VIDEO, CMD_MENU };
-struct command { enum command_type type; uint32_t frames; char path[MAX_PATH]; };
-static volatile uint32_t running, stop_requested, requested_keys, want_audio;
-static volatile uint32_t audio_stop_pending;
-static volatile uint32_t command_busy;
 static volatile uint32_t rendered_frames, frame_crc;
-static uint32_t drawn_frames;
-static unsigned playback_frameskip, playback_speed = 1;
-static volatile uint32_t gui_enabled, gui_showing, gui_requested, gui_input_gate;
-static int gui_initialized, gui_storage_ready, gui_last_menu, last_flush_result;
-static int gui_last_result;
-static uint32_t frame_limit, boundary_pending;
-static uint64_t start_us, next_frame_us;
+static uint32_t drawn_frames, frame_limit, boundary_pending;
 static jmp_buf return_to_task;
-static bool jump_valid, sound_started;
+static bool jump_valid, sound_started, core_stop_requested;
+static int last_run_reason;
 static volatile uint32_t save_requested;
 static bool backup_dirty, save_in_flight;
 static uint64_t backup_changed_us, save_attempt_us;
@@ -55,6 +28,7 @@ extern uint32_t save_backup(void);
 extern int regba_reload_backup(void);
 extern bool IsZippedROM;
 extern uint32_t gamepak_ram_pages, gamepak_size;
+extern uint32_t translation_recursion_level;
 static FILE *mapped_file;
 static int16_t pending_pcm[256 * 2];
 static size_t pcm_offset, pcm_frames;
@@ -62,27 +36,6 @@ static uint64_t audio_update_last_us;
 static uint32_t audio_update_max_gap_us, audio_update_gap_native, audio_update_gap_pending;
 extern bool IsNintendoBIOS;
 extern uint8_t nintendo_bios_sha1[];
-static void gui_paint(void);
-static void gui_progress(unsigned percent);
-static int core_load_game(const char *path);
-static void gui_service(void);
-
-static int gamepad_menu_down(void)
-{
-    bt_gamepad_stats_t pad;
-    bt_gamepad_get_stats(&pad);
-    return pad.connected && pad.data_valid && !pad.stale && (pad.key2 & BT_GAMEPAD_KEY2_Y);
-}
-
-static void core_stack_diagnostic(const char *where)
-{
-    __asm__ volatile("move %0,$sp" : "=r"(core_last_sp));
-    printf("core stack %s frame=%lu sp=%08lx min_unused=%lu/%u translation_depth=%lu peak=%lu\n",
-           where, (unsigned long)rendered_frames, (unsigned long)core_last_sp,
-           (unsigned long)uxTaskGetStackHighWaterMark(core_handle) * sizeof(StackType_t),
-           (unsigned)CORE_STACK_BYTES, (unsigned long)translation_recursion_level,
-           (unsigned long)translation_recursion_peak);
-}
 
 static uint32_t crc32_bytes(const void *data, size_t size)
 {
@@ -212,7 +165,7 @@ void ReGBA_Trace(const char *format, ...)
     putchar('\n');
 }
 
-int regba_jit_test(void)
+static int backend_jit_test(void)
 {
     static uint32_t code[16] __attribute__((aligned(64)));
     typedef int (*function_t)(void);
@@ -274,8 +227,8 @@ signed int ReGBA_AudioUpdate(void)
     /* Keep 512 native frames ahead, matching the core's delayed sound writes. */
     for (unsigned chunk = 0; chunk < 8; ++chunk) {
         if (pcm_offset < pcm_frames) {
-            pcm_offset += audio_submit_stereo(pending_pcm + pcm_offset * 2,
-                                              pcm_frames - pcm_offset, 44100);
+            pcm_offset += host.audio_submit(host.context, pending_pcm + pcm_offset * 2,
+                                            pcm_frames - pcm_offset, 44100);
             if (pcm_offset < pcm_frames) return 0;
         }
         if (ReGBA_GetAudioSamplesAvailable() < 1024) return 0;
@@ -294,85 +247,39 @@ signed int ReGBA_AudioUpdate(void)
 
 void ReGBA_RenderScreen(void)
 {
-    int draw = playback_should_render(rendered_frames, playback_frameskip);
+    bool draw = host.should_render(host.context, rendered_frames);
     ++rendered_frames;
     if (draw) {
         ++drawn_frames;
         if (drawn_frames == 1 || drawn_frames % 60 == 0)
             frame_crc = crc32_bytes(screen, sizeof(screen));
-        video_present_gba(screen, GBAScreenPitch);
+        const emu_video_frame_t frame = {
+            .pixels = screen, .width = 240, .height = 160,
+            .stride_pixels = GBAScreenPitch, .format = EMU_PIXELS_RGB555,
+        };
+        host.video(host.context, &frame);
     }
     boundary_pending = 1;
 }
 bool ReGBA_IsRenderingNextFrame(void)
-{ return playback_should_render(rendered_frames, playback_frameskip) != 0; }
+{ return host.should_render(host.context, rendered_frames); }
 void ReGBA_DisplayFPS(void) { }
 
-/* Called after update_gba has committed VCOUNT/IRQ/timer state. Never in ISR. */
+/* The native update has committed VCOUNT/IRQ/timer state before this hook.
+ * Leave through our own stack only after the session callback returns. */
 void regba_frame_boundary(void)
 {
     if (!boundary_pending) return;
     boundary_pending = 0;
-    game_stats_frame(rendered_frames);
-    if (stop_requested) longjmp(return_to_task, 1);
-    taskENTER_CRITICAL();
-    uint32_t stopped_audio = audio_stop_pending;
-    audio_stop_pending = 0;
-    taskEXIT_CRITICAL();
-    if (stopped_audio) {
-        /* An off/on pair may both arrive between frames. The console has
-         * already stopped DMA; reconcile the producer before the latest on. */
-        audio_stop();
-        sound_started = false;
-        pcm_frames = pcm_offset = 0;
-    }
-    int play_audio = want_audio && playback_speed == 1;
-    if (play_audio && !sound_started) {
-        pcm_frames = pcm_offset = 0;
-        ReGBA_DiscardAudioSamples(ReGBA_GetAudioSamplesAvailable());
-        uint64_t before = platform_time_us();
-        int result = audio_start();
-        if (result == 0) {
-            reset_audio_update_timing();
-            sound_started = true;
-        }
-        /* A console off/on during settling cancels this start. Keep the
-         * latest request: off is already zero; a later on retries next frame. */
-        else if (result != -ECANCELED) want_audio = 0;
-        start_us += platform_time_us() - before; /* codec power-up is not guest time */
-    } else if (!play_audio && sound_started) {
-        audio_stop(); sound_started = false; pcm_frames = pcm_offset = 0;
-    }
-    ReGBA_AudioUpdate();
-    if (gui_enabled) {
-        int menu = gamepad_menu_down();
-        if (menu && !gui_last_menu) {
-            gui_requested = 1;
-            stop_requested = 1;
-        }
-        gui_last_menu = menu;
-    }
-    if (!gui_requested) service_backup();
-    if (stop_requested || (frame_limit && rendered_frames >= frame_limit))
+    if (core_stop_requested || host.frame(host.context, rendered_frames) ||
+        (frame_limit && rendered_frames >= frame_limit))
         longjmp(return_to_task, 1);
-    /* 280896 GBA cycles/frame at 16777216Hz, preserve the fractional part. */
-    next_frame_us = start_us + playback_target_us(rendered_frames, playback_speed);
-    while (platform_time_us() < next_frame_us) {
-        if (stop_requested) longjmp(return_to_task, 1);
-        vTaskDelay(1);
-    }
 }
 
 enum ReGBA_Buttons ReGBA_GetPressedButtons(void)
-{
-    uint16_t keys = (requested_keys | buttons_get_keys() | bt_gamepad_get_keys()) & 0x3FF;
-    if (gui_input_gate) {
-        if (!keys) gui_input_gate = 0;
-        return 0;
-    }
-    return keys;
-}
-uint32_t ReGBA_Menu(enum ReGBA_MenuEntryReason reason) { (void)reason; stop_requested = 1; return 0; }
+{ return host.keys(host.context) & 0x3ffu; }
+uint32_t ReGBA_Menu(enum ReGBA_MenuEntryReason reason)
+{ (void)reason; core_stop_requested = true; return 0; }
 void ReGBA_LoadRTCTime(struct ReGBA_RTC *rtc)
 { *rtc = (struct ReGBA_RTC){ .year = 26, .month = 1, .day = 1, .weekday = 4 }; }
 
@@ -408,10 +315,10 @@ uint8_t *ReGBA_MapEntireROM(FILE *file, size_t size)
             free(rom); errno = EIO; return NULL;
         }
         offset += amount;
-        if (gui_enabled) {
+        {
             uint64_t now = platform_time_us();
             if (offset == size || now >= progress_at) {
-                gui_progress((unsigned)(offset * 100u / size));
+                host.load_progress(host.context, (unsigned)(offset * 100u / size));
                 progress_at = now + 100000u;
             }
         }
@@ -434,7 +341,7 @@ void ReGBA_LoadSettings(char *name, bool pergame) { (void)name; (void)pergame; }
 void get_ticks_us(u64 *value) { *value = platform_time_us(); }
 void delay_us(u32 us) { if (us) vTaskDelay(pdMS_TO_TICKS((us + 999) / 1000)); }
 void synchronize(void) { }
-void quit(void) { stop_requested = 1; }
+void quit(void) { core_stop_requested = true; }
 void error_quit(void) { platform_panic("ReGBA error"); }
 extern void init_main(void);
 void reset_gba(void)
@@ -447,28 +354,25 @@ static bool run_game(uint32_t frames, bool selftest)
 {
     if (!IsGameLoaded) { puts("No ROM loaded"); return false; }
     frame_limit = frames;
-    rendered_frames = drawn_frames = frame_crc = boundary_pending = stop_requested = 0;
+    rendered_frames = drawn_frames = frame_crc = boundary_pending = 0;
+    core_stop_requested = false;
     pcm_frames = pcm_offset = 0;
     reset_audio_update_timing();
     ReGBA_DiscardAudioSamples(ReGBA_GetAudioSamplesAvailable());
-    start_us = platform_time_us();
-    running = jump_valid = true;
-    core_stack_diagnostic("before-run");
-    game_stats_begin();
+    jump_valid = true;
+    host.run_begin(host.context, frames);
+    host.stack_diagnostic(host.context, "before-run");
     int reason = setjmp(return_to_task);
     if (reason == 0) {
         reg[CHANGED_PC_STATUS] = 1;
         execute_arm_translate(execute_cycles);
     }
     jump_valid = false;
-    game_stats_end();
-    core_stack_diagnostic("after-run");
-    if (sound_started) { audio_stop(); sound_started = false; }
+    last_run_reason = reason;
+    host.run_quiesce(host.context);
     frame_crc = crc32_bytes(screen, sizeof(screen));
-    uint64_t elapsed = platform_time_us() - start_us;
-    printf("core stopped reason=%d frames=%lu elapsed_us=%llu RGB555_CRC32=%08lx\n",
-           reason, (unsigned long)rendered_frames, (unsigned long long)elapsed, (unsigned long)frame_crc);
-    bool passed = reason == 1 && rendered_frames == frames;
+    host.run_end(host.context, reason);
+    bool passed = reason == 1 && (!frames || rendered_frames == frames);
     if (selftest) {
         const uint32_t expected[] = {42, 55, 66, 77, 6, 0x600D};
         bool pass = passed;
@@ -484,11 +388,6 @@ static bool run_game(uint32_t frames, bool selftest)
         printf("core-test %s (ARM/Thumb/SWI/IRQ/RAM-code/SMC/frame pixels)\n", pass ? "PASS" : "FAIL");
         passed = pass;
     }
-    last_flush_result = gui_requested ? settle_backup() : flush_backup();
-    if (last_flush_result < 0)
-        printf("SAVE stop flush failed result=%d; backup retained in RAM\n", last_flush_result);
-    /* A stopped state is published only after its final snapshot and sync. */
-    running = 0;
     return passed;
 }
 
@@ -524,84 +423,7 @@ static int core_load_game(const char *path)
     return -load_errno;
 }
 
-static void gui_paint(void)
-{
-    if (gui_showing && handheld_ui_dirty()) {
-        int result = video_present_ui(ui_draw, handheld_ui_view());
-        if (!result) handheld_ui_drawn();
-    }
-}
-
-static void gui_message(const char *title, const char *text)
-{
-    handheld_ui_notice(title, text, 0, UI_ACTION_NONE);
-    uint64_t deadline = platform_time_us() + 100000u;
-    do {
-        gui_paint();
-        if (!handheld_ui_dirty()) break;
-        vTaskDelay(1);
-    } while (platform_time_us() < deadline);
-}
-
-static void gui_progress(unsigned percent)
-{
-    ui_view_t *view = handheld_ui_view();
-    snprintf(view->message, sizeof(view->message), "正在读取游戏  %u%%\n请稍候", percent);
-    /* A notice marks the view dirty; preserving its parent keeps Back useful
-     * if reading fails. Drawing remains in this emulator task. */
-    handheld_ui_notice("正在加载", view->message, 0, UI_ACTION_NONE);
-    gui_paint();
-}
-
-static void gui_run_game(void)
-{
-    gui_showing = gui_requested = 0;
-    gui_input_gate = 1;
-    gui_last_menu = gamepad_menu_down();
-    run_game(0, false);
-    gui_showing = 1;
-    gui_requested = 0;
-    handheld_ui_pause(CurrentGamePath);
-    gui_last_result = last_flush_result;
-    if (last_flush_result < 0)
-        handheld_ui_error("保存未完成", last_flush_result, UI_ACTION_SAVE);
-}
-
-static void gui_open(void)
-{
-    gui_enabled = gui_showing = 1;
-    gui_requested = 0;
-    int video_result = video_init();
-    if (video_result < 0) {
-        gui_last_result = video_result;
-        printf("menu display result=%d\n", video_result);
-        return;
-    }
-    if (!gui_initialized) {
-        if (!IsGameLoaded) want_audio = 1;
-        /* Allocate the persistent audio task/stack before the first large ROM.
-         * Creating it above a mapped ROM splits the heap after that ROM is
-         * freed and can prevent a later 32MiB game from fitting. Init is silent;
-         * the normal playback path can retry if hardware setup fails here. */
-        (void)audio_init();
-        /* Reuse an existing mount: a loaded ROM intentionally keeps its
-         * mapped file open, so remounting would be rejected by the owner. */
-        int result = storage_prepare_dirs();
-        if (result == -ENODEV || result == -ENXIO) {
-            result = storage_mount();
-            if (!result) result = storage_prepare_dirs();
-        }
-        gui_storage_ready = result == 0;
-        handheld_ui_init();
-        gui_initialized = 1;
-        if (result < 0) handheld_ui_error("TF 卡未就绪", result, UI_ACTION_REFRESH);
-    }
-    if (IsGameLoaded) handheld_ui_pause(CurrentGamePath);
-    else if (gui_storage_ready) handheld_ui_library(0);
-    gui_paint();
-}
-
-static void gui_unload_game(void)
+static void backend_unload(void)
 {
     /* This port accepts raw, entirely mapped ROMs. Its FILE is released by
      * the same unmap hook used by the native loader. Save has completed. */
@@ -614,7 +436,7 @@ static void gui_unload_game(void)
     save_requested = 0;
 }
 
-static int gui_check_rom(const char *path)
+static int backend_check_rom(const char *path)
 {
     if (!path || strlen(path) >= MAX_PATH) return -ENAMETOOLONG;
     struct stat info;
@@ -632,254 +454,81 @@ static int gui_check_rom(const char *path)
     return magic[3] == 0xea ? 0 : -ENOEXEC;
 }
 
-static void gui_service(void)
+static int backend_init(const emu_backend_host_t *callbacks)
 {
-    if (!gui_enabled || !gui_showing) return;
-    bt_gamepad_stats_t pad;
-    bt_gamepad_get_stats(&pad);
-    handheld_ui_status(pad.connected, IsGameLoaded, want_audio);
-    handheld_ui_options(audio_get_volume(), playback_frameskip, playback_speed);
-    uint16_t keys = (requested_keys | buttons_get_keys() | pad.keys) & 0x3ffu;
-    int menu = pad.connected && pad.data_valid && !pad.stale && (pad.key2 & BT_GAMEPAD_KEY2_Y);
-    enum ui_action action = handheld_ui_poll(keys, menu, (uint32_t)(platform_time_us() / 1000u));
-    int result = 0;
-    if (action == UI_ACTION_NONE) { gui_paint(); return; }
-    command_busy = 1;
-    if (action == UI_ACTION_RESUME && IsGameLoaded) {
-        gui_run_game();
-        result = last_flush_result;
-    } else if (action == UI_ACTION_LAUNCH) {
-        const char *path = handheld_ui_launch_path();
-        result = gui_check_rom(path);
-        if (!result) {
-            gui_message("正在保存", "正在完成当前游戏的保存与同步");
-            result = flush_backup();
-        }
-        if (!result) {
-            gui_message("正在加载", "正在读取游戏  0%\n请稍候");
-            result = core_load_game(path);
-        }
-        if (result < 0) {
-            handheld_ui_status(pad.connected, IsGameLoaded, want_audio);
-            handheld_ui_error("无法启动游戏", result, UI_ACTION_LAUNCH);
-        } else {
-            gui_run_game();
-            result = last_flush_result;
-        }
-    } else if (action == UI_ACTION_SAVE) {
-        gui_message("正在保存", "正在将游戏进度写入 TF 卡");
-        save_requested = IsGameLoaded;
-        result = IsGameLoaded ? flush_backup() : -ENOENT;
-        if (result < 0) handheld_ui_error("保存未完成", result, UI_ACTION_SAVE);
-        else handheld_ui_notice("保存成功", "游戏进度已保存并同步到 TF 卡。", 0, UI_ACTION_NONE);
-    } else if (action == UI_ACTION_RELOAD) {
-        gui_message("正在读取存档", "读取完成后会重新启动游戏，请在游戏内选择继续");
-        result = core_reload_save();
-        if (result < 0) handheld_ui_error("无法读取存档", result, UI_ACTION_RELOAD);
-        else {
-            gui_run_game();
-            result = last_flush_result;
-        }
-    } else if (action == UI_ACTION_VOLUME_DOWN || action == UI_ACTION_VOLUME_UP) {
-        unsigned volume = audio_get_volume();
-        if (action == UI_ACTION_VOLUME_DOWN) volume = volume >= 10 ? volume - 10 : 0;
-        else volume = volume <= 90 ? volume + 10 : 100;
-        result = audio_set_volume(volume);
-    } else if (action == UI_ACTION_FRAMESKIP_DOWN || action == UI_ACTION_FRAMESKIP_UP) {
-        playback_frameskip = (playback_frameskip + (action == UI_ACTION_FRAMESKIP_UP ? 1u : 3u)) % 4u;
-    } else if (action == UI_ACTION_SPEED_DOWN || action == UI_ACTION_SPEED_UP) {
-        if (action == UI_ACTION_SPEED_UP) playback_speed = playback_speed == 4 ? 1 : playback_speed * 2;
-        else playback_speed = playback_speed == 1 ? 4 : playback_speed / 2;
-    } else if (action == UI_ACTION_SWITCH || action == UI_ACTION_EXIT) {
-        gui_message("正在保存", "正在完成保存与同步，请稍候");
-        result = flush_backup();
-        if (result < 0) handheld_ui_error("保存未完成", result, action);
-        else {
-            if (action == UI_ACTION_EXIT) gui_unload_game();
-            handheld_ui_library(IsGameLoaded);
-        }
-    } else if (action == UI_ACTION_SOUND) {
-        want_audio = !want_audio;
-        handheld_ui_status(pad.connected, IsGameLoaded, want_audio);
-    } else if (action == UI_ACTION_REFRESH) {
-        if (!gui_storage_ready) {
-            result = storage_mount();
-            if (!result) result = storage_prepare_dirs();
-            gui_storage_ready = result == 0;
-        }
-        if (result < 0) handheld_ui_error("TF 卡未就绪", result, UI_ACTION_REFRESH);
-        else handheld_ui_library(IsGameLoaded);
-    }
-    gui_last_result = result;
-    handheld_ui_options(audio_get_volume(), playback_frameskip, playback_speed);
-    command_busy = 0;
-    gui_paint();
-}
-
-static void core_task(void *arg)
-{
-    (void)arg;
+    host = *callbacks;
     strcpy(main_path, REGBA_CONFIG_DIR);
     memcpy(bios.rom, openbios, sizeof(openbios));
     init_sound();
-    struct command command;
-    for (;;) {
-        if (xQueueReceive(commands, &command, gui_enabled && gui_showing ? pdMS_TO_TICKS(20) : portMAX_DELAY) != pdTRUE) {
-            gui_service();
-            continue;
-        }
-        if (command.type != CMD_MENU && command.type != CMD_SAVE) {
-            gui_enabled = gui_showing = 0;
-        }
-        if (command.type == CMD_LOAD || command.type == CMD_TEST) {
-            int result = core_load_game(command.type == CMD_TEST ? "/__selftest.gba" : command.path);
-            if (!result && command.type == CMD_TEST) {
-                bool before_pass = run_game(120, true);
-                uint32_t before_crc = frame_crc;
-                uint32_t before_irq, after_irq;
-                memcpy(&before_irq, ewram_data + 24, sizeof(before_irq));
-                /* FULL_CACHE clears ROM/BIOS metadata and cascades to the
-                 * writable cache; resume this exact guest state afterwards.
-                 */
-                flush_translation_cache(TRANSLATION_REGION_READONLY, FLUSH_REASON_FULL_CACHE);
-                bool after_pass = run_game(120, true);
-                memcpy(&after_irq, ewram_data + 24, sizeof(after_irq));
-                printf("core-retranslate-test %s before=%08lx after=%08lx IRQ=%lu->%lu\n",
-                       before_pass && after_pass && before_crc == frame_crc && after_irq > before_irq ? "PASS" : "FAIL",
-                       (unsigned long)before_crc, (unsigned long)frame_crc,
-                       (unsigned long)before_irq, (unsigned long)after_irq);
-            }
-        } else if (command.type == CMD_RUN) {
-            run_game(command.frames, false);
-            if (gui_requested) {
-                gui_open();
-                if (last_flush_result < 0) handheld_ui_error("保存未完成", last_flush_result, UI_ACTION_SAVE);
-            }
-        }
-        else if (command.type == CMD_SAVE) {
-            save_requested = IsGameLoaded;
-            int result = IsGameLoaded ? flush_backup() : -ENOENT;
-            printf("save result=%d (native .sav)\n", result);
-        } else if (command.type == CMD_TONE) {
-            int result = audio_test_tone();
-            if (result == -ECANCELED) puts("tone cancelled");
-            else printf("tone result=%d\n", result);
-        } else if (command.type == CMD_MENU) gui_open();
-        else if (command.type == CMD_VIDEO) {
-            int result = 0;
-            if (command.frames == 0) video_off();
-            else if (command.frames == 1) result = video_init();
-            else if (command.frames == 3) result = video_dsi_pattern();
-            else result = video_test_pattern();
-            printf("lcd result=%d\n", result);
-        }
-        command_busy = 0;
-    }
+    return 0;
 }
 
-static int enqueue(enum command_type type, const char *path, uint32_t frames)
+static int backend_run(uint32_t frames)
 {
-    if (!commands) return -EBUSY;
-    struct command command = { .type = type, .frames = frames };
-    if (path) {
-        if (strlen(path) >= sizeof(command.path)) return -ENAMETOOLONG;
-        strcpy(command.path, path);
-    }
+    if (!IsGameLoaded) return -ENOENT;
+    (void)run_game(frames, false);
+    return last_run_reason == 1 ? 0 : -EFAULT;
+}
+
+static int backend_selftest(void)
+{
+    int result = core_load_game("/__selftest.gba");
+    if (result < 0) return result;
+    bool before_pass = run_game(120, true);
+    uint32_t before_crc = frame_crc;
+    uint32_t before_irq, after_irq;
+    memcpy(&before_irq, ewram_data + 24, sizeof(before_irq));
+    /* Resume this exact guest state after clearing all translation regions. */
+    flush_translation_cache(TRANSLATION_REGION_READONLY, FLUSH_REASON_FULL_CACHE);
+    bool after_pass = run_game(120, true);
+    memcpy(&after_irq, ewram_data + 24, sizeof(after_irq));
+    bool passed = before_pass && after_pass && before_crc == frame_crc && after_irq > before_irq;
+    printf("core-retranslate-test %s before=%08lx after=%08lx IRQ=%lu->%lu\n",
+           passed ? "PASS" : "FAIL", (unsigned long)before_crc, (unsigned long)frame_crc,
+           (unsigned long)before_irq, (unsigned long)after_irq);
+    return passed ? 0 : -EIO;
+}
+
+static int backend_request_save(void)
+{
+    if (!IsGameLoaded) return -ENOENT;
+    save_requested = 1;
+    return 0;
+}
+
+static void backend_audio_reset(void)
+{
+    pcm_frames = pcm_offset = 0;
+    ReGBA_DiscardAudioSamples(ReGBA_GetAudioSamplesAvailable());
+}
+
+static void backend_set_audio_enabled(bool enabled)
+{
+    sound_started = enabled;
+    if (enabled) reset_audio_update_timing();
+    else pcm_frames = pcm_offset = 0;
+}
+
+static void backend_get_state(emu_backend_state_t *state)
+{
+    *state = (emu_backend_state_t){
+        .loaded = IsGameLoaded, .frames = rendered_frames,
+        .drawn_frames = drawn_frames, .frame_crc = frame_crc,
+        .backup_dirty = backup_dirty, .save_in_flight = save_in_flight,
+        .save_requested = save_requested != 0,
+        .translation_depth = translation_recursion_level,
+        .translation_peak = translation_recursion_peak,
+    };
+    if (IsGameLoaded) snprintf(state->path, sizeof(state->path), "%s", CurrentGamePath);
     taskENTER_CRITICAL();
-    if (command_busy) { taskEXIT_CRITICAL(); return -EBUSY; }
-    command_busy = 1;
-    if (type == CMD_TONE) audio_prepare_test_tone();
+    state->audio_max_call_gap_us = audio_update_max_gap_us;
+    state->audio_gap_native = audio_update_gap_native;
+    state->audio_gap_pending = audio_update_gap_pending;
     taskEXIT_CRITICAL();
-    if (xQueueSend(commands, &command, 0) == pdPASS) return 0;
-    command_busy = 0;
-    return -EBUSY;
 }
-int regba_core_start(void)
+
+static void backend_diagnostics(void)
 {
-    commands = xQueueCreate(2, sizeof(struct command));
-    if (!commands) return -ENOMEM;
-    return xTaskCreate(core_task, "ReGBA", CORE_STACK_WORDS, NULL, 3, &core_handle) == pdPASS ? 0 : -ENOMEM;
-}
-int regba_core_load(const char *path) { return enqueue(CMD_LOAD, path, 0); }
-int regba_core_run(uint32_t frames) { return enqueue(CMD_RUN, NULL, frames); }
-int regba_core_selftest(void) { return enqueue(CMD_TEST, NULL, 120); }
-int regba_core_save(void)
-{
-    taskENTER_CRITICAL();
-    if (running) {
-        save_requested = 1;
-        taskEXIT_CRITICAL();
-        return 0;
-    }
-    taskEXIT_CRITICAL();
-    return enqueue(CMD_SAVE, NULL, 0);
-}
-int regba_core_menu(void)
-{
-    taskENTER_CRITICAL();
-    if (running) {
-        gui_enabled = gui_requested = 1;
-        stop_requested = 1;
-        taskEXIT_CRITICAL();
-        return 0;
-    }
-    taskEXIT_CRITICAL();
-    return enqueue(CMD_MENU, NULL, 0);
-}
-int regba_core_tone(void) { return enqueue(CMD_TONE, NULL, 0); }
-int regba_core_video(unsigned action)
-{
-    return action <= 3 ? enqueue(CMD_VIDEO, NULL, action) : -EINVAL;
-}
-void regba_core_stop(void) { stop_requested = 1; audio_request_stop(); }
-void regba_core_keys(uint16_t keys) { requested_keys = keys & 0x3FF; }
-void regba_core_audio(int enabled)
-{
-    want_audio = !!enabled;
-    if (!enabled) {
-        audio_stop_pending = 1;
-        audio_request_stop();
-    }
-}
-void regba_core_status(void)
-{
-    game_stats_t stats;
-    game_stats_get(&stats);
-    uint16_t board_keys = buttons_get_keys();
-    uint16_t serial_keys = requested_keys;
-    uint16_t bt_keys = bt_gamepad_get_keys();
-    printf("ui enabled=%lu showing=%lu page=%u loaded=%u result=%d path=%s\n",
-           (unsigned long)gui_enabled, (unsigned long)gui_showing,
-           gui_initialized ? (unsigned)handheld_ui_view()->screen : 0u,
-           IsGameLoaded, gui_last_result, IsGameLoaded ? CurrentGamePath : "-");
-    uint32_t call_gap, gap_native, gap_pending;
-    taskENTER_CRITICAL();
-    call_gap = audio_update_max_gap_us;
-    gap_native = audio_update_gap_native;
-    gap_pending = audio_update_gap_pending;
-    taskEXIT_CRITICAL();
-    printf("core running=%lu frames=%lu crc=%08lx keys=%03lx audio_requested=%lu serial_keys=%03lx board_keys=%03lx bt_keys=%03lx audio_max_call_gap_us=%lu audio_gap_native=%lu audio_gap_pending=%lu\n",
-           (unsigned long)running, (unsigned long)rendered_frames, (unsigned long)frame_crc,
-            (unsigned long)(serial_keys | board_keys | bt_keys), (unsigned long)want_audio,
-            (unsigned long)serial_keys, (unsigned long)board_keys, (unsigned long)bt_keys,
-           (unsigned long)call_gap, (unsigned long)gap_native, (unsigned long)gap_pending);
-    if (core_handle)
-        printf("core stack min_unused=%lu/%u last_sp=%08lx translation_depth=%lu peak=%lu\n",
-               (unsigned long)uxTaskGetStackHighWaterMark(core_handle) * sizeof(StackType_t),
-               (unsigned)CORE_STACK_BYTES, (unsigned long)core_last_sp,
-               (unsigned long)translation_recursion_level,
-               (unsigned long)translation_recursion_peak);
-    printf("backup dirty=%u in_flight=%u requested=%lu autosave_idle_ms=2000\n",
-           backup_dirty, save_in_flight, (unsigned long)save_requested);
-    printf("playback volume=%u frameskip=%u speed=%u emulated=%lu drawn=%lu fast_audio_silent=%u\n",
-           audio_get_volume(), playback_frameskip, playback_speed,
-           (unsigned long)rendered_frames, (unsigned long)drawn_frames,
-           playback_speed != 1);
-    printf("game_stats running=%lu valid=%lu cpu_pct=%lu.%lu fps=%lu.%lu window_ms=%lu window_frames=%lu\n",
-           (unsigned long)stats.running, (unsigned long)stats.valid,
-           (unsigned long)(stats.cpu_tenths / 10u), (unsigned long)(stats.cpu_tenths % 10u),
-           (unsigned long)(stats.fps_tenths / 10u), (unsigned long)(stats.fps_tenths % 10u),
-           (unsigned long)stats.window_ms, (unsigned long)stats.window_frames);
     if (IsGameLoaded && !strncmp(CurrentGamePath, "/__save_", 8)) {
         uint32_t m[16];
         memcpy(m, ewram_data, sizeof(m));
@@ -889,4 +538,20 @@ void regba_core_status(void)
                (unsigned long)m[8], (unsigned long)m[9], (unsigned long)m[10], (unsigned long)m[11],
                (unsigned long)m[12], (unsigned long)m[13], (unsigned long)m[14], (unsigned long)m[15]);
     }
+}
+
+const emu_backend_ops_t *regba_adapter_backend(void)
+{
+    static const emu_backend_ops_t ops = {
+        .name = "ReGBA", .init = backend_init, .load = core_load_game,
+        .run = backend_run, .selftest = backend_selftest,
+        .unload = backend_unload, .check_rom = backend_check_rom,
+        .request_save = backend_request_save, .service_save = service_backup,
+        .flush_save = flush_backup, .settle_save = settle_backup,
+        .reload_save = core_reload_save, .audio_reset = backend_audio_reset,
+        .set_audio_enabled = backend_set_audio_enabled, .audio_update = ReGBA_AudioUpdate,
+        .get_state = backend_get_state,
+        .jit_test = backend_jit_test, .diagnostics = backend_diagnostics,
+    };
+    return &ops;
 }

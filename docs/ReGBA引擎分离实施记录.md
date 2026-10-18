@@ -41,7 +41,7 @@ Release CRC32 为 `178853ea`，入口 `0x80600000`。两个 manifest 的 `hardwa
 
 拆分前的 `core/regba_core.c`（阶段 2 已迁至 [`regba_adapter.c`](../projects/halley7m-regba/engines/regba/regba_adapter.c)）同时管理 FreeRTOS 任务和队列、GUI 会话、输入与播放策略、ReGBA 回调 / JIT、ROM / BIOS、音频样本以及原生存档状态。公共驱动已经分别位于 [`platform`](../projects/halley7m-regba/platform/)；GUI 和播放规则分别有 `handheld_ui` 与 `playback` 模块。
 
-[`regba_core.h`](../projects/halley7m-regba/core/regba_core.h) 的现有入口包括任务启动、载入、运行、核心自测、保存、菜单、短音、显示控制、停止、串口键位、音频请求及状态查询。阶段 1 先保留这些入口兼容调用方，经新接口转发；串口命令、GUI 菜单、存档路径和错误含义不因重命名而改变。
+拆分前 `regba_core.h` 的入口包括任务启动、载入、运行、核心自测、保存、菜单、短音、显示控制、停止、串口键位、音频请求及状态查询。阶段 1 先经新接口转发，阶段 3 移除旧头，统一使用 [`emu_engine.h`](../projects/halley7m-regba/core/emu_engine.h)；串口命令、GUI 菜单、存档路径和错误含义不因重命名而改变。
 
 ### 必须保留的行为契约
 
@@ -58,9 +58,9 @@ Release CRC32 为 `178853ea`，入口 `0x80600000`。两个 manifest 的 `hardwa
 | 阶段 | 交付 | 放行条件 | 当前状态 |
 |---|---|---|---|
 | 0：基线 | 本记录、可追溯产物和比较摘要 | 核对源码、依赖、既有验证及产物身份 | 已核对；基线产物检查通过 |
-| 1：接口门面 | 公共引擎接口，ReGBA 实现，旧入口兼容转发 | 相关主机检查、双构建和产物校验通过 | 待记录 |
-| 2：ReGBA 适配层 | 回调、JIT、ROM / BIOS、私有状态、存档转换分离 | 公共头不暴露 ReGBA 类型；相关生产实现回归通过 | 待记录 |
-| 3：公共会话 | 任务、队列、GUI 调度、输入与播放策略 | 会话不读取 ReGBA 全局；保存、读档、切换和退出顺序正确 | 待记录 |
+| 1：接口门面 | 公共引擎接口，ReGBA 实现，旧入口兼容转发 | 相关主机检查、双构建和产物校验通过 | 软件验收通过 |
+| 2：ReGBA 适配层 | 回调、JIT、ROM / BIOS、私有状态、存档转换分离 | 公共头不暴露 ReGBA 类型；相关生产实现回归通过 | 目录迁移已通过；职责分离随阶段 3 完成 |
+| 3：公共会话 | 任务、队列、GUI 调度、输入与播放策略 | 会话不读取 ReGBA 全局；保存、读档、切换和退出顺序正确 | 软件验收通过；进入阶段 4 板测 |
 | 4：ReGBA 回归门禁 | 新镜像与完整软件、RAM 实板验收记录 | 主机回归、双构建、核心诊断、32MiB 切换和存档、GUI、静音音频启停、30 分钟带屏 / PCM / TF 联合测试 | 尚未执行重构版板测 |
 | 5：mGBA 独立构建 | 固定上游版本、最小 GBA 核心和平台适配 | 实测帧率、CPU、峰值内存和音频稳定性；三类原生存档通过 | 阶段 4 通过后开始 |
 | 6：引擎选择 | 菜单选择和单引擎资源生命周期 | 同固件内存预算可行，保存后释放旧引擎再启动新引擎，存档隔离正确 | 阶段 5 结果决定 |
@@ -82,3 +82,15 @@ Release CRC32 为 `178853ea`，入口 `0x80600000`。两个 manifest 的 `hardwa
 将原实现完整迁至 `engines/regba/regba_adapter.c`，并同步构建列表、字库输入和生产函数回归的来源。本次为行为保持的目录迁移，ReGBA 回调、JIT、ROM、BIOS 和存档私有状态已集中；其中任务与 GUI 调度将于阶段 3 通过同步 backend 合同移出。没有引入第二份 ROM、帧缓冲或任务。
 
 完整主机回归、Release / Debug 构建和产物检查通过，初始可用堆与阶段 1 一致。本机日志为 `build/engine-stage2-{host,Release,Debug}-20261018.log`。本阶段没有实板操作，功能分离的板测仍由阶段 4 放行。
+
+## 阶段 3：公共会话与同步后端
+
+[`emu_session.c`](../projects/halley7m-regba/core/emu_session.c) 接管单个 FreeRTOS 模拟任务、命令队列、GUI、输入合并与松键门控、音频硬件启停、跳帧和倍速时钟。它只调用 [`emu_backend.h`](../projects/halley7m-regba/core/emu_backend.h) 中的同步操作与快照，不读取 ReGBA 全局。`emu_engine.c` 仅选择默认 ReGBA 后端，旧 `regba_core.h` 已移除。
+
+ReGBA 适配层持有客体、JIT、ROM 文件和缓冲、RGB555 帧、PCM 未消费尾部、原生存档状态。`run()` 阻塞执行，帧回调返回停止意图后，由适配层自己的 `longjmp` 退出；视频 stride 以像素计，PCM 为带采样率的交错双声道有符号 16 位样本，部分消费由适配层保留尾部。未新增模拟任务、ROM 副本或帧缓冲。
+
+停止分为 `run_quiesce` 和 `run_end`，先结束统计、停音频，再算最终 CRC 和等待保存。结束保存期间新到的保存请求在发布 `running=0` 前仍交给当前后端处理；菜单仅等待已有快照，失败仍保留当前客体。生产函数回归已迁移到新来源，补充 PCM 部分消费、回调返回后退出、真实 `run_game` 停止顺序及晚到保存请求断言。
+
+完整主机回归、Release / Debug 构建与产物检查、MIPS 模拟器核心诊断通过。Release BIN 为 2308336 字节，初始可用堆 46759936；Debug BIN 为 2964528 字节，初始可用堆 46104576。相对基线，链接器按页对齐后的初始堆各减少 4096 字节；32MiB ROM 的实际运行余量由阶段 4 重新测量。完整哈希和日志见[阶段 3 软件验收摘要](validation/engine-separation-stage3-20261018.json)。MIPS 模拟器使用其独立软件 harness，适配层和公共会话的贯通则由主机生产函数夹具及后续实板验证覆盖。
+
+本阶段尚未以重构镜像完成实板回归，保留 NOR 中原 GUI 固件。阶段 4 采用归档 Release 镜像先加载 RAM，全程静音；通过新镜像的完整门禁后，才开始 mGBA。

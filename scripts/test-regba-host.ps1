@@ -39,6 +39,25 @@ foreach ($directory in @($output, $storageOutput, $audioOutput, $videoOutput, $b
 $platform = Join-Path $workspace 'projects\halley7m-regba\platform'
 $core = Join-Path $workspace 'projects\halley7m-regba\core'
 $regbaAdapter = Join-Path $workspace 'projects\halley7m-regba\engines\regba\regba_adapter.c'
+$session = Join-Path $core 'emu_session.c'
+function Get-ProductionFunction([string]$source, [string]$name) {
+    # Hide braces in comments/strings while retaining source offsets.
+    $masked = [regex]::Replace($source, '(?s)/\*.*?\*/|//[^\n]*|"(?:\\.|[^"\\])*"|''(?:\\.|[^''\\])*''', {
+        param($match)
+        [regex]::Replace($match.Value, '[^\r\n]', ' ')
+    })
+    $pattern = '(?m)^(?:static\s+)?[A-Za-z_][A-Za-z0-9_ \t*]*\b' + [regex]::Escape($name) + '\s*\([^;{]*\)\s*\{'
+    $matches = [regex]::Matches($masked, $pattern)
+    if ($matches.Count -ne 1) { throw "Expected exactly one production $name, found $($matches.Count)." }
+    $match = $matches[0]
+    $depth = 1
+    for ($offset = $match.Index + $match.Length; $offset -lt $masked.Length; ++$offset) {
+        if ($masked[$offset] -eq '{') { ++$depth }
+        if ($masked[$offset] -eq '}') { --$depth }
+        if (-not $depth) { return $source.Substring($match.Index, $offset - $match.Index + 1) }
+    }
+    throw "Unclosed production function $name."
+}
 # Compile the real sampler with only its time/Idle/critical-section boundary
 # replaced. The fixture owns independent observations and expected rates.
 $statsStub = @'
@@ -57,7 +76,7 @@ uint64_t ulTaskGetIdleRunTimeCounter(void);
 foreach ($header in @('task.h', 'platform_runtime.h')) {
     [IO.File]::WriteAllText((Join-Path $statsOutput $header), "#include `"FreeRTOS.h`"`n", [Text.UTF8Encoding]::new($false))
 }
-& (Join-Path $workspace '.venv\Scripts\python.exe') (Join-Path $workspace 'scripts\prepare-ui-font.py') --source (Join-Path $workspace 'third_party\ReGBA\source\tools\unifont.hex.gz') --output (Join-Path $uiOutput 'ui_font.h') --text (Join-Path $core 'handheld_ui.c') --text $regbaAdapter --text (Join-Path $platform 'ui_draw.c')
+& (Join-Path $workspace '.venv\Scripts\python.exe') (Join-Path $workspace 'scripts\prepare-ui-font.py') --source (Join-Path $workspace 'third_party\ReGBA\source\tools\unifont.hex.gz') --output (Join-Path $uiOutput 'ui_font.h') --text (Join-Path $core 'handheld_ui.c') --text $session --text $regbaAdapter --text (Join-Path $platform 'ui_draw.c')
 if ($LASTEXITCODE) { throw 'Could not prepare the native UI/HUD font.' }
 $audioSource = Get-Content -LiteralPath (Join-Path $platform 'audio.c') -Raw -Encoding UTF8
 $match = [regex]::Match($audioSource, '(?s)(size_t audio_submit_stereo\(.*?)(?=\r?\nvoid audio_get_stats\()')
@@ -105,28 +124,30 @@ $generatedGameConfig = Join-Path $gameConfigOutput 'game_config_test.c'
 [IO.File]::WriteAllText($generatedGameConfig, $configTemplate.Replace('@GAME_CONFIG_FUNCTIONS@', $configFunctions.Groups[1].Value), [Text.UTF8Encoding]::new($false))
 
 # Exercise the production aggregator with independent input-source stubs.
-$coreSource = Get-Content -LiteralPath $regbaAdapter -Raw -Encoding UTF8
+$adapterSource = Get-Content -LiteralPath $regbaAdapter -Raw -Encoding UTF8
+$sessionSource = Get-Content -LiteralPath $session -Raw -Encoding UTF8
 $uiLifecycle = Get-Content -LiteralPath (Join-Path $workspace 'tests\handheld_lifecycle_test.c.in') -Raw -Encoding UTF8
 foreach ($part in @(
-    @('(?s)(static int settle_backup\(void\)\r?\n\{.*?)(?=\r?\nstatic int core_reload_save\()', '@SETTLE_BACKUP_FUNCTION@'),
-    @('(?s)(static int core_reload_save\(void\)\r?\n\{.*?)(?=\r?\nFILE \*regba_fopen\()', '@RELOAD_SAVE_FUNCTION@'),
-    @('(?s)(static void gui_run_game\(void\)\r?\n\{.*?)(?=\r?\nstatic void gui_open\()', '@GUI_RUN_FUNCTION@'),
-    @('(?s)(static void gui_unload_game\(void\)\r?\n\{.*?)(?=\r?\nstatic int gui_check_rom\()', '@GUI_UNLOAD_FUNCTION@'),
-    @('(?s)(static void gui_service\(void\)\r?\n\{.*?)(?=\r?\nstatic void core_task\()', '@GUI_SERVICE_FUNCTION@')
+    @($adapterSource, 'settle_backup', '@SETTLE_BACKUP_FUNCTION@'),
+    @($adapterSource, 'core_reload_save', '@RELOAD_SAVE_FUNCTION@'),
+    @($adapterSource, 'backend_unload', '@BACKEND_UNLOAD_FUNCTION@'),
+    @($adapterSource, 'backend_request_save', '@BACKEND_REQUEST_SAVE_FUNCTION@'),
+    @($sessionSource, 'backend_loaded', '@BACKEND_LOADED_FUNCTION@'),
+    @($sessionSource, 'backend_path', '@BACKEND_PATH_FUNCTION@'),
+    @($sessionSource, 'gui_run_game', '@GUI_RUN_FUNCTION@'),
+    @($sessionSource, 'gui_unload_game', '@GUI_UNLOAD_FUNCTION@'),
+    @($sessionSource, 'gui_service', '@GUI_SERVICE_FUNCTION@')
 )) {
-    $function = [regex]::Match($coreSource, $part[0])
-    if (-not $function.Success) { throw "Could not extract handheld lifecycle: $($part[1])" }
-    $uiLifecycle = $uiLifecycle.Replace($part[1], $function.Groups[1].Value)
+    if (([regex]::Matches($uiLifecycle, [regex]::Escape($part[2]))).Count -ne 1) { throw "Lifecycle template must contain exactly one $($part[2])." }
+    $uiLifecycle = $uiLifecycle.Replace($part[2], (Get-ProductionFunction $part[0] $part[1]))
 }
 $generatedUiLifecycle = Join-Path $uiOutput 'handheld_lifecycle_test.c'
 [IO.File]::WriteAllText($generatedUiLifecycle, $uiLifecycle, [Text.UTF8Encoding]::new($false))
-$inputMatch = [regex]::Match($coreSource, '(?s)(enum ReGBA_Buttons ReGBA_GetPressedButtons\(void\)\r?\n\{.*?\r?\n\})')
-if (-not $inputMatch.Success) { throw 'Could not extract ReGBA_GetPressedButtons from production source.' }
+$inputFunction = Get-ProductionFunction $sessionSource 'host_keys'
 $inputTemplate = @'
 #include <stdint.h>
 #include <stdio.h>
 
-enum ReGBA_Buttons { REGBA_BUTTON_NONE = 0 };
 static volatile uint32_t requested_keys;
 static volatile uint32_t gui_input_gate;
 static uint16_t board_keys, bt_keys;
@@ -138,7 +159,7 @@ static uint16_t bt_gamepad_get_keys(void) { return bt_keys; }
 
 static void expect(const char *name, uint16_t expected)
 {
-    uint16_t actual = (uint16_t)ReGBA_GetPressedButtons();
+    uint16_t actual = host_keys(NULL);
     if (actual != expected) {
         printf("FAIL %s expected=%03x actual=%03x\n", name,
                (unsigned)expected, (unsigned)actual);
@@ -177,7 +198,7 @@ int main(void)
 }
 '@
 $generatedInput = Join-Path $inputOutput 'input_aggregation_test.c'
-[IO.File]::WriteAllText($generatedInput, $inputTemplate.Replace('@REGBA_GET_PRESSED_BUTTONS@', $inputMatch.Groups[1].Value), [Text.UTF8Encoding]::new($false))
+[IO.File]::WriteAllText($generatedInput, $inputTemplate.Replace('@REGBA_GET_PRESSED_BUTTONS@', $inputFunction), [Text.UTF8Encoding]::new($false))
 
 $storageExe = Join-Path $storageOutput 'storage_host_test.exe'
 $encodingExe = Join-Path $storageOutput 'path_encoding_test.exe'

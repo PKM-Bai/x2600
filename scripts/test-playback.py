@@ -11,7 +11,7 @@ def extract_function(source, name):
     masked = re.sub(r'/\*.*?\*/|//[^\n]*|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'',
                     lambda m: ''.join('\n' if c == '\n' else ' ' for c in m[0]),
                     source, flags=re.S)
-    pattern = (rf'(?m)^(?:static\s+)?(?:void|bool|int16_t|signed\s+int)\s+'
+    pattern = (rf'(?m)^(?:static\s+)?[A-Za-z_][A-Za-z0-9_ \t*]*\b'
                rf'{re.escape(name)}\s*\([^;{{]*\)\s*\{{')
     matches = list(re.finditer(pattern, masked))
     if len(matches) != 1:
@@ -35,15 +35,28 @@ def main():
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     core = root / 'projects/halley7m-regba/core'
-    source = (core.parent / 'engines/regba/regba_adapter.c').read_text(encoding='utf-8')
-    names = ('clamp12', 'reset_audio_update_timing', 'ReGBA_AudioUpdate',
-             'ReGBA_RenderScreen', 'ReGBA_IsRenderingNextFrame', 'regba_frame_boundary')
-    functions = '\n\n'.join(extract_function(source, name) for name in names)
+    adapter = (core.parent / 'engines/regba/regba_adapter.c').read_text(encoding='utf-8')
+    session = (core / 'emu_session.c').read_text(encoding='utf-8')
+    adapter_names = ('clamp12', 'reset_audio_update_timing', 'ReGBA_AudioUpdate',
+                     'ReGBA_RenderScreen', 'ReGBA_IsRenderingNextFrame', 'regba_frame_boundary',
+                     'backend_audio_reset', 'backend_set_audio_enabled', 'run_game')
+    session_names = ('forward_save_request', 'host_should_render', 'host_video',
+                     'host_audio_submit', 'host_frame', 'host_run_begin',
+                     'host_run_quiesce', 'host_run_end')
+    adapter_functions = '\n\n'.join(extract_function(adapter, name) for name in adapter_names)
+    session_functions = '\n\n'.join(extract_function(session, name) for name in session_names)
+    # The fixture joins two production translation units. Keep their private
+    # counters independent rather than accidentally making both sides share RAM.
+    for name in ('rendered_frames', 'frame_crc', 'frame_limit'):
+        session_functions = re.sub(rf'(?<![.\w]){name}\b', 'session_' + name, session_functions)
     template = (root / 'tests/playback_test.c.in').read_text(encoding='utf-8')
-    if template.count('@PRODUCTION_FUNCTIONS@') != 1:
-        raise RuntimeError('Playback fixture needs exactly one production function marker')
+    for marker, functions in (('@ADAPTER_FUNCTIONS@', adapter_functions),
+                              ('@SESSION_FUNCTIONS@', session_functions)):
+        if template.count(marker) != 1:
+            raise RuntimeError('Playback fixture needs exactly one ' + marker)
+        template = template.replace(marker, functions)
     generated = output / 'playback_test.c'
-    generated.write_text(template.replace('@PRODUCTION_FUNCTIONS@', functions), encoding='utf-8')
+    generated.write_text(template, encoding='utf-8')
     if not args.vcvars.is_file():
         raise RuntimeError('MSVC environment script missing: ' + str(args.vcvars))
     executable = output / 'playback_test.exe'

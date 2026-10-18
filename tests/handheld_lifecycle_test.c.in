@@ -4,6 +4,7 @@
 #include "handheld_ui.h"
 #include "bt_gamepad.h"
 #include "resources.h"
+#include "emu_backend.h"
 #include <errno.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -36,6 +37,11 @@ static int reload_result, wait_result, worker_busy;
 static unsigned paint_calls, poll_calls, status_calls, unmap_calls;
 static const char *launch_path = REGBA_ROM_DIR "/New.gba";
 static char trace[64];
+static const emu_backend_ops_t *backend;
+
+@BACKEND_LOADED_FUNCTION@
+
+@BACKEND_PATH_FUNCTION@
 
 static void expect(int condition, const char *name)
 {
@@ -127,7 +133,7 @@ void handheld_ui_pause(const char *path)
     expect(IsGameLoaded && !strcmp(path, CurrentGamePath), "pause keeps current ROM path");
 }
 
-static int gui_check_rom(const char *path)
+static int fixture_check_rom(const char *path)
 {
     event('C');
     expect(!strcmp(path, launch_path), "preflight selected ROM");
@@ -146,7 +152,7 @@ static int flush_backup(void)
     return flush_result;
 }
 
-static int core_load_game(const char *path)
+static int fixture_load(const char *path)
 {
     event('L');
     expect(!backup_dirty && !save_in_flight && !save_requested,
@@ -160,17 +166,17 @@ static int core_load_game(const char *path)
     return load_result;
 }
 
-static bool run_game(uint32_t frames, bool selftest)
+static int fixture_run(uint32_t frames)
 {
     event('R');
     expect(IsGameLoaded && command_busy, "run has a loaded owned game");
-    expect(!frames && !selftest, "GUI runs continuously without self-test");
+    expect(!frames, "GUI runs continuously without self-test");
     expect(!gui_showing && !gui_requested, "running hides menu and consumes request");
     expect(gui_input_gate && gui_last_menu == menu_latch,
            "resume gates held game keys and latches menu button");
     last_flush_result = run_flush_result;
     gui_requested = 1; /* A later frame boundary requests this simulated pause. */
-    return true;
+    return 0;
 }
 
 static void ReGBA_UnmapEntireROM(void *rom)
@@ -185,6 +191,24 @@ static void ReGBA_UnmapEntireROM(void *rom)
 static int storage_mount(void) { event('M'); return mount_result; }
 static int storage_prepare_dirs(void) { event('P'); return prepare_result; }
 
+@BACKEND_UNLOAD_FUNCTION@
+
+@BACKEND_REQUEST_SAVE_FUNCTION@
+
+static void fixture_get_state(emu_backend_state_t *state)
+{
+    memset(state, 0, sizeof(*state));
+    state->loaded = IsGameLoaded;
+    if (IsGameLoaded) snprintf(state->path, sizeof(state->path), "%s", CurrentGamePath);
+}
+
+static const emu_backend_ops_t fixture_backend = {
+    .load = fixture_load, .run = fixture_run,
+    .unload = backend_unload, .check_rom = fixture_check_rom,
+    .request_save = backend_request_save, .flush_save = flush_backup,
+    .reload_save = core_reload_save, .get_state = fixture_get_state,
+};
+
 @GUI_RUN_FUNCTION@
 
 @GUI_UNLOAD_FUNCTION@
@@ -193,6 +217,7 @@ static int storage_prepare_dirs(void) { event('P'); return prepare_result; }
 
 static void reset_case(enum ui_action action)
 {
+    backend = &fixture_backend;
     gui_enabled = gui_showing = 1;
     gui_requested = gui_input_gate = 0;
     requested_keys = command_busy = save_requested = 0;

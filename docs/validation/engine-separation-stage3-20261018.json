@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "date": "2026-10-18",
+  "phase": 3,
+  "status": "软件验收通过，重构版实板门禁待执行",
+  "source_parent_commit": "03e627c",
+  "release": {
+    "binary_bytes": 2308336,
+    "sha256": "6d5a7e99a36c812776d7427c9ae3b2e8edf29666256f42ac1f3d57b8bfb378e6",
+    "initial_heap_bytes": 46759936,
+    "archive": "build/firmware-revisions/engine-session-20261018-halley7m_regba.bin"
+  },
+  "debug": {
+    "binary_bytes": 2964528,
+    "sha256": "06a1be117c26c3e235b33bda16ee24bd6615dc322a4692e51db3c9816db24554",
+    "initial_heap_bytes": 46104576
+  },
+  "heap_delta_from_baseline_bytes": -4096,
+  "software_checks": {
+    "full_host": "通过，build/engine-stage3-host-20261018.log",
+    "release_build": "通过，build/engine-stage3-Release-20261018.log",
+    "debug_build": "通过，build/engine-stage3-Debug-20261018.log",
+    "artifact_checks": "Release / Debug 通过，ELF ABI、入口、未定义符号、NOR 大小、DDR 边界",
+    "mips_simulator": "通过，build/regba-sim/simulator.log；120 帧、ARM/Thumb/SWI/IRQ/RAM-code/SMC 和原生存档诊断",
+    "new_production_run_order": "通过，build/engine-stage3-playback-run-order/results.log"
+  },
+  "boundaries": [
+    "emu_session 不读取 ReGBA 客体全局或包含 common.h",
+    "同一模拟任务，阻塞 run 加帧回调；longjmp 留在适配层",
+    "ROM 缓冲和 FILE 同属适配层，无第二份 ROM 或帧缓冲",
+    "菜单仅 settle；普通停止/显式保存/换游戏/退出 flush；失败保留状态",
+    "run_quiesce 先停音频，最终 CRC 后 run_end 等待保存",
+    "结束保存期间的晚到请求仍归当前 ROM，原子发布 stopped",
+    "主机夹具提取真实 adapter/session 函数，MIPS 模拟器使用独立 harness"
+  ],
+  "refactored_board_validation": false,
+  "mgba_started": false,
+  "local_artifacts_note": "build 中镜像与原始日志仅保留本机，本摘要提供身份与验收范围。"
+}
