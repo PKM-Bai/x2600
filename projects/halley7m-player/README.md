@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-2026-10-19：两套架构 Debug/Release 已构建并通过紧凑合包核验；实板 RAM 启动、双 FreeRTOS 握手、重复启停、256KiB共享区CRC与576MHz小核计时器校准通过。FELIX 90帧跨三个GOP的可见NV12两平面CRC全部与PC一致，DPU确认全部描述符，停止后回收内存。**用户实际观察仍为黑屏**，背光/DSI输出正在排查，未通过阶段3显示验收；音频、完整会话、LVGL GUI及30分钟联合验收仍需完成。
+2026-10-19：两套架构 Debug/Release 已构建并通过紧凑合包核验；实板 RAM 启动、双 FreeRTOS 握手、重复启停、256KiB共享区CRC与576MHz小核计时器校准通过。FELIX 90帧跨三个GOP的可见NV12两平面CRC全部与PC一致。修正合成器四层Z顺序重复导致的黑屏后，用户确认实际画面完整、方向及颜色正常；稳态30.272fps、late=0、显示欠载与描述符mismatch=0。音频、完整会话、LVGL GUI及30分钟联合验收仍在实施。
 
 本机使用 Windows XBurst2 R5.1.6、官方 Victory0 r1.1.1 Linux 包（Ubuntu-22.04 WSL），以及 FFmpeg/ffprobe 9.0.2 essentials。Victory0 的编译器支持 `rv32imc / ilp32`，但随包 libgcc 采用 RV32E ABI，因此本工程以自身的 ILP32 `__clzsi2` / `__udivdi3` 避免混入不兼容对象，ELF 核验器也拒绝 RVE 标记。当前板测串口为用户指定的 COM52。
 

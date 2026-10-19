@@ -1,6 +1,7 @@
 #include "player_platform.h"
 #include "player_probe.h"
 #include "player_config.h"
+#include "player_display.h"
 #include "FreeRTOS.h"
 #include "task.h"
 #include <stdio.h>
@@ -29,6 +30,9 @@ static void console_task(void *unused)
                 printf("\n");
                 if (!strcmp(line, "status")) player_amp_print_status();
                 else if (!strcmp(line, "reboot")) platform_reboot();
+                else if (!strcmp(line, "display")) player_display_print_status();
+                else if (!strcmp(line, "display vpg")) printf("DISPLAY_VPG result=%d\n", player_display_test_pattern(true));
+                else if (!strcmp(line, "display normal")) printf("DISPLAY_VPG result=%d\n", player_display_test_pattern(false));
                 else if (!strcmp(line, "amp start")) (void)player_subcore_start();
                 else if (!strcmp(line, "amp stop")) (void)player_subcore_stop();
                 else if (!strcmp(line, "amp shared")) (void)player_subcore_shared_test();

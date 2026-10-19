@@ -39,6 +39,8 @@ int player_display_submit_frame(const player_display_frame_t *frame);
  * No player_video_pool operation is performed inside this driver or its ISR. */
 int player_display_poll_completion(player_display_completion_t *completion);
 void player_display_get_stats(player_display_stats_t *stats);
+void player_display_print_status(void);
+int player_display_test_pattern(bool enabled);
 /* Success confirms composer/SRDMA idle: all outstanding display holds can be
  * cleared by the owner. On timeout keep their buffers pinned and retry stop. */
 int player_display_stop(void);

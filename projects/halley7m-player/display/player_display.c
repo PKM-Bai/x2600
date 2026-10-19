@@ -8,6 +8,7 @@
 #include <interrupt.h>
 #include <errno.h>
 #include <string.h>
+#include <stdio.h>
 
 static LCD_HandleTypeDef lcd __attribute__((aligned(64)));
 static struct lay_cfg layers[MAX_LAYER_DESC_NUM];
@@ -142,7 +143,10 @@ int player_display_init(void)
     WRITE_REG(lcd.Instance->DC_INTC,
               DC_DPU_INTC_EOD_MSK_0 | DC_DPU_INTC_UOT_MSK_0);
     layers[0].lay_en = ENABLE;
-    layers[0].lay_z_order = LAYER_Z_ORDER_0;
+    /* The mixer needs a unique order even for disabled layers. Match the
+     * SDK composer example: the only active video layer is the top layer. */
+    for (unsigned i = 0; i < MAX_LAYER_DESC_NUM; ++i)
+        layers[i].lay_z_order = LAYER_Z_ORDER_3 - i;
     layers[0].format = LAYER_CFG_FORMAT_NV12;
     layers[0].color = COLOR_RGB;
     layers[0].g_alpha_en = ENABLE;
@@ -233,4 +237,51 @@ void player_display_get_stats(player_display_stats_t *stats)
     stats->pending = pending_valid;
     stats->scanout = scanout_valid;
     taskEXIT_CRITICAL();
+}
+
+int player_display_test_pattern(bool enabled)
+{
+    if (!initialized) return -ENODEV;
+    if (enabled) SET_BIT(MIPI_DSI_Instance->VID_MODE_CFG, VID_MODE_CFG_VPG_EN);
+    else CLEAR_BIT(MIPI_DSI_Instance->VID_MODE_CFG, VID_MODE_CFG_VPG_EN);
+    return 0;
+}
+
+void player_display_print_status(void)
+{
+    printf("DISPLAY clocks=%d init=%d running=%d backlight=%d panel_result=%d pending=%d scanout=%d\n",
+           clocks_enabled, initialized, running, backlight_on, panel_zc502_result(),
+           pending_valid, scanout_valid);
+    printf("GPIOC pin=%08lx int=%08lx mask=%08lx pat1=%08lx pat0=%08lx\n",
+           PC_Instance->PxPINL, PC_Instance->PxINT, PC_Instance->PxMSK,
+           PC_Instance->PxPAT1, PC_Instance->PxPAT0);
+    printf("BACKLIGHT pwm_en=%08lx mode=%08lx initial=%08lx idle=%08lx cc15=%08lx wc15=%08lx\n",
+           PWM_Instance->PWMEN, PWM_Instance->PWMMS, PWM_Instance->PWMINL,
+           PWM_Instance->PWMIDL, PWM_Instance->PWMCCn[15], PWM_Instance->PWMWCn[15]);
+    printf("DISPLAY_CPM clkgr0=%08lx clkgr1=%08lx pwmcdr=%08lx lpcdr=%08lx\n",
+           CPM_Instance->CLKGR0, CPM_Instance->CLKGR1, CPM_Instance->PWMCDR, CPM_Instance->LPCDR);
+    if (!clocks_enabled) return;
+    const uint16_t dpu_offsets[] = {
+        0x0000, 0x1000, 0x2004, 0x200c, 0x2010, 0x2014, 0x2018,
+        0x2204, 0x3110, 0x8000, 0x9000, 0x9004, 0x9008, 0x900c, 0x9010, 0x9014
+    };
+    const uint16_t dsi_offsets[] = {
+        0x0004, 0x0008, 0x0010, 0x0014, 0x002c, 0x0034, 0x0038, 0x003c,
+        0x0048, 0x004c, 0x0050, 0x0054, 0x0058, 0x005c, 0x0060, 0x0068,
+        0x0074, 0x0094, 0x0098, 0x009c, 0x00a0, 0x00a4, 0x00b0, 0x00bc, 0x00c0
+    };
+    for (unsigned i = 0; i < sizeof(dpu_offsets) / sizeof(*dpu_offsets); ++i)
+        printf("DPU %04x=%08lx\n", dpu_offsets[i],
+               *(volatile unsigned long *)((uintptr_t)DPU_Instance + dpu_offsets[i]));
+    for (unsigned i = 0; i < sizeof(dsi_offsets) / sizeof(*dsi_offsets); ++i)
+        printf("DSI %04x=%08lx\n", dsi_offsets[i],
+               *(volatile unsigned long *)((uintptr_t)MIPI_DSI_Instance + dsi_offsets[i]));
+    unsigned frame = lcd.CompData.comp_next_frame;
+    const volatile uint32_t *desc = (const volatile uint32_t *)(uintptr_t)
+        (CPHYSADDR(&lcd.CompData.FrameDesc[frame]) | 0xa0000000u);
+    const volatile uint32_t *layer = (const volatile uint32_t *)(uintptr_t)
+        (CPHYSADDR(&lcd.CompData.LayerDesc[frame][0]) | 0xa0000000u);
+    for (unsigned i = 0; i < 16; ++i)
+        printf("DISPLAY_DESC %u frame=%08lx layer0=%08lx\n", i,
+               (unsigned long)desc[i], (unsigned long)layer[i]);
 }

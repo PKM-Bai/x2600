@@ -20,7 +20,8 @@ static uint8_t *packet_buffer;
 static bool pool_initialized;
 static bool codec_running;
 static uint32_t presented;
-static uint64_t first_latch_us, last_latch_us, pending_due_us, max_late_us;
+static uint64_t first_latch_us, second_latch_us, last_latch_us, pending_due_us, max_late_us;
+static uint64_t first_ready_us;
 static uint32_t late_frames;
 static bool verify_frames;
 static uint32_t verified_frames;
@@ -163,8 +164,10 @@ static int poll_display(bool wait)
         if (result) {
             if (!player_video_display_latch(&pool, completion.latched)) return -ESTALE;
             if (!presented) first_latch_us = completion.irq_time_us;
+            if (presented == 1) second_latch_us = completion.irq_time_us;
             last_latch_us = completion.irq_time_us;
-            uint64_t late = last_latch_us > pending_due_us ? last_latch_us - pending_due_us : 0;
+            uint64_t late = pending_due_us && last_latch_us > pending_due_us ?
+                            last_latch_us - pending_due_us : 0;
             if (late > max_late_us) max_late_us = late;
             if (late > 33334u) ++late_frames;
             ++presented;
@@ -213,9 +216,9 @@ static int present_ready(uint64_t *clock_start)
             if (result) return result;
             continue;
         }
-        if (!*clock_start) *clock_start = platform_time_us();
-        uint64_t due = *clock_start + frame.frame_index * UINT64_C(1000000) / 30u;
-        while (platform_time_us() < due) {
+        uint64_t due = *clock_start ?
+            *clock_start + frame.frame_index * UINT64_C(1000000) / 30u : 0;
+        while (due && platform_time_us() < due) {
             if (interrupted()) return -ECANCELED;
             vTaskDelay(1);
         }
@@ -231,6 +234,12 @@ static int present_ready(uint64_t *clock_start)
         }
         result = poll_display(true);
         if (result) return result;
+        /* First-frame scanout and the panel's 100ms backlight settling belong
+         * to LOADING. Start the media timeline once that setup has returned. */
+        if (!*clock_start) {
+            *clock_start = platform_time_us();
+            first_ready_us = *clock_start;
+        }
     }
     return result == -EAGAIN ? 0 : result;
 }
@@ -245,7 +254,7 @@ static void run_video(const char *path, unsigned long frame_limit, bool keep_las
     uint32_t decoded = 0;
     size_t minimum_heap = platform_free_heap();
     presented = 0;
-    first_latch_us = last_latch_us = max_late_us = 0;
+    first_latch_us = second_latch_us = last_latch_us = max_late_us = first_ready_us = 0;
     late_frames = 0;
     if (codec || packet_buffer) {
         printf("VIDEO_BUSY retry: video stop\n");
@@ -306,13 +315,18 @@ done:
     int stopped = held ? 0 : stop_video();
     uint64_t span = last_latch_us - first_latch_us;
     uint32_t fps_milli = span ? (uint32_t)((uint64_t)(presented - 1u) * 1000000000u / span) : 0;
-    printf("VIDEO_PROBE result=%d stop=%d decoded=%lu presented=%lu decode_us=%llu elapsed_us=%llu underruns=%lu mismatches=%lu heap=%lu sampled_min_free_heap=%lu latch_fps_milli=%lu late_frames=%lu max_late_us=%llu held=%d verified=%lu\n",
+    uint64_t steady_span = last_latch_us - second_latch_us;
+    uint32_t steady_fps = presented > 2 && steady_span ?
+        (uint32_t)((uint64_t)(presented - 2u) * 1000000000u / steady_span) : 0;
+    printf("VIDEO_PROBE result=%d stop=%d decoded=%lu presented=%lu decode_us=%llu elapsed_us=%llu underruns=%lu mismatches=%lu heap=%lu sampled_min_free_heap=%lu latch_fps_milli=%lu steady_fps_milli=%lu startup_us=%llu late_frames=%lu max_late_us=%llu held=%d verified=%lu\n",
            result, stopped, (unsigned long)decoded, (unsigned long)presented,
            (unsigned long long)decode_us,
            (unsigned long long)(clock_start ? platform_time_us() - clock_start : 0),
            (unsigned long)stats.underruns, (unsigned long)stats.mismatches,
            (unsigned long)platform_free_heap(), (unsigned long)minimum_heap,
-           (unsigned long)fps_milli, (unsigned long)late_frames,
+           (unsigned long)fps_milli, (unsigned long)steady_fps,
+           (unsigned long long)(first_ready_us ? first_ready_us - first_latch_us : 0),
+           (unsigned long)late_frames,
            (unsigned long long)max_late_us, held, (unsigned long)verified_frames);
 }
 
