@@ -10,6 +10,19 @@ static volatile struct player_amp_shared *const shared =
     (volatile struct player_amp_shared *)(uintptr_t)PLAYER_SHARED_PHYS;
 static uint32_t session;
 
+static void rv_diagnostics_service(void)
+{
+    static uint64_t previous_counter;
+    static uint32_t sample_sequence;
+    uint64_t now = player_cpu_diagnostics_counter();
+    if (sample_sequence && now - previous_counter < (uint32_t)configCPU_CLOCK_HZ) return;
+    player_cpu_raw raw;
+    if (!player_cpu_diagnostics_capture(&raw)) return;
+    if (++sample_sequence == 0) ++sample_sequence;
+    player_cpu_diagnostics_publish(&shared->remote_diagnostics, &raw, sample_sequence);
+    previous_counter = raw.counter;
+}
+
 #if PLAYER_AUDIO_OWNER == PLAYER_AUDIO_OWNER_RISCV
 /* @PRODUCTION_AUDIO_REMOTE_BEGIN@ */
 static uint32_t rv_audio_session, rv_audio_command_sequence, rv_audio_event_sequence;
@@ -267,6 +280,7 @@ static void amp_task(void *unused)
         player_amp_barrier();
         RISC_CCU_Instance->MBOX_FROM_HOST = 0;
         rv_audio_service();
+        rv_diagnostics_service();
         struct player_amp_message command;
         int result;
         while ((result = player_amp_receive(&shared->host_to_remote, &command)) != 0) {

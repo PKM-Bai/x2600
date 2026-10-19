@@ -12,7 +12,12 @@ SECTIONS
         *(.text*)
         *(.interrupt_handler.text*)
     } > DDR
-    .rodata : { . = ALIGN(8); *(.rodata*) } > DDR
+    .rodata : {
+        . = ALIGN(8);
+        /* Retain the verified companion even when AudioOwner=mips holds it reset. */
+        KEEP(*(.rodata.riscv_image))
+        *(.rodata*)
+    } > DDR
     .data : { . = ALIGN(8); *(.data*) } > DDR
     .sdata : {
         . = ALIGN(16); _gp = . + 0x7ff0;

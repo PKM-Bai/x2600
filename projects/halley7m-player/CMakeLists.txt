@@ -26,6 +26,7 @@ if(PLAYER_CORE STREQUAL "riscv")
     set(LINKER_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/riscv/player.lds")
     add_executable(${FIRMWARE}
         riscv/start.S riscv/main.c riscv/runtime.c common/player_amp.c
+        common/player_cpu_diagnostics.c common/player_cpu_freertos.c
         ${PORT_PATH}/genex.S ${PORT_PATH}/port.c ${PORT_PATH}/portASM.S ${PORT_PATH}/heap_4.c
         ${SDK_PATH}/cpu/core-riscv/traps.c ${SDK_PATH}/cpu/core-riscv/spinlock.c
         ${SDK_PATH}/cpu/soc-x2600/src/interrupt.c
@@ -72,8 +73,10 @@ elseif(PLAYER_CORE STREQUAL "mips")
         mips/start.S mips/port/context.S mips/port/port.c
         mips/runtime.c mips/runtime_heap.c mips/runtime_syscalls.c
         mips/main.c mips/player_probe.c mips/player_audio_probe.c mips/player_audio_client.c
+        mips/player_diagnostics.c
         ${AMP_SOURCES} ${TEST_MEDIA_SOURCES} common/player_amp.c
         common/player_video.c common/player_media.c
+        common/player_cpu_diagnostics.c common/player_cpu_freertos.c
         ${SDK_PATH}/cpu/core/fpu.S ${SDK_PATH}/cpu/core/spinlock.c
         ${SDK_PATH}/cpu/soc-x2600/src/interrupt.c
         ${SDK_PATH}/drivers/drivers-x2600/src/x2600_ll_cpm.c

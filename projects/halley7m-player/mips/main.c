@@ -3,6 +3,7 @@
 #include "player_config.h"
 #include "player_display.h"
 #include "player_audio_probe.h"
+#include "player_diagnostics.h"
 #include "FreeRTOS.h"
 #include "task.h"
 #include <stdio.h>
@@ -16,13 +17,16 @@ static void console_task(void *unused)
     (void)unused;
     char line[512];
     size_t length = 0;
+    static player_diagnostics_report diagnostics;
     printf("PLAYER_BOOT core=mips rtos=FreeRTOS entry=80600000 heap_end=83c00000 stage=audio-diagnostics\n");
     printf("PLAYER_NOTE audio_dma=disabled default_volume_percent=%u video_clock=diagnostic-wall\n",
            PLAYER_DEFAULT_VOLUME_PERCENT);
     (void)player_subcore_start();
+    player_diagnostics_reset();
     printf("player> ");
     for (;;) {
         player_amp_service();
+        (void)player_diagnostics_poll(&diagnostics);
         int c = platform_uart_getchar();
         if (c >= 0) {
             if (c == '\r' || c == '\n') {
@@ -30,6 +34,7 @@ static void console_task(void *unused)
                 line[length] = 0;
                 printf("\n");
                 if (!strcmp(line, "status")) player_amp_print_status();
+                else if (!strcmp(line, "metrics")) player_diagnostics_print();
                 else if (!strcmp(line, "reboot")) platform_reboot();
                 else if (!strcmp(line, "display")) player_display_print_status();
                 else if (!strcmp(line, "display vpg")) printf("DISPLAY_VPG result=%d\n", player_display_test_pattern(true));

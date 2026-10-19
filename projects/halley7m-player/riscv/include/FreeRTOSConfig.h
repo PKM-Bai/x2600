@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <x2600_hal.h>
+#include "player_cpu_diagnostics.h"
 void player_riscv_assert(const char *file, unsigned line) __attribute__((noreturn));
 #define configMTIME_BASE_ADDRESS        0x12a00010
 #define configMTIMECMP_BASE_ADDRESS     0x12a00018
@@ -31,11 +32,18 @@ void player_riscv_assert(const char *file, unsigned line) __attribute__((noretur
 #define configUSE_TIMERS                 0
 #define configUSE_CO_ROUTINES            0
 #define configQUEUE_REGISTRY_SIZE        0
-#define configGENERATE_RUN_TIME_STATS    0
+#define configGENERATE_RUN_TIME_STATS    1
+#define configRUN_TIME_COUNTER_TYPE     uint64_t
+#define configUSE_STATS_FORMATTING_FUNCTIONS 0
+/* Read the calibrated CCU cycle counter; publish raw counters to MIPS rather
+ * than divide/multiply 64-bit runtime values on this processor. */
+#define portCONFIGURE_TIMER_FOR_RUN_TIME_STATS() do { } while (0)
+#define portGET_RUN_TIME_COUNTER_VALUE() player_cpu_diagnostics_counter()
 #define INCLUDE_vTaskDelay               1
 #define INCLUDE_vTaskDelete              1
 #define INCLUDE_vTaskSuspend             1
 #define INCLUDE_xTaskGetSchedulerState   1
 #define INCLUDE_uxTaskGetStackHighWaterMark 1
+#define INCLUDE_xTaskGetIdleTaskHandle    1
 #define configASSERT(x) do { if (!(x)) player_riscv_assert(__FILE__, __LINE__); } while (0)
 #endif

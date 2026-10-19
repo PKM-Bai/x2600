@@ -2,11 +2,12 @@
 #define PLAYER_AMP_H
 
 #include "player_memory.h"
+#include "player_cpu_diagnostics.h"
 #include <stddef.h>
 #include <stdint.h>
 
 #define PLAYER_AMP_MAGIC UINT32_C(0x50414d50)
-#define PLAYER_AMP_VERSION UINT32_C(2)
+#define PLAYER_AMP_VERSION UINT32_C(3)
 #define PLAYER_AMP_RING_CAPACITY 16u
 #define PLAYER_AUDIO_OWNER_MIPS 1u
 #define PLAYER_AUDIO_OWNER_RISCV 2u
@@ -108,11 +109,12 @@ struct player_amp_shared {
     _Alignas(64) struct player_amp_ring remote_to_host;
     _Alignas(64) struct player_amp_ring audio_host_to_remote;
     _Alignas(64) struct player_amp_ring audio_remote_to_host;
+    _Alignas(64) struct player_cpu_diagnostics_wire remote_diagnostics;
 };
 
 _Static_assert(sizeof(struct player_amp_message) == 32, "AMP message ABI");
 _Static_assert(sizeof(struct player_amp_ring) == 640, "AMP ring ABI");
-_Static_assert(sizeof(struct player_amp_shared) == 2880, "AMP control ABI");
+_Static_assert(sizeof(struct player_amp_shared) == 2944, "AMP control ABI");
 _Static_assert(sizeof(struct player_amp_shared) <= PLAYER_PCM_OFFSET,
                "Control structures overlap the PCM ring");
 
