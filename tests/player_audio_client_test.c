@@ -192,21 +192,25 @@ static void reset_fixture(void)
 #endif
 }
 
-static void stream(unsigned total, int pause_once)
+static void stream(unsigned total, int pause_once, int unknown_length)
 {
     static int16_t input[PLAYER_AMP_PCM_SAMPLES + 3503u];
     assert(total <= sizeof(input) / sizeof(input[0]));
     for (uint32_t i = 0; i < total; ++i) input[i] = (int16_t)(i ^ (i >> 6));
-    assert(player_audio_client_start(total, 10) == 0);
+    assert(player_audio_client_start(unknown_length ? 0 : total, 10) == 0);
     assert(player_audio_client_start(total, 10) == PLAYER_AUDIO_CLIENT_BUSY);
-    assert(player_audio_client_mark_eof() == PLAYER_AUDIO_CLIENT_STATE);
+    if (!unknown_length) assert(player_audio_client_mark_eof() == PLAYER_AUDIO_CLIENT_STATE);
     unsigned written = 0;
     uint64_t deadline = test_now + 5000000;
     while (written < total && test_now < deadline) {
         written += player_audio_client_write_pcm(input + written, total - written);
         if (written < total) vTaskDelay(5);
     }
-    assert(written == total && player_audio_client_mark_eof() == 0);
+    assert(written == total);
+    if (unknown_length) assert(status.total_samples == 0);
+    assert(player_audio_client_mark_eof() == 0);
+    assert(status.total_samples == total && player_audio_client_mark_eof() == 0);
+    assert(player_audio_client_write_pcm(input, 1) == 0);
     if (pause_once) {
         assert(player_audio_client_pause() == 0);
         player_audio_client_stats before, after;
@@ -234,12 +238,22 @@ static void stream(unsigned total, int pause_once)
 int main(void)
 {
     reset_fixture();
-    assert(player_audio_client_start(0, 10) == PLAYER_AUDIO_CLIENT_ARGUMENT);
     assert(player_audio_client_start(UINT32_MAX, 10) == PLAYER_AUDIO_CLIENT_ARGUMENT);
     assert(player_audio_client_start(1, 101) == PLAYER_AUDIO_CLIENT_ARGUMENT);
-    stream(5003, 1);
-    stream(31, 0);
-    stream(PLAYER_AMP_PCM_SAMPLES + 3503u, 0);
+    stream(5003, 1, 0);
+    stream(31, 0, 0);
+    stream(PLAYER_AMP_PCM_SAMPLES + 3503u, 0, 0);
+    stream(5003, 1, 1);
+    stream(31, 0, 1);
+    stream(PLAYER_AMP_PCM_SAMPLES + 3503u, 0, 1);
+    stream(0, 0, 1);
+    reset_fixture();
+    assert(player_audio_client_start(0, 7) == 0);
+    status.written_samples = UINT32_MAX / 2u;
+    const int16_t excess = 0;
+    assert(player_audio_client_write_pcm(&excess, 1) == 0);
+    assert(status.last_error == PLAYER_AUDIO_CLIENT_ARGUMENT);
+    assert(player_audio_client_stop() == 0);
     reset_fixture();
     assert(player_audio_client_start(4800, 10) == 0);
     hw_stats.dma_errors = 2; hw_stats.dma_timeouts = 3;
@@ -252,6 +266,10 @@ int main(void)
     player_audio_client_get_status(&counters);
     assert(counters.dma_errors == 2 && counters.dma_timeouts == 3 && !counters.session_active);
 #if PLAYER_AUDIO_OWNER == PLAYER_AUDIO_OWNER_RISCV
+    reset_fixture();
+    assert(player_audio_client_start(0, 7) == 0);
+    assert(command(PLAYER_AMP_AUDIO_CMD_EOF, 1, 0) == PLAYER_AUDIO_CLIENT_PROTOCOL);
+    assert(player_audio_client_stop() == 0);
     reset_fixture();
     assert(player_audio_client_start(4800, 10) == 0);
     command_sequence = rv_audio_command_sequence = UINT32_MAX;

@@ -18,6 +18,10 @@
 
 对外声明见 `player_audio.h`。典型顺序为 `open → set_volume → begin → write/service → finish → service直到DRAINED → stop → close`；暂停可插在播放期间。CPM 握手只覆盖硬件 `open/close`，无需在持续播放期间持有。
 
+AMP 协议 v4 保持 v3 的共享内存布局，扩展了流式长度：`START.total_samples=0` 表示尚未知晓总样本数，供 MP3/AAC 解码边读边播放。写入计数仍受 `UINT32_MAX/2` 上限约束，EOF 以实际写入数封闭会话；小核验证 EOF 与共享写位置一致。已知长度的 WAV/AVI 仍要求 EOF 时精确相等，不能用声明值填补缺失样本。两核必须一起更新，版本不一致拒绝握手。
+
+这项扩展已通过两种音频 owner 的生产代码主机回归、共享协议测试，以及 MIPS 对象和 RISC-V 完整 ELF 编译；尚未进行协议 v4 固件的板端流式播放验证。
+
 ## 实现来源与构建
 
 直接编译 SDK commit `9500d2ec917a44d0d9657940e865e70f1a885849` 的 `libbare-cpu/drivers/drivers-x2600/src/` 中 `x2600_ll_cpm.c`、`x2600_ll_gpio.c`、`x2600_hal_pdma.c`、`x2600_hal_aic.c`、`x2600_hal_icodec.c`，不改 SDK 文件。这些源文件头部标明 Ingenic Copyright 与 GPL-2.0-or-later，许可证来源以 SDK 文件为准。

@@ -7,7 +7,7 @@
 #include <stdint.h>
 
 #define PLAYER_AMP_MAGIC UINT32_C(0x50414d50)
-#define PLAYER_AMP_VERSION UINT32_C(3)
+#define PLAYER_AMP_VERSION UINT32_C(4)
 #define PLAYER_AMP_RING_CAPACITY 16u
 #define PLAYER_AUDIO_OWNER_MIPS 1u
 #define PLAYER_AUDIO_OWNER_RISCV 2u
@@ -37,7 +37,9 @@ enum player_amp_audio_state {
 
 /* Dedicated audio rings use message.session=media_session_id. Each session
  * starts at command sequence 1; events have their own contiguous sequence.
- * START arguments={total_samples,volume_percent,0,0}; SET_VOLUME={percent,0,0,0};
+ * START arguments={total_samples,volume_percent,0,0}; total_samples=0 permits
+ * streaming with unknown duration. EOF then seals the exact written total.
+ * SET_VOLUME={percent,0,0,0};
  * EOF={total_samples,0,0,0}; PAUSE/RESUME/STOP have four zero arguments.
  * ACK={command_sequence,command_opcode,audio_state,0};
  * PROGRESS/ENDED={completed_valid_samples,underruns,audio_state,clock_valid};

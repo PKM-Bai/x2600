@@ -12,6 +12,7 @@
 static player_audio_client_stats status;
 static uint32_t next_media_session;
 static int client_recovery_required;
+static int total_unknown, eof_marked;
 #if PLAYER_AUDIO_OWNER == PLAYER_AUDIO_OWNER_RISCV
 static volatile struct player_amp_shared *bus;
 static uint32_t boot_session, command_sequence, event_sequence, event_completed_samples;
@@ -211,7 +212,7 @@ int player_audio_client_service(void)
 
 int player_audio_client_start(uint32_t total_samples, unsigned volume_percent)
 {
-    if (!total_samples || total_samples > UINT32_MAX / 2u || volume_percent > 100u)
+    if (total_samples > UINT32_MAX / 2u || volume_percent > 100u)
         return PLAYER_AUDIO_CLIENT_ARGUMENT;
     if (status.session_active) return PLAYER_AUDIO_CLIENT_BUSY;
 #if PLAYER_AUDIO_OWNER == PLAYER_AUDIO_OWNER_RISCV
@@ -235,6 +236,8 @@ int player_audio_client_start(uint32_t total_samples, unsigned volume_percent)
     if (++next_media_session == 0) ++next_media_session;
     status.media_session_id = next_media_session;
     status.total_samples = total_samples;
+    total_unknown = total_samples == 0;
+    eof_marked = 0;
     status.volume_percent = volume_percent;
     status.state = PLAYER_AMP_AUDIO_BUFFERING;
     status.session_active = 1;
@@ -253,10 +256,14 @@ int player_audio_client_start(uint32_t total_samples, unsigned volume_percent)
 
 unsigned player_audio_client_write_pcm(const int16_t *samples, unsigned count)
 {
-    if ((!samples && count) || !status.session_active || status.last_error ||
-        status.written_samples == status.total_samples) return 0;
+    if ((!samples && count) || !status.session_active || status.last_error || eof_marked ||
+        (!total_unknown && status.written_samples == status.total_samples)) return 0;
     if (player_audio_client_service() != 0) return 0;
-    uint32_t remaining = status.total_samples - status.written_samples;
+    uint32_t remaining = (total_unknown ? UINT32_MAX / 2u : status.total_samples) - status.written_samples;
+    if (!remaining && total_unknown && count) {
+        (void)fail_client(PLAYER_AUDIO_CLIENT_ARGUMENT);
+        return 0;
+    }
     if (count > remaining) count = remaining;
     unsigned accepted;
 #if PLAYER_AUDIO_OWNER == PLAYER_AUDIO_OWNER_RISCV
@@ -273,8 +280,13 @@ unsigned player_audio_client_write_pcm(const int16_t *samples, unsigned count)
 
 int player_audio_client_mark_eof(void)
 {
-    if (!status.session_active || status.last_error || status.written_samples != status.total_samples)
+    if (!status.session_active || status.last_error ||
+        (!total_unknown && status.written_samples != status.total_samples))
         return PLAYER_AUDIO_CLIENT_STATE;
+    if (eof_marked) return 0;
+    if (total_unknown) status.total_samples = status.written_samples;
+    total_unknown = 0;
+    eof_marked = 1;
 #if PLAYER_AUDIO_OWNER == PLAYER_AUDIO_OWNER_RISCV
     return command(PLAYER_AMP_AUDIO_CMD_EOF, status.written_samples, 0);
 #else

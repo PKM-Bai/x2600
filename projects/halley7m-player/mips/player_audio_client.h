@@ -42,6 +42,8 @@ enum player_audio_client_result {
  * its DMA/codec. PCM/private periods remain pinned until a whole-board reset;
  * these failures never count as a successful STOP or permit another session.
  */
+/* total_samples=0 streams until EOF supplies the actual valid sample count.
+ * Nonzero lengths retain strict predeclared-total validation. */
 int player_audio_client_start(uint32_t total_samples, unsigned volume_percent);
 /* Copies accepted samples. Zero means backpressure or error; inspect status.
  * Call service/status at least every 5 ms while waiting for PCM space or DMA.

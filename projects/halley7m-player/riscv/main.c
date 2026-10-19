@@ -30,6 +30,7 @@ static uint32_t rv_audio_total, rv_audio_copied, rv_audio_pause_sequence;
 static TickType_t rv_audio_progress_at;
 static int rv_audio_live, rv_audio_eof, rv_audio_finished, rv_audio_ended;
 static int rv_audio_failed, rv_audio_error_pending;
+static int rv_audio_total_known;
 
 static int rv_audio_event(uint32_t opcode, uint32_t a, uint32_t b, uint32_t c, uint32_t d)
 {
@@ -99,8 +100,9 @@ static void rv_audio_command(const struct player_amp_message *command)
         rv_audio_copied = rv_audio_pause_sequence = 0;
         rv_audio_progress_at = xTaskGetTickCount();
         rv_audio_total = command->argument[0];
+        rv_audio_total_known = rv_audio_total != 0;
         shared->audio_error = 0;
-        if (!rv_audio_total || rv_audio_total > UINT32_MAX / 2u || command->argument[1] > 100u ||
+        if (rv_audio_total > UINT32_MAX / 2u || command->argument[1] > 100u ||
             command->argument[2] || command->argument[3] ||
             shared->pcm_read_pos || shared->pcm_write_pos)
             { rv_audio_fail(-10); return; }
@@ -137,8 +139,12 @@ static void rv_audio_command(const struct player_amp_message *command)
         result = player_audio_set_volume(command->argument[0]);
         if (result) { rv_audio_fail(result); return; }
         rv_audio_ack(command->sequence, command->opcode);
-    } else if (command->opcode == PLAYER_AMP_AUDIO_CMD_EOF && command->argument[0] == rv_audio_total &&
-               !command->argument[1] && shared->pcm_write_pos == rv_audio_total) {
+    } else if (command->opcode == PLAYER_AMP_AUDIO_CMD_EOF &&
+               (!rv_audio_total_known || command->argument[0] == rv_audio_total) &&
+               command->argument[0] <= UINT32_MAX / 2u && !command->argument[1] &&
+               shared->pcm_write_pos == command->argument[0] && command->argument[0] >= rv_audio_copied) {
+        rv_audio_total = command->argument[0];
+        rv_audio_total_known = 1;
         rv_audio_eof = 1;
         rv_audio_ack(command->sequence, command->opcode);
     } else {
@@ -159,7 +165,8 @@ static void rv_audio_service(void)
         if (result) { rv_audio_fail(result); return; }
         uint32_t offset;
         int available = player_amp_pcm_peek(shared, &offset);
-        if (available < 0 || shared->pcm_write_pos > rv_audio_total ||
+        if (available < 0 || shared->pcm_write_pos > UINT32_MAX / 2u ||
+            (rv_audio_total_known && shared->pcm_write_pos > rv_audio_total) ||
             shared->pcm_read_pos != rv_audio_copied)
             { rv_audio_fail(-10); return; }
         if (available && !rv_audio_finished) {
