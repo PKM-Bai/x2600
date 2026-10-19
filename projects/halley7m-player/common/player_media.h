@@ -17,7 +17,9 @@ enum player_media_result {
     PLAYER_MEDIA_BUFFER_SMALL = -4
 };
 
-enum player_media_kind { PLAYER_MEDIA_WAV = 1, PLAYER_MEDIA_AVI = 2 };
+enum player_media_kind { PLAYER_MEDIA_WAV = 1, PLAYER_MEDIA_AVI = 2,
+                         PLAYER_MEDIA_MP3 = 3, PLAYER_MEDIA_AAC = 4,
+                         PLAYER_MEDIA_MP4 = 5 };
 enum player_packet_kind { PLAYER_PACKET_VIDEO = 1, PLAYER_PACKET_AUDIO = 2 };
 
 /* read returns the byte count (negative on error); seek returns 0 on success. */
@@ -33,6 +35,8 @@ struct player_media_packet {
     uint32_t length;             /* File bytes only: excludes RIFF and decoder padding. */
     uint64_t offset;
     uint64_t index;              /* Video frame number or first PCM sample number. */
+    int64_t pts_us;              /* Presentation time for indexed containers. */
+    uint32_t audio_frames;       /* Source frames for compressed audio packets. */
 };
 
 struct player_media {

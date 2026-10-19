@@ -1,5 +1,39 @@
 # 播放器实施验收记录
 
+## 2026-10-19：MP3、AAC/M4A、横屏 MP4 主机集成
+
+用户已选择 MP3、AAC/M4A、MP4（H.264＋AAC），并要求普通 1280×720 横屏
+文件板端旋转；手机录像及实际声光偏差数值验证已取消。实现范围见
+[FORMATS.md](FORMATS.md)，默认音量保持7%，未自动提高。
+
+- 解码器：16个真实片源的源采样率PCM逐样本/同轴误差对照、9率转换、背压、
+  EOF及源码SHA通过，MIPS Debug/Release真编译与栈报告完成。MP3峰误差1LSB；
+  AAC fixed最差SNR49.148dB。证据为本地`build/player-audio-decode-test.log`和模块报告。
+- MP4：25项通过，包括17个真实布局/码流、短读、7个拒绝用例；规范化视频PC
+  逐帧CRC与原文件一致，AAC逐字节一致，时间/偏移与ffprobe对照。模块范围
+  不放宽会话对CFR30/Baseline/单参考/无B帧的限制。
+- source：24个真实文件及16个错误用例通过，覆盖ID3/Xing/LAME、AAC priming、
+  edit时长舍入、三字节短读与七样本输出背压。计数及PCM对照报告为
+  `build/player-host/source/comparison.json`。
+- 会话：真实MP3、ADTS、M4A、1280×720 MP4分别三次暂停/恢复/EOF/STOP通过。
+  1秒MP3/M4A/MP4各48000有效输出样本，ADTS按实际解码及转换为49040；
+  MP4每轮30帧全部解码，音频peer错误0。另覆盖布局连续EAGAIN期间STOP和
+  换WAV，不超时保留资源；旧WAV/AVI、周期33.033ms显示模型回归通过。
+- 显示：生产driver、CUSTOM三槽、EOW/SOF/EOD持有、合并IRQ、末帧重复、
+  GUI异步排空/布局ACK、停止超时保留以及实际LVGL22次提交通过，真实MIPS库通过。
+  此项为主机模型，仍需核对实际硬件事件、方向和720p30。
+- 完整主机入口`build/player-formats-all-host.log`通过，最后会话边界修复后独立
+  回归见`build/player-formats-session-host.log`。双核Release/Debug及MIPS owner
+  Release均已构建并核验；新Release真实ELF/BIN及损坏副本17项检查通过。
+- 14个30秒板测样片、合计5124077B已生成，参数与SHA见本地
+  `build/player-fixture/formats/manifest.json`；两个MP4均900帧、未预旋转。
+
+本轮候选AMP Release合包1916832B（含三秒横屏MP4诊断资源），CRC32
+`2bd32c36`，SHA256 `27aca027e920a2b01763b323a0e1591b0463c50cd686bb1a0d6bdec1e5ef2334`，
+协议4、共享布局3、RV35880B。2026-10-19 COM52发送status超时，尚未进入
+上传，未运行这份新固件，也未写NOR。已请用户将新样片复制到TF并保持断电；
+新格式真实发声、TF读取、旋转刷新、任务栈余量及稳定性均待板测，不算通过。
+
 ## 2026-10-19：构建、双核诊断与静音硬解
 
 | 项目 | 结果及证据范围 |

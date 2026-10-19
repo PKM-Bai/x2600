@@ -282,7 +282,9 @@ static void console_task(void *unused)
                 }
 #endif
                 else if (!strcmp(line, "heap"))
-                    printf("HEAP free=%lu isr_unused=%lu\n", (unsigned long)platform_free_heap(), (unsigned long)platform_isr_stack_unused());
+                    printf("HEAP free=%lu isr_unused=%lu media_stack_free_words=%lu\n",
+                           (unsigned long)platform_free_heap(), (unsigned long)platform_isr_stack_unused(),
+                           (unsigned long)uxTaskGetStackHighWaterMark(NULL));
                 else printf("Commands: play <path>, pause, resume, stop, session, volume <0..100>, library, gui, buttons, metrics, audio, tone, status, heap, reboot, ls [path], media <path>; video probes require -DiagnosticsOnly\n");
                 length = 0;
                 printf("player> ");
@@ -299,7 +301,10 @@ static void console_task(void *unused)
 
 int main(void)
 {
-    configASSERT(xTaskCreate(console_task, "player", 4096, NULL, 3, NULL) == pdPASS);
+    /* FAAD2 fixed-point LC has nested spectral/IMDCT scratch arrays. The
+     * measured MIPS .su call chain exceeds 16KiB; reserve 96KiB for this
+     * single media/storage owner, then check its board high-water mark. */
+    configASSERT(xTaskCreate(console_task, "player", 24576, NULL, 3, NULL) == pdPASS);
     vTaskStartScheduler();
     platform_panic("scheduler returned");
 }

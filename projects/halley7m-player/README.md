@@ -4,6 +4,11 @@
 
 ## 当前状态
 
+新格式扩展正在集成：MP3、AAC-LC/ADTS、M4A 与普通 1280×720 横屏 MP4
+（H.264 Baseline＋AAC）已接入生产会话、音频转换和板端旋转路径，主机真实
+片源与生命周期验证通过；新固件板测待完成。范围及入口见
+[FORMATS.md](FORMATS.md)。下方 30 分钟记录属于原 AVI/WAV 固件。
+
 2026-10-19：两架构独立构建、紧凑RAM合包、双FreeRTOS握手和256KiB共享校验通过，小核计时器实测校准为576MHz。FELIX跨3个GOP的90帧Y/UV CRC全部与PC一致；用户确认视频方向、颜色、中文媒体库和长按菜单正常。已接通音频主时钟的AVI/WAV会话、2MiB预读与2MiB包池、LVGL双表面及三键。同步片90帧全呈现，真实TF的96017样本WAV尾段和高运动片前缀暂停恢复已通过。
 
 AMP已完成真实TF高运动片的30分钟板内稳定性验证：ENDED时86,400,000/86,400,000有效音频样本、54,000帧全部解码及呈现，drop/late和全部音频错误均为0，默认音量7%；固定GUI序列15/15轮、无abort，STOP后资源未锁住且音频inactive。采样在PLAY约3秒后才启动，CSV为1797条、1,797,734ms，未将其记作完整1800秒采样。同片源600秒单核/AMP对照也已完成，本轮AMP的MIPS忙率高于单核，具体窗口及结束阶段差异见下；大AVIX修复复测结果见下。精选证据见`VALIDATION.md`。
@@ -120,5 +125,11 @@ runner的 `valid=true` 表示采集流程完整；drop/late保留实际数字，
 ## 源码来源
 
 FreeRTOS、X2600 HAL、LVGL 8.3.10 和 FELIX/libh264 来自 `libbare-cpu` commit `9500d2ec917a44d0d9657940e865e70f1a885849`。中文字体来源固定为 ReGBA commit `7f379052dc14366e622a96c7cf7fb6b5a7e918a3` 随附的 GNU Unifont；GUI 接入时保留对应来源声明。派生 SDK 源只生成到 `build/`，不改 SDK 原件，许可证事实见 `codec/README.md` 及原文件头。
+
+MP3/AAC 解码依赖固定的 minimp3 与 FAAD2 2.11.2，完整来源、逐文件摘要、
+CC0/GPL 许可证和 Nero 通知随 `third_party/player-minimp3`、
+`third_party/player-faad2` 保留，集成与验证见 [audio-decode/README.md](audio-decode/README.md)。
+
+Code from FAAD2 is copyright (c) Nero AG, www.nero.com
 
 工具归档 SHA256：Victory0 r1.1.1 为 `4c0e37045fab661438753cb2b5bacc1b80c3077f21742da5f93cc6a69cf8c694`；Gyan FFmpeg 9.0.2 essentials 7z 为 `4705843ccaaf54257c16ad90f3e952ece33c17df964ecf7bfdbb0f49c7171077`，后者已与发布方 sidecar 核对。安装脚本先成功解压并比对已安装二进制后才记录来源，拒绝 partial 下载或不匹配的归档；完整版本、配置和二进制散列见本地 `build/player-tools/dependencies.json`。

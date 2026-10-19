@@ -24,6 +24,9 @@ typedef struct {
  * The pool and four buffers outlive the codec and any DPU scanout holds. */
 int player_codec_open(player_codec_t **codec, player_video_pool_t *pool,
                       uint32_t session, const player_codec_buffer_t buffers[PLAYER_VIDEO_SLOTS]);
+int player_codec_open_geometry(player_codec_t **codec, player_video_pool_t *pool,
+                               uint32_t session, const player_codec_buffer_t buffers[PLAYER_VIDEO_SLOTS],
+                               uint32_t width, uint32_t height);
 /* Submit one whole Annex B AU; capacity includes 64 writable padding bytes.
  * Returns -EAGAIN if all four slots are held; the caller retains the AU then. */
 int player_codec_submit(player_codec_t *codec, uint32_t session,

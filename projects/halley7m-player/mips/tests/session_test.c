@@ -97,6 +97,9 @@ int player_storage_prepare_seek(struct player_storage_file *stream,
     assert(audio_starts == starts);
     return result ? result : seek_prepare_error;
 }
+int player_storage_prepare_indexed_seek(struct player_storage_file *stream,
+                                        player_storage_pump_fn pump, void *opaque)
+{ return player_storage_prepare_seek(stream, pump, opaque); }
 int player_storage_get_seek_stats(struct player_storage_file *stream, player_storage_seek_stats *out)
 {
     assert((!stream || stream == &file) && out);
@@ -174,7 +177,8 @@ unsigned player_audio_client_write_pcm(const int16_t *samples, unsigned count)
     return count;
 }
 int player_audio_client_mark_eof(void)
-{ assert(audio.written_samples == audio.total_samples); audio_eof = 1; return 0; }
+{ if (!audio.total_samples) audio.total_samples = audio.written_samples;
+  assert(audio.written_samples == audio.total_samples); audio_eof = 1; return 0; }
 int player_audio_client_pause(void)
 { assert(audio.session_active); (void)player_audio_client_service(); audio.state = PLAYER_AMP_AUDIO_PAUSED; return 0; }
 int player_audio_client_resume(void)
@@ -202,6 +206,10 @@ int player_codec_open(player_codec_t **output, player_video_pool_t *pool, uint32
     memcpy(decoder.buffers, buffers, sizeof(decoder.buffers));
     decoder.running = 1; *output = &decoder; return 0;
 }
+int player_codec_open_geometry(player_codec_t **output, player_video_pool_t *pool, uint32_t session,
+                                const player_codec_buffer_t buffers[PLAYER_VIDEO_SLOTS], uint32_t w, uint32_t h)
+{ assert((w == 720 && h == 1280) || (w == 1280 && h == 720));
+  return player_codec_open(output, pool, session, buffers); }
 int player_codec_submit(player_codec_t *codec, uint32_t session, uint8_t *data,
                          uint32_t length, uint32_t capacity, uint64_t frame)
 {
@@ -242,7 +250,14 @@ static unsigned gui_pending_without_video;
 static unsigned video_active;
 static uint32_t refresh_us = 1000u;
 static uint64_t latch_at;
+static unsigned geometry_busy_calls, geometry_in_progress;
 int player_display_start(void) { return 0; }
+int player_display_set_video_geometry(uint32_t w, uint32_t h)
+{
+    assert(!display_scanout && ((w == 720 && h == 1280) || (w == 1280 && h == 720)));
+    if (geometry_busy_calls) { --geometry_busy_calls; geometry_in_progress = 1; return -EAGAIN; }
+    geometry_in_progress = 0; return 0;
+}
 void player_display_set_video_active(bool active) { video_active = active ? 1u : 0u; }
 int player_display_submit_frame(const player_display_frame_t *frame)
 {
@@ -258,6 +273,7 @@ int player_display_submit_frame(const player_display_frame_t *frame)
 int player_display_clear_video(void)
 {
     assert(!audio.session_active);
+    if (geometry_in_progress) return -EAGAIN;
     if (display_pending || completion_valid) return -EAGAIN;
     if (!display_scanout) return 0;
     memset(&completion, 0, sizeof(completion));
@@ -324,8 +340,8 @@ static void wait_state(enum player_session_state state)
 }
 int main(int argc, char **argv)
 {
-    assert(argc == 2 || argc == 3);
-    if (argc == 3) { expected_video_frames = (unsigned)atoi(argv[2]); refresh_us = 33033u; }
+    assert(argc >= 2 && argc <= 4);
+    if (argc >= 3) { expected_video_frames = (unsigned)atoi(argv[2]); refresh_us = 33033u; }
     FILE *input = fopen(argv[1], "rb");
     assert(input && !fseek(input, 0, SEEK_END));
     long length = ftell(input); assert(length > 0);
@@ -333,6 +349,27 @@ int main(int argc, char **argv)
     rewind(input); assert(fread(avi, 1, avi_size, input) == avi_size); fclose(input);
     make_wav();
     assert(player_session_init() == 0);
+    if (argc == 4) {
+        uint32_t expected_samples = (uint32_t)strtoul(argv[3], NULL, 10);
+        for (unsigned run = 0; run < 3; ++run) {
+            post(PLAYER_SESSION_PLAY_PATH, 0, "@embedded");
+            wait_state(PLAYER_SESSION_PLAYING);
+            post(PLAYER_SESSION_PAUSE, 0, NULL);
+            uint32_t paused_samples = snapshot.elapsed_samples;
+            step(20); assert(snapshot.elapsed_samples == paused_samples);
+            post(PLAYER_SESSION_RESUME, 0, NULL);
+            wait_state(PLAYER_SESSION_ENDED);
+            printf("compressed run=%u kind=%u samples=%u total=%u decoded=%u audio_errors=%u\n",
+                   run, snapshot.media_kind, snapshot.elapsed_samples, snapshot.total_samples,
+                   snapshot.decoded_frames, snapshot.audio_underruns);
+            fflush(stdout);
+            assert(snapshot.elapsed_samples == expected_samples && snapshot.total_samples == expected_samples);
+            assert(snapshot.decoded_frames == expected_video_frames && !snapshot.audio_underruns);
+            post(PLAYER_SESSION_STOP, 0, NULL);
+            assert(snapshot.state == PLAYER_SESSION_IDLE && !allocations && !file.open && !audio.session_active);
+        }
+        free(avi); return 0;
+    }
     step(40);
     assert(snapshot.library_total_known && snapshot.library_total == 26u && snapshot.library_count == 10u);
     post(PLAYER_SESSION_LIBRARY_SELECT, 24, NULL);
@@ -411,6 +448,18 @@ int main(int argc, char **argv)
     stop_fail = 0;
     post(PLAYER_SESSION_STOP, 0, NULL);
     assert(snapshot.state == PLAYER_SESSION_IDLE && !snapshot.resources_pinned && allocations == 0);
+    geometry_busy_calls = 3;
+    post(PLAYER_SESSION_PLAY_PATH, 0, "0:/picture.avi");
+    assert(snapshot.state == PLAYER_SESSION_LOADING && geometry_in_progress);
+    post(PLAYER_SESSION_STOP, 0, NULL);
+    assert(snapshot.state == PLAYER_SESSION_IDLE && !allocations && !geometry_in_progress);
+    geometry_busy_calls = 3;
+    post(PLAYER_SESSION_PLAY_PATH, 0, "0:/picture.avi");
+    assert(snapshot.state == PLAYER_SESSION_LOADING && geometry_in_progress);
+    post(PLAYER_SESSION_PLAY_PATH, 0, "0:/sound.wav");
+    wait_state(PLAYER_SESSION_ENDED);
+    post(PLAYER_SESSION_STOP, 0, NULL);
+    assert(snapshot.state == PLAYER_SESSION_IDLE && !allocations && !geometry_in_progress);
     post(PLAYER_SESSION_PLAY_PATH, 0, "0:/picture.avi");
     wait_state(PLAYER_SESSION_PLAYING);
     now_us += 200000u; /* Late: decode every P frame, skip only presentation. */

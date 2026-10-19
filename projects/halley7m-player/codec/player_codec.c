@@ -46,8 +46,9 @@ AVFrame *player_codec_frame_acquire(H264Context *h)
     player_video_token_t token;
     struct player_codec_slot *slot;
     const SPS *sps = h->ps.sps;
-    if (!codec || !codec->running || !sps || h->width != 720 || h->height != 1280 ||
-        sps->profile_idc != 66 || sps->level_idc != 31 || sps->ref_frame_count > 1 ||
+    if (!codec || !codec->running || !sps || h->width != (int)codec->layout.width ||
+        h->height != (int)codec->layout.height ||
+        sps->profile_idc != 66 || sps->level_idc > 31 || sps->ref_frame_count > 1 ||
         sps->bit_depth_luma != 8 || sps->bit_depth_chroma != 8 || !sps->frame_mbs_only_flag ||
         !h->ps.pps || h->ps.pps->cabac || !player_video_codec_acquire(codec->pool, &token))
         return NULL;
@@ -82,16 +83,24 @@ int player_codec_frame_publish(H264Context *h, AVFrame *frame)
 int player_codec_open(player_codec_t **result, player_video_pool_t *pool,
                       uint32_t session, const player_codec_buffer_t buffers[PLAYER_VIDEO_SLOTS])
 {
+    return player_codec_open_geometry(result, pool, session, buffers, 720, 1280);
+}
+
+int player_codec_open_geometry(player_codec_t **result, player_video_pool_t *pool,
+                               uint32_t session, const player_codec_buffer_t buffers[PLAYER_VIDEO_SLOTS],
+                               uint32_t width, uint32_t height)
+{
     player_codec_t *codec;
     uint32_t i;
     int error;
     if (!result || !pool || !buffers || !session || pool->session != session) return -EINVAL;
+    if (!((width == 720 && height == 1280) || (width == 1280 && height == 720))) return -ENOTSUP;
     *result = NULL;
     if (active_codec) return -EBUSY;
     codec = calloc(1, sizeof(*codec));
     if (!codec) return -ENOMEM;
     codec->pool = pool; codec->session = session;
-    error = player_video_layout_nv12(720, 1280, &codec->layout);
+    error = player_video_layout_nv12(width, height, &codec->layout);
     if (error) { free(codec); return error; }
     for (i = 0; i < PLAYER_VIDEO_SLOTS; ++i) {
         struct player_codec_slot *slot = &codec->slots[i];
@@ -107,7 +116,7 @@ int player_codec_open(player_codec_t **result, player_video_pool_t *pool,
         slot->planes[1].buffer_pa = CPHYSADDR(buffers[i].base + offset);
         slot->planes[1].size = codec->layout.uv_bytes;
         slot->frame.buf[0] = &slot->planes[0]; slot->frame.buf[1] = &slot->planes[1];
-        slot->frame.width = 720; slot->frame.height = 1280;
+        slot->frame.width = (int)width; slot->frame.height = (int)height;
         slot->frame.format = VPU_FORMAT_NV12; slot->frame.index = (int)i;
         slot->frame.opaque = slot;
         /* Prevent dirty cache lines from later overwriting VPU output. */
@@ -115,14 +124,14 @@ int player_codec_open(player_codec_t **result, player_video_pool_t *pool,
     }
     codec->avctx.priv_data = &codec->h264;
     codec->avctx.codec_id = AV_CODEC_ID_H264;
-    codec->avctx.width = 720; codec->avctx.height = 1280;
+    codec->avctx.width = (int)width; codec->avctx.height = (int)height;
     codec->h264.player_owner = codec;
     error = h264_decode_init(&codec->avctx);
     if (error < 0) {
         h264_decode_end(&codec->avctx);
         free(codec); return error;
     }
-    h264_set_output_format(&codec->h264, player_codec_format_from_hal(8), 720, 1280);
+    h264_set_output_format(&codec->h264, player_codec_format_from_hal(8), width, height);
     codec->running = 1; active_codec = codec;
     *result = codec;
     return 0;

@@ -1,5 +1,8 @@
 #include "player_session.h"
 #include "player_session_core.h"
+#include "player_source.h"
+#include "player_audio_decode.h"
+#include "player_pcm_convert.h"
 #include "player_config.h"
 #include "player_platform.h"
 #include "player_storage.h"
@@ -29,7 +32,15 @@ static volatile unsigned cancel_requested;
 static unsigned initialized;
 static struct player_storage_file *file;
 static struct player_storage_directory *directory;
-static struct player_media media;
+static player_source media;
+static player_audio_decoder *audio_decoder;
+static player_pcm_converter pcm_converter;
+static player_audio_decoded_frame decoded_audio;
+#define PCM_STAGE_SAMPLES 16384u
+static int16_t pcm_stage[PCM_STAGE_SAMPLES];
+static uint32_t pcm_read, pcm_count, decoded_offset, decoded_length;
+static uint64_t decoded_axis;
+static unsigned decoded_active, pcm_finished, geometry_ready;
 static struct player_media_packet pending_packet;
 static unsigned packet_pending, file_eof, codec_drained, audio_eof;
 static unsigned audio_started, first_video_latched, video_pending, has_ready;
@@ -231,6 +242,17 @@ static int detach_video(void)
         player_display_stats_t display;
         int result = poll_video();
         if (result) return result;
+#if PLAYER_DISPLAY_HAS_GEOMETRY
+        /* STOP/replace may arrive during the asynchronous GUI route ACK.
+         * Finish that already requested transition before clear_video, which
+         * intentionally rejects submissions while a route is in progress. */
+        if (!geometry_ready) {
+            result = player_display_set_video_geometry(media.width, media.height);
+            if (result && result != -EAGAIN) return result;
+            if (result == -EAGAIN) { player_amp_service(); vTaskDelay(1); continue; }
+            geometry_ready = 1;
+        }
+#endif
         if (!requested) {
             result = player_display_clear_video();
             if (!result) requested = 1;
@@ -281,6 +303,8 @@ static int stop_resources(void)
     }
     if (codec) player_codec_close(codec);
     codec = NULL;
+    player_audio_decoder_destroy(audio_decoder); audio_decoder = NULL;
+    player_source_close(&media);
     if (pool_initialized) player_video_pool_stop(&video_pool);
     for (unsigned i = 0; i < PLAYER_VIDEO_SLOTS; ++i) {
         free(frame_buffers[i].base);
@@ -296,6 +320,9 @@ static int stop_resources(void)
     memset(&audio_status, 0, sizeof(audio_status));
     packet_pending = file_eof = codec_drained = audio_eof = has_ready = 0;
     queued_pcm_samples = 0;
+    pcm_read = pcm_count = decoded_active = pcm_finished = 0;
+    decoded_axis = 0;
+    geometry_ready = 0;
     video_queue.count = audio_queue.count = 0;
     view.resources_pinned = 0;
     return result;
@@ -371,9 +398,13 @@ static int begin_media_impl(const char *path)
     if (result) return result;
     result = player_packet_pool_init(&packet_pool, packet_bytes, PLAYER_PACKET_POOL_BYTES);
     if (result) return result;
-    result = player_media_open(&media, &read_ahead.io);
+    result = player_source_open(&media, &read_ahead.io);
     if (result) return media_failure(result, "header");
-    if (!media.audio_samples || media.audio_samples > UINT32_MAX / 2u ||
+    if (media.mp4) {
+        result = player_storage_prepare_indexed_seek(file, control_pump, NULL);
+        if (result) return result;
+    }
+    if ((!media.audio_codec && !media.audio_samples) || media.audio_samples > UINT32_MAX / 2u ||
         (media.kind == PLAYER_MEDIA_AVI && media.audio_samples != media.video_frames * 1600u))
     {
         (void)snprintf(failure_detail, sizeof(failure_detail), "empty/long PCM or unequal AVI audio/video duration");
@@ -383,8 +414,16 @@ static int begin_media_impl(const char *path)
     view.total_samples = (uint32_t)media.audio_samples;
     player_packet_queue_init(&video_queue, video_packets, PLAYER_VIDEO_QUEUE_PACKETS);
     player_packet_queue_init(&audio_queue, audio_packets, PLAYER_AUDIO_QUEUE_PACKETS);
-    if (media.kind == PLAYER_MEDIA_AVI) {
-        result = player_video_layout_nv12(720, 1280, &layout);
+    if (media.audio_codec) {
+        player_audio_decode_config config = {(enum player_audio_codec)media.audio_codec,
+                                             media.audio_config, media.audio_config_bytes};
+        result = player_audio_decoder_create(&config, &audio_decoder);
+        if (result) return result;
+        result = player_pcm_convert_init(&pcm_converter, media.source_rate, media.channels);
+        if (result) return result;
+    }
+    if (media.video_frames) {
+        result = player_video_layout_nv12(media.width, media.height, &layout);
         if (result) return result;
         for (unsigned i = 0; i < PLAYER_VIDEO_SLOTS; ++i) {
             if ((result = control_pump(NULL)) != 0) return result;
@@ -393,7 +432,8 @@ static int begin_media_impl(const char *path)
             if (!frame_buffers[i].base) return -ENOMEM;
             memset(frame_buffers[i].base, 0, layout.total_bytes);
         }
-        result = player_codec_open(&codec, &video_pool, video_pool.session, frame_buffers);
+        result = player_codec_open_geometry(&codec, &video_pool, video_pool.session, frame_buffers,
+                                             media.width, media.height);
         if (result) return result;
         codec_running = 1;
         result = player_display_start();
@@ -425,20 +465,20 @@ static int demux_one(void)
     int result;
     if (file_eof) return 0;
     if (!packet_pending) {
-        result = player_media_next(&media, &pending_packet);
+        result = player_source_next(&media, &pending_packet);
         if (result == PLAYER_MEDIA_EOF) { file_eof = 1; return 0; }
         if (result) return media_failure(result, "packet header");
         packet_pending = 1;
     }
     queue = pending_packet.kind == PLAYER_PACKET_VIDEO ? &video_queue : &audio_queue;
     if (queue->count == queue->capacity) return 0;
-    padding = pending_packet.kind == PLAYER_PACKET_VIDEO ? PLAYER_MEDIA_INPUT_PADDING : 0;
+    padding = pending_packet.kind == PLAYER_PACKET_VIDEO || audio_decoder ? PLAYER_MEDIA_INPUT_PADDING : 0;
     memset(&queued, 0, sizeof(queued));
     queued.media = pending_packet;
     result = player_packet_pool_reserve(&packet_pool, pending_packet.length, padding, &queued.allocation);
     if (result == -EAGAIN) return 0;
     if (result) return result;
-    result = player_media_read_packet(&media, &pending_packet, queued.allocation.data, queued.allocation.capacity);
+    result = player_source_read(&media, &pending_packet, queued.allocation.data, queued.allocation.capacity);
     if (result) {
         (void)player_packet_pool_release(&packet_pool, queued.allocation.ticket);
         return media_failure(result, "packet payload");
@@ -448,9 +488,59 @@ static int demux_one(void)
         (void)player_packet_pool_release(&packet_pool, queued.allocation.ticket);
         return result;
     }
-    if (pending_packet.kind == PLAYER_PACKET_AUDIO)
+    if (pending_packet.kind == PLAYER_PACKET_AUDIO && !audio_decoder)
         queued_pcm_samples += pending_packet.length / 2u;
     packet_pending = 0;
+    return 0;
+}
+
+static int convert_audio(void)
+{
+    int result;
+    /* Keep a decoded frame alive across backpressure; the next decode would
+     * invalidate its PCM. Count native decoder priming on the source axis. */
+    for (unsigned work = 0; work < 8 && pcm_count < PCM_STAGE_SAMPLES; ++work) {
+        uint32_t tail = (pcm_read + pcm_count) % PCM_STAGE_SAMPLES;
+        uint32_t room = PCM_STAGE_SAMPLES - pcm_count;
+        if (room > PCM_STAGE_SAMPLES - tail) room = PCM_STAGE_SAMPLES - tail;
+        if (!decoded_active) {
+            player_queued_packet *packet = player_packet_queue_front(&audio_queue);
+            if (!packet) {
+                if (!file_eof || pcm_finished) break;
+                uint32_t produced = 0;
+                result = player_pcm_convert_finish(&pcm_converter, pcm_stage + tail, room, &produced);
+                if (result < 0) return result;
+                pcm_count += produced; pcm_finished = result == 1;
+                continue;
+            }
+            result = player_audio_decoder_decode(audio_decoder, packet->allocation.data,
+                                                   packet->media.length, &decoded_audio);
+            if (result) return result;
+            if (decoded_audio.consumed_bytes != packet->media.length ||
+                (decoded_audio.frames && (decoded_audio.sample_rate != media.source_rate ||
+                                          decoded_audio.channels != media.channels))) return -ENOTSUP;
+            decoded_axis += decoded_audio.decoder_skipped_frames;
+            uint64_t first = decoded_axis, end = first + decoded_audio.frames;
+            decoded_offset = first < media.clip_start ?
+                              (uint32_t)((media.clip_start < end ? media.clip_start : end) - first) : 0;
+            uint64_t clipped_end = end < media.clip_end ? end : media.clip_end;
+            decoded_length = clipped_end > first + decoded_offset ? (uint32_t)(clipped_end - first) : decoded_offset;
+            decoded_axis = end;
+            result = player_packet_pool_release(&packet_pool, packet->allocation.ticket);
+            if (result) return result;
+            player_packet_queue_pop(&audio_queue);
+            decoded_active = 1;
+        }
+        uint32_t consumed = 0, produced = 0;
+        result = player_pcm_convert_process(&pcm_converter,
+                     decoded_audio.pcm ? decoded_audio.pcm + decoded_offset * media.channels : NULL,
+                     decoded_length - decoded_offset, &consumed, pcm_stage + tail, room, &produced);
+        if (result) return result;
+        decoded_offset += consumed; pcm_count += produced;
+        if (decoded_offset == decoded_length) decoded_active = 0;
+        if (!consumed && !produced && decoded_active) break;
+    }
+    queued_pcm_samples = pcm_count;
     return 0;
 }
 
@@ -458,7 +548,18 @@ static int feed_audio(void)
 {
     player_queued_packet *packet;
     int result;
-    while ((packet = player_packet_queue_front(&audio_queue)) != NULL) {
+    if (audio_decoder) {
+        while (pcm_count) {
+            uint32_t available = PCM_STAGE_SAMPLES - pcm_read;
+            if (available > pcm_count) available = pcm_count;
+            unsigned copied = player_audio_client_write_pcm(pcm_stage + pcm_read, available);
+            if (copied > available) return -EPROTO;
+            pcm_read = (pcm_read + copied) % PCM_STAGE_SAMPLES; pcm_count -= copied;
+            if (copied < available) break;
+        }
+        queued_pcm_samples = pcm_count;
+    }
+    while (!audio_decoder && (packet = player_packet_queue_front(&audio_queue)) != NULL) {
         unsigned remaining = packet->media.length / 2u - packet->consumed_samples;
         unsigned copied = player_audio_client_write_pcm((const int16_t *)packet->allocation.data +
                                                         packet->consumed_samples, remaining);
@@ -472,12 +573,14 @@ static int feed_audio(void)
     }
     result = player_audio_client_service();
     if (result) return result;
-    if (file_eof && !audio_queue.count && !audio_eof) {
+    if (file_eof && !audio_queue.count && !audio_eof &&
+        (!audio_decoder || (pcm_finished && !pcm_count && !decoded_active))) {
         result = player_audio_client_mark_eof();
         if (result) return result;
         audio_eof = 1;
     }
     player_audio_client_get_status(&audio_status);
+    if (audio_eof) view.total_samples = audio_status.total_samples;
     view.elapsed_samples = audio_status.completed_samples;
     view.audio_underruns = audio_status.underruns;
     return audio_status.last_error;
@@ -595,13 +698,22 @@ static int playback_step(void)
     int result = poll_video();
     if (result) return result;
     if ((result = control_pump(NULL)) != 0) return result;
+    if (codec && !geometry_ready) {
+#if PLAYER_DISPLAY_HAS_GEOMETRY
+        result = player_display_set_video_geometry(media.width, media.height);
+        if (result == -EAGAIN) return 0;
+        if (result) return result;
+#endif
+        geometry_ready = 1;
+    }
     if (audio_started && (result = feed_audio()) != 0) return result;
     if ((result = demux_one()) != 0) return result;
+    if (audio_decoder && (result = convert_audio()) != 0) return result;
     if (view.state != PLAYER_SESSION_PAUSED) {
         if ((result = decode_one()) != 0) return result;
         if ((result = present_ready()) != 0) return result;
     }
-    if (!audio_started && (media.kind == PLAYER_MEDIA_WAV || first_video_latched) &&
+    if (!audio_started && (!codec || first_video_latched) &&
         (queued_pcm_samples >= INITIAL_PCM_SAMPLES || file_eof)) {
         /* First NV12 + backlight and at least 100ms PCM are ready before the
          * first DMA can consume five periods. Send the saved PCM as a batch. */
@@ -619,7 +731,7 @@ static int playback_step(void)
             view.state = PLAYER_SESSION_PLAYING;
         if (audio_status.state == PLAYER_AMP_AUDIO_DRAINED && audio_eof &&
             audio_status.completed_samples == view.total_samples && file_eof &&
-            (media.kind == PLAYER_MEDIA_WAV || (codec_drained && !video_queue.count &&
+            (!codec || (codec_drained && !video_queue.count &&
                                                 !has_ready && !video_pending)))
             view.state = PLAYER_SESSION_ENDED;
     }
@@ -670,7 +782,9 @@ static int media_name(const char *name)
         extension[i] = c >= 'A' && c <= 'Z' ? (char)(c + ('a' - 'A')) : c;
     }
     extension[3] = 0;
-    return !strcmp(extension, "avi") || !strcmp(extension, "wav");
+    return !strcmp(extension, "avi") || !strcmp(extension, "wav") ||
+           !strcmp(extension, "mp3") || !strcmp(extension, "aac") ||
+           !strcmp(extension, "m4a") || !strcmp(extension, "mp4");
 }
 
 static int library_open(const char *path, uint32_t selected, unsigned same_generation)

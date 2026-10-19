@@ -79,6 +79,7 @@ elseif(PLAYER_CORE STREQUAL "mips")
         ${WORKSPACE}/projects/halley7m-regba/platform/buttons.c
         ${AMP_SOURCES} ${TEST_MEDIA_SOURCES} common/player_amp.c
         common/player_video.c common/player_media.c common/player_session_core.c
+        common/player_source.c common/player_mp4.c
         common/player_cpu_diagnostics.c common/player_cpu_freertos.c
         ${SDK_PATH}/cpu/core/fpu.S ${SDK_PATH}/cpu/core/spinlock.c
         ${SDK_PATH}/cpu/soc-x2600/src/interrupt.c
@@ -100,11 +101,13 @@ elseif(PLAYER_CORE STREQUAL "mips")
     endif()
     set(ARCH_OPTIONS -mips32r2 -mabi=32 -mfp32 -mhard-float -EL -mno-abicalls -fno-pic -G0)
     add_subdirectory(codec)
+    add_subdirectory(audio-decode)
     add_subdirectory(display)
     add_subdirectory(storage)
     add_subdirectory(gui)
     target_link_libraries(${FIRMWARE} PRIVATE -Wl,--start-group
-        player_gui player_lvgl player_codec player_h264_vendor player_display player_storage c m gcc -Wl,--end-group)
+        player_gui player_lvgl player_codec player_h264_vendor player_display player_storage
+        player_audio_decode player_faad_fixed c m gcc -Wl,--end-group)
 else()
     message(FATAL_ERROR "PLAYER_CORE must be mips or riscv")
 endif()

@@ -59,6 +59,9 @@ if (-not $InputOnly -and -not $VideoOnly) {
     }
     foreach ($relative in @('scripts/test-player-amp.py', 'scripts/test-player-amp-control.py',
                             'scripts/test-player-audio-client.py',
+                            'scripts/test-player-audio-decode.py',
+                            'scripts/test-player-mp4.py',
+                            'scripts/test-player-source.py',
                             'scripts/test-player-cpu-diagnostics.py',
                             'scripts/test-player-udivdi3.py',
                             'projects/halley7m-player/storage/test-storage.py',
