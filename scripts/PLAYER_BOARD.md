@@ -56,7 +56,7 @@ CSV 没有导出 measure begin 的绝对时钟，两个核的计数时钟起点�
 
 实际 `player-prefix-measurement-trace-board.log` 的 36 条 CSV 已跑过：MIPS 加权 30.897%、RV 加权 1.329%，有效源窗口分别累计 36.202/36.322 秒；与固件整数摘要 3089/132bp 一致。观测最低空闲堆为 31681936/127648 bytes。工具识别出 session 2→3、开始的 IDLE 与暂停状态，不会把这个短功能片段认作 600 秒性能对照。其输出为 `build/player-board-analysis/prefix-dump.json/.md`。
 
-所有报告固定保留 `physical_sync_100ms=not-evaluated`。板端样本与帧计数不能替代手机实拍、采集偏差校准和 ≤100ms 声光同步测量；实拍工具见 [PLAYER_SYNC.md](PLAYER_SYNC.md)。
+所有报告固定保留 `physical_sync_100ms=not-evaluated`，表示没有实际声光偏差测量结论。用户已取消手机录像及数值验证，该字段不再作为当前交付未通过项。板端样本与帧计数仍不能推定≤100ms已通过；可选实拍诊断见 [PLAYER_SYNC.md](PLAYER_SYNC.md)。
 
 ## 验证
 

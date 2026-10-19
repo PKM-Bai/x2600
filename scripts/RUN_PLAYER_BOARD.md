@@ -37,8 +37,9 @@ measure summary、验证已冻结的测量记录并导出 CSV。异常清理同�
 drop/late 保留实际数字，不因一次掉帧或迟帧提前中止长跑。出现时最终
 `video_acceptance=needs-review`，交由窗口/连续性分析判断是否持续性掉帧。
 `complete valid=true collection_complete=true` 只表示内部状态与记录流程完整，
-不代表720p30或实拍声光同步≤100ms通过。结果仍需 `analyze-player-board.py`
-审核，物理声光须另用校准手机录像。
+不自动代表720p30通过，结果仍需 `analyze-player-board.py` 审核。用户已取消手机录像及
+实际声光偏差数值验证，该项不再阻塞交付；尚未实测的偏差不记为≤100ms已通过，
+保留的手机分析工具仅作可选诊断。
 
 完成事件分别保留测量窗口 drop/late、STOP前状态和STOP后状态。边界操作之后的
 掉帧属于窗口外观测，不能回填到已冻结CSV或被隐去。首个正式MIPS600测量为
