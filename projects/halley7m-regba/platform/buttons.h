@@ -12,6 +12,13 @@
 int buttons_start(void);
 uint16_t buttons_get_keys(void);
 void buttons_status(void);
+typedef void (*buttons_sample_callback_t)(uint32_t now_ms, uint16_t stable_keys);
+/* Optional 5ms task-context consumer, called after the debounce lock is left.
+ * Input bits above are already independently debounced for 20ms. NULL keeps
+ * the original polling-only behavior. Callback must return promptly and may
+ * not call LVGL or wait for media/storage work. Register before buttons_start.
+ * Timestamps use platform_time_us()/1000, matching the player GUI clock. */
+void buttons_set_sample_callback(buttons_sample_callback_t callback);
 
 #ifdef BUTTONS_HOST_TEST
 /* Host entry points exercise the same debounce state machine as the task. */

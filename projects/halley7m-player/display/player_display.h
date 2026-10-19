@@ -2,6 +2,9 @@
 #define PLAYER_DISPLAY_H
 
 #include "player_video.h"
+#define PLAYER_DISPLAY_HAS_OVERLAY 1
+#define PLAYER_DISPLAY_HAS_VIDEO_PRIORITY 1
+#define PLAYER_DISPLAY_OVERLAY_BYTES (720u * 1280u * 4u)
 
 typedef struct {
     const void *nv12;                 /* Aligned cached/uncached DDR alias. */
@@ -10,6 +13,7 @@ typedef struct {
 } player_display_frame_t;
 
 typedef struct {
+    bool has_latched; /* False for an explicit video-layer removal. */
     player_video_token_t latched;
     bool has_retired;
     player_video_token_t retired;
@@ -20,20 +24,47 @@ typedef struct {
 
 typedef struct {
     uint32_t vblanks, underruns, confirmed, mismatches;
+    uint32_t overlay_confirmed;
+    uint32_t video_submitted, video_busy;
+    uint32_t overlay_submitted, overlay_queued_requests, overlay_merged, overlay_only;
+    uint32_t eod_period_min_us, eod_period_max_us, video_latency_max_us;
+    uint64_t last_eod_us;
     uint32_t last_descriptor, last_physical_y, last_read_site;
-    bool pending, scanout;
+    bool pending, scanout, overlay_scanout, video_active;
 } player_display_stats_t;
 
-/* All public calls run on the one media/display owner task. Init/start do not
+/* Init/stop run before/after both GUI and media tasks use the driver. Init/start do not
  * allocate pixel buffers. Start enables submissions; first confirmed frame
- * turns on the existing panel backlight when its completion is polled. */
+ * turns on the existing panel backlight when its completion is polled.
+ * GUI calls only submit_overlay/poll_overlay_completion; the media worker
+ * calls only submit_frame/clear_video/poll_completion. Short critical sections
+ * serialize descriptor submission. GUI-only transactions never create a video
+ * completion or retire a video hold. Both layers have unique mixer orders. */
 int player_display_init(void);
 int player_display_start(void);
+/* Media worker sets true only during continuous PLAYING AVI output. GUI
+ * requests then wait to merge into a video submission instead of consuming
+ * their own 30Hz refresh. Set false for LOADING/PAUSED/ENDED/STOP/error so GUI
+ * polling can publish independently. Default false; no buffer is released. */
+void player_display_set_video_active(bool active);
 /* The producer must publish pixels to DDR before submission. This backend
  * cleans descriptors only, to avoid overwriting decoder DMA with stale cache.
  * Returns -EAGAIN until the previous submit is confirmed and polled. The
  * caller retains all display holds until an IRQ-confirmed completion/stop. */
 int player_display_submit_frame(const player_display_frame_t *frame);
+/* Disable video while keeping the current GUI. A successful queued removal
+ * emits has_latched=false/has_retired=true only after the new descriptor is
+ * confirmed. Poll and retire that hold before freeing the video pool. */
+int player_display_clear_video(void);
+/* Native 720x1280, stride720 pixels, 64-byte aligned, straight ARGB8888.
+ * Producer publishes dirty pixel data to DDR. Keep BOTH old and submitted
+ * surfaces pinned until matching serial is returned; old surface is then
+ * writable, current surface stays pinned. Serial must be nonzero. One queued
+ * GUI update may be accepted behind a hardware video transaction and merged
+ * into the next video descriptor; GUI polling drives it while video_active
+ * is false. A continuous video stream owns each hardware refresh slot. */
+int player_display_submit_overlay(const uint32_t *argb, uint32_t capacity, uint32_t serial);
+int player_display_poll_overlay_completion(uint32_t *serial);
 /* Returns 1 for a completion, 0 for none, or a negative errno. Completion
  * confirms latched and retires the prior display hold, never codec holds.
  * No player_video_pool operation is performed inside this driver or its ISR. */

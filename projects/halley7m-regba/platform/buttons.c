@@ -22,6 +22,7 @@ typedef struct {
 } button_state_t;
 
 static button_state_t state;
+static buttons_sample_callback_t sample_callback;
 static const uint16_t key_bits[3] = {
     BUTTONS_KEY_START, BUTTONS_KEY_A, BUTTONS_KEY_B
 };
@@ -48,6 +49,17 @@ static void sample_buttons(uint16_t raw, uint32_t now)
     }
 }
 
+void buttons_set_sample_callback(buttons_sample_callback_t callback)
+{
+#ifndef BUTTONS_HOST_TEST
+    taskENTER_CRITICAL();
+#endif
+    sample_callback = callback;
+#ifndef BUTTONS_HOST_TEST
+    taskEXIT_CRITICAL();
+#endif
+}
+
 #ifdef BUTTONS_HOST_TEST
 void buttons_test_reset(void)
 {
@@ -57,6 +69,7 @@ void buttons_test_reset(void)
 void buttons_test_sample(uint16_t raw, uint32_t now_ms)
 {
     sample_buttons(raw, now_ms);
+    if (sample_callback) sample_callback(now_ms, state.stable);
 }
 
 void buttons_test_stats(buttons_test_stats_t *stats)
@@ -95,7 +108,10 @@ static void buttons_task(void *argument)
         uint32_t now = (uint32_t)xTaskGetTickCount();
         taskENTER_CRITICAL();
         sample_buttons(raw, now);
+        buttons_sample_callback_t callback = sample_callback;
+        uint16_t stable = state.stable;
         taskEXIT_CRITICAL();
+        if (callback) callback((uint32_t)(platform_time_us() / 1000u), stable);
         vTaskDelayUntil(&wake, pdMS_TO_TICKS(5));
     }
 }

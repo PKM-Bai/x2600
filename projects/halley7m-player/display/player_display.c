@@ -17,8 +17,16 @@ static volatile player_display_frame_t pending_frame, scanout_frame;
 static volatile player_display_completion_t completed;
 static volatile player_display_stats_t counters;
 static volatile bool pending_valid, completion_valid, scanout_valid;
-static volatile uint32_t pending_descriptor, pending_y;
+static volatile bool pending_video_change, pending_video_enabled, pending_overlay_change;
+static volatile bool overlay_valid, overlay_completion_valid;
+static volatile bool overlay_queued;
+static volatile uint32_t pending_descriptor, pending_y, pending_argb, pending_serial;
+static volatile uint32_t scanout_argb, completed_serial;
+static volatile uint32_t queued_argb, queued_serial;
+static volatile uint64_t pending_started_us;
+static volatile bool video_active;
 static bool clocks_enabled, irq_registered, initialized, running, backlight_on;
+static volatile bool backlight_starting;
 
 static void display_irq(int irq, void *argument)
 {
@@ -28,6 +36,15 @@ static void display_irq(int irq, void *argument)
                      READ_REG(lcd.Instance->DC_INTC);
     if (flags & DC_INTC_INT_UOT_0) ++counters.underruns;
     if (flags & DC_INTC_INT_EOD_0) {
+        uint64_t now = platform_time_us();
+        if (counters.vblanks) {
+            uint64_t elapsed = now - counters.last_eod_us;
+            uint32_t period = elapsed > UINT32_MAX ? UINT32_MAX : (uint32_t)elapsed;
+            if (!counters.eod_period_min_us || period < counters.eod_period_min_us)
+                counters.eod_period_min_us = period;
+            if (period > counters.eod_period_max_us) counters.eod_period_max_us = period;
+        }
+        counters.last_eod_us = now;
         ++counters.vblanks;
         if (pending_valid) {
             /* SDK's debug ports expose the loaded descriptor, one word per
@@ -35,29 +52,58 @@ static void display_irq(int irq, void *argument)
              * frame self-chain and layer source must both match this submit. */
             WRITE_REG(lcd.Instance->DC_CTRL, DC_CTRL_DES_CNT_RST_0);
             uint32_t descriptor = READ_REG(lcd.Instance->FRM_DES_READ);
-            WRITE_REG(lcd.Instance->DC_CTRL, DC_CTRL_DES_CNT_RST_0);
-            (void)READ_REG(lcd.Instance->LAY0_DES_READ); /* LayerSize */
-            (void)READ_REG(lcd.Instance->LAY0_DES_READ); /* LayerCfg */
-            uint32_t physical_y = READ_REG(lcd.Instance->LAY0_DES_READ);
-            uint32_t site = READ_REG(lcd.Instance->LAY0_SITE);
+            uint32_t physical_y = 0, site = 0;
+            bool matches = descriptor == pending_descriptor;
+            if (pending_video_enabled) {
+                WRITE_REG(lcd.Instance->DC_CTRL, DC_CTRL_DES_CNT_RST_0);
+                (void)READ_REG(lcd.Instance->LAY0_DES_READ);
+                (void)READ_REG(lcd.Instance->LAY0_DES_READ);
+                physical_y = READ_REG(lcd.Instance->LAY0_DES_READ);
+                site = READ_REG(lcd.Instance->LAY0_SITE);
+                matches = matches && physical_y == pending_y && site >= pending_y &&
+                          site - pending_y < layout.total_bytes;
+            }
+            if (pending_argb) {
+                WRITE_REG(lcd.Instance->DC_CTRL, DC_CTRL_DES_CNT_RST_0);
+                (void)READ_REG(lcd.Instance->LAY1_DES_READ);
+                (void)READ_REG(lcd.Instance->LAY1_DES_READ);
+                uint32_t argb = READ_REG(lcd.Instance->LAY1_DES_READ);
+                uint32_t ui_site = READ_REG(lcd.Instance->LAY1_SITE);
+                matches = matches && argb == pending_argb && ui_site >= argb &&
+                          ui_site - argb < PLAYER_DISPLAY_OVERLAY_BYTES;
+            }
             counters.last_descriptor = descriptor;
             counters.last_physical_y = physical_y;
             counters.last_read_site = site;
-            if (descriptor == pending_descriptor && physical_y == pending_y &&
-                site >= pending_y && site - pending_y < layout.total_bytes) {
-                completed.latched = pending_frame.token;
-                completed.has_retired = scanout_valid;
-                if (scanout_valid) completed.retired = scanout_frame.token;
-                completed.irq_sequence = counters.vblanks;
-                completed.irq_time_us = platform_time_us();
-                completed.descriptor = descriptor;
-                completed.physical_y = physical_y;
-                completed.read_site = site;
-                scanout_frame = pending_frame;
-                scanout_valid = true;
+            if (matches) {
+                if (pending_video_change) {
+                    completed.has_latched = pending_video_enabled;
+                    completed.latched = pending_frame.token;
+                    completed.has_retired = scanout_valid;
+                    if (scanout_valid) completed.retired = scanout_frame.token;
+                    completed.irq_sequence = counters.vblanks;
+                    completed.irq_time_us = now;
+                    completed.descriptor = descriptor;
+                    completed.physical_y = physical_y;
+                    completed.read_site = site;
+                    if (pending_video_enabled) scanout_frame = pending_frame;
+                    scanout_valid = pending_video_enabled;
+                    completion_valid = true;
+                    if (pending_video_enabled) {
+                        uint64_t elapsed = now - pending_started_us;
+                        uint32_t latency = elapsed > UINT32_MAX ? UINT32_MAX : (uint32_t)elapsed;
+                        if (latency > counters.video_latency_max_us) counters.video_latency_max_us = latency;
+                        ++counters.confirmed;
+                    }
+                }
+                if (pending_overlay_change) {
+                    scanout_argb = pending_argb;
+                    overlay_valid = true;
+                    completed_serial = pending_serial;
+                    overlay_completion_valid = true;
+                    ++counters.overlay_confirmed;
+                }
                 pending_valid = false;
-                completion_valid = true;
-                ++counters.confirmed;
             } else ++counters.mismatches;
         }
     }
@@ -88,10 +134,12 @@ static void reset_dsi(void)
 int player_display_stop(void)
 {
     running = false;
+    video_active = false;
     initialized = false;
     if (!clocks_enabled) return 0;
     panel_zc502_power_off();
     backlight_on = false;
+    backlight_starting = false;
     WRITE_REG(lcd.Instance->DC_INTC, 0);
     int result = stop_dma();
     if (result) return result; /* Hardware may still read the caller's buffers. */
@@ -105,6 +153,8 @@ int player_display_stop(void)
     CPM_GATE_Disable(CPM_Instance, CPM_CLKID_LCD);
     clocks_enabled = initialized = false;
     pending_valid = completion_valid = scanout_valid = false;
+    video_active = false;
+    overlay_valid = overlay_completion_valid = overlay_queued = false;
     return 0;
 }
 
@@ -118,6 +168,9 @@ int player_display_init(void)
     memset(layers, 0, sizeof(layers));
     memset((void *)&counters, 0, sizeof(counters));
     pending_valid = completion_valid = scanout_valid = false;
+    video_active = false;
+    overlay_valid = overlay_completion_valid = overlay_queued = false;
+    scanout_argb = 0;
     lcd.Instance = DPU_Instance;
     lcd.pdata = &panel_zc502_data;
     LL_CPM_CGU_ConfigTypeDef clock = {
@@ -142,11 +195,11 @@ int player_display_init(void)
     WRITE_REG(lcd.Instance->DC_CLR_ST, 0xffffffffu);
     WRITE_REG(lcd.Instance->DC_INTC,
               DC_DPU_INTC_EOD_MSK_0 | DC_DPU_INTC_UOT_MSK_0);
-    layers[0].lay_en = ENABLE;
-    /* The mixer needs a unique order even for disabled layers. Match the
-     * SDK composer example: the only active video layer is the top layer. */
-    for (unsigned i = 0; i < MAX_LAYER_DESC_NUM; ++i)
-        layers[i].lay_z_order = LAYER_Z_ORDER_3 - i;
+    /* Unique orders are required even for disabled layers. GUI is topmost. */
+    layers[0].lay_z_order = LAYER_Z_ORDER_2;
+    layers[1].lay_z_order = LAYER_Z_ORDER_3;
+    layers[2].lay_z_order = LAYER_Z_ORDER_1;
+    layers[3].lay_z_order = LAYER_Z_ORDER_0;
     layers[0].format = LAYER_CFG_FORMAT_NV12;
     layers[0].color = COLOR_RGB;
     layers[0].g_alpha_en = ENABLE;
@@ -157,7 +210,14 @@ int player_display_init(void)
     layers[0].scale_w = layout.width;
     layers[0].scale_h = layout.height;
     layers[0].domain_multi = 0;
-    /* Layer 1 remains disabled; a future ARGB UI can use straight alpha. */
+    layers[1].format = LAYER_CFG_FORMAT_ARGB8888;
+    layers[1].color = COLOR_RGB;
+    layers[1].g_alpha_en = DISABLE; /* Use each pixel's alpha. */
+    layers[1].g_alpha_val = 255;
+    layers[1].source_w = layers[1].scale_w = 720;
+    layers[1].source_h = layers[1].scale_h = 1280;
+    layers[1].stride = layers[1].uv_stride = 720;
+    layers[1].domain_multi = 0; /* LVGL outputs straight alpha. */
     initialized = true;
     return 0;
 failed:
@@ -174,6 +234,56 @@ int player_display_start(void)
     return 0;
 }
 
+void player_display_set_video_active(bool active)
+{
+    taskENTER_CRITICAL();
+    video_active = active;
+    taskEXIT_CRITICAL();
+}
+
+/* Caller holds the short submission critical section. Current video is reused
+ * for GUI-only changes; it stays under the same scanout token throughout. */
+static int submit(bool video_change, const player_display_frame_t *frame,
+                  bool ui_change, uint32_t argb, uint32_t serial)
+{
+    pending_video_change = video_change;
+    pending_video_enabled = video_change ? frame != NULL : scanout_valid;
+    pending_overlay_change = ui_change;
+    if (frame) pending_frame = *frame;
+    else if (scanout_valid) pending_frame = scanout_frame;
+    pending_y = pending_video_enabled ? CPHYSADDR(pending_frame.nv12) : 0;
+    pending_argb = ui_change ? argb : (overlay_valid ? scanout_argb : 0);
+    pending_serial = serial;
+    layers[0].lay_en = pending_video_enabled;
+    layers[0].addr = pending_y;
+    layers[0].uv_addr = pending_y + layout.uv_offset;
+    layers[1].lay_en = pending_argb != 0;
+    layers[1].addr = pending_argb;
+    if (HAL_COMP_Init(&lcd, layers) != HAL_OK) return -EIO;
+    pending_descriptor = CPHYSADDR(&lcd.CompData.FrameDesc[lcd.CompData.comp_next_frame]);
+    WRITE_REG(lcd.Instance->DC_CLR_ST, DC_INTC_INT_EOD_0);
+    pending_started_us = platform_time_us();
+    pending_valid = true;
+    if (HAL_COMP_Start(&lcd) == HAL_OK) {
+        if (video_change && frame) ++counters.video_submitted;
+        if (ui_change) {
+            if (video_change && frame) ++counters.overlay_merged;
+            else if (!video_change) ++counters.overlay_only;
+        }
+        return 0;
+    }
+    pending_valid = false;
+    return -EIO;
+}
+
+static int submit_with_queued_overlay(bool video_change, const player_display_frame_t *frame)
+{
+    bool take_overlay = overlay_queued;
+    int result = submit(video_change, frame, take_overlay, queued_argb, queued_serial);
+    if (!result && take_overlay) overlay_queued = false;
+    return result;
+}
+
 int player_display_submit_frame(const player_display_frame_t *frame)
 {
     if (!running) return -ENODEV;
@@ -184,27 +294,94 @@ int player_display_submit_frame(const player_display_frame_t *frame)
     if (physical_y > 0x04000000u - layout.total_bytes) return -EINVAL;
     int result = 0;
     taskENTER_CRITICAL();
-    if (pending_valid || completion_valid) result = -EAGAIN;
+    if (pending_valid || completion_valid) {
+        ++counters.video_busy;
+        result = -EAGAIN;
+    }
     else if (scanout_valid && physical_y == CPHYSADDR(scanout_frame.nv12))
         result = -EINVAL;
     else {
-        layers[0].addr = physical_y;
-        layers[0].uv_addr = physical_y + layout.uv_offset;
-        if (HAL_COMP_Init(&lcd, layers) != HAL_OK) result = -EIO;
-        else {
-            pending_frame = *frame;
-            pending_y = physical_y;
-            pending_descriptor = CPHYSADDR(&lcd.CompData.FrameDesc[lcd.CompData.comp_next_frame]);
-            WRITE_REG(lcd.Instance->DC_CLR_ST, DC_INTC_INT_EOD_0);
-            pending_valid = true;
-            if (HAL_COMP_Start(&lcd) != HAL_OK) {
-                pending_valid = false;
-                result = -EIO;
-            }
-        }
+        result = submit_with_queued_overlay(true, frame);
     }
     taskEXIT_CRITICAL();
     return result;
+}
+
+int player_display_clear_video(void)
+{
+    if (!running) return -ENODEV;
+    int result;
+    taskENTER_CRITICAL();
+    if (pending_valid || completion_valid) result = -EAGAIN;
+    else result = scanout_valid ? submit_with_queued_overlay(true, NULL) : 0;
+    taskEXIT_CRITICAL();
+    return result;
+}
+
+int player_display_submit_overlay(const uint32_t *argb, uint32_t capacity, uint32_t serial)
+{
+    if (!running) return -ENODEV;
+    if (!argb || ((uintptr_t)argb & 63u) || capacity < PLAYER_DISPLAY_OVERLAY_BYTES || !serial)
+        return -EINVAL;
+    uint32_t physical = CPHYSADDR(argb);
+    if (!physical || physical > 0x04000000u - PLAYER_DISPLAY_OVERLAY_BYTES) return -EINVAL;
+    int result;
+    taskENTER_CRITICAL();
+    if (overlay_completion_valid || overlay_queued || (pending_valid && pending_overlay_change)) result = -EAGAIN;
+    else if (overlay_valid && physical == scanout_argb) result = -EINVAL;
+    else if (pending_valid || video_active) {
+        /* Pin one GUI request behind the in-flight video transaction. The
+         * worker's next video submit merges it, so GUI cannot starve behind
+         * a stream of higher-priority video submissions. */
+        queued_argb = physical;
+        queued_serial = serial;
+        overlay_queued = true;
+        ++counters.overlay_queued_requests;
+        result = 0;
+    } else result = submit(false, NULL, true, physical, serial);
+    if (!result) ++counters.overlay_submitted;
+    taskEXIT_CRITICAL();
+    return result;
+}
+
+static int enable_backlight(void)
+{
+    /* GUI and video completions can be polled by different tasks. Claim the
+     * slow PWM settling once; never sleep with interrupts masked. */
+    taskENTER_CRITICAL();
+    bool ready = backlight_on;
+    bool busy = backlight_starting;
+    if (!ready && !busy) backlight_starting = true;
+    taskEXIT_CRITICAL();
+    if (ready) return 0;
+    if (busy) return 1;
+    panel_zc502_backlight_on();
+    int result = panel_zc502_result() ? -EIO : 0;
+    taskENTER_CRITICAL();
+    backlight_starting = false;
+    backlight_on = !result;
+    taskEXIT_CRITICAL();
+    return result;
+}
+
+int player_display_poll_overlay_completion(uint32_t *serial)
+{
+    if (!serial) return -EINVAL;
+    int queued_result = 0;
+    taskENTER_CRITICAL();
+    /* With paused/no video, GUI polling itself drives the queued update. */
+    if (overlay_queued && !pending_valid && !video_active)
+        queued_result = submit_with_queued_overlay(false, NULL);
+    taskEXIT_CRITICAL();
+    if (queued_result) return queued_result;
+    if (!overlay_completion_valid) return 0;
+    int result = enable_backlight();
+    if (result) return result < 0 ? result : 0;
+    taskENTER_CRITICAL();
+    *serial = completed_serial;
+    overlay_completion_valid = false;
+    taskEXIT_CRITICAL();
+    return 1;
 }
 
 int player_display_poll_completion(player_display_completion_t *completion)
@@ -218,9 +395,8 @@ int player_display_poll_completion(player_display_completion_t *completion)
     }
     taskEXIT_CRITICAL();
     if (result && !backlight_on) {
-        panel_zc502_backlight_on();
-        if (panel_zc502_result() != 0) return -EIO;
-        backlight_on = true;
+        int error = enable_backlight();
+        if (error) return error < 0 ? error : 0;
     }
     if (result) {
         taskENTER_CRITICAL();
@@ -234,8 +410,10 @@ void player_display_get_stats(player_display_stats_t *stats)
 {
     taskENTER_CRITICAL();
     *stats = counters;
-    stats->pending = pending_valid;
+    stats->pending = pending_valid || overlay_queued;
     stats->scanout = scanout_valid;
+    stats->overlay_scanout = overlay_valid;
+    stats->video_active = video_active;
     taskEXIT_CRITICAL();
 }
 
@@ -249,6 +427,15 @@ int player_display_test_pattern(bool enabled)
 
 void player_display_print_status(void)
 {
+    player_display_stats_t timing;
+    player_display_get_stats(&timing);
+    printf("DISPLAY_SCHED active=%u video_submitted=%lu video_busy=%lu overlay_submitted=%lu overlay_queued=%lu overlay_merged=%lu overlay_only=%lu video_confirmed=%lu overlay_confirmed=%lu eod_period_min_us=%lu eod_period_max_us=%lu video_latency_max_us=%lu\n",
+           (unsigned)timing.video_active, (unsigned long)timing.video_submitted, (unsigned long)timing.video_busy,
+           (unsigned long)timing.overlay_submitted, (unsigned long)timing.overlay_queued_requests,
+           (unsigned long)timing.overlay_merged, (unsigned long)timing.overlay_only,
+           (unsigned long)timing.confirmed, (unsigned long)timing.overlay_confirmed,
+           (unsigned long)timing.eod_period_min_us, (unsigned long)timing.eod_period_max_us,
+           (unsigned long)timing.video_latency_max_us);
     printf("DISPLAY clocks=%d init=%d running=%d backlight=%d panel_result=%d pending=%d scanout=%d\n",
            clocks_enabled, initialized, running, backlight_on, panel_zc502_result(),
            pending_valid, scanout_valid);
