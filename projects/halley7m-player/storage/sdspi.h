@@ -10,4 +10,5 @@ uint32_t sdspi_sector_count(void);
 uint8_t sdspi_crc7(const uint8_t *data, size_t size);
 uint16_t sdspi_crc16(const uint8_t *data, size_t size);
 int sdspi_decode_csd(const uint8_t csd[16], uint32_t *sectors);
+int sdspi_gpio_probe(void);
 #endif

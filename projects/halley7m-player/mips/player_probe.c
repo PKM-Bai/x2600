@@ -53,6 +53,7 @@ static int32_t test_read(void *unused, void *buffer, uint32_t bytes)
 static int list_entry(void *unused, const char *name, uint64_t size, int directory)
 {
     (void)unused;
+    player_amp_service();
     printf("%c %10llu %s\n", directory ? 'D' : 'F', (unsigned long long)size, name);
     return 0;
 }
@@ -63,6 +64,93 @@ void player_probe_list(const char *path)
     if (!result) result = player_storage_ls_utf8(*path ? path : "0:/", list_entry, NULL);
     printf("PLAYER_LS result=%d\n", result);
 }
+
+/* TF_BENCHMARK_BEGIN: host regression compiles these production functions. */
+#define PLAYER_BENCHMARK_DEFAULT_BYTES (8u * 1024u * 1024u)
+_Alignas(64) static uint8_t benchmark_buffer[16u * 1024u];
+
+struct player_benchmark_stats {
+    uint64_t file_bytes, target_bytes, bytes;
+    uint64_t elapsed_us, read_us, min_read_us, max_read_us;
+    uint32_t reads, eof, truncated;
+    int result;
+};
+
+static void benchmark_read(const struct player_media_io *io,
+                           struct player_benchmark_stats *stats)
+{
+    uint64_t started = platform_time_us();
+    stats->min_read_us = UINT64_MAX;
+    while (stats->bytes < stats->target_bytes) {
+        uint64_t remaining = stats->target_bytes - stats->bytes;
+        uint32_t request = remaining < sizeof(benchmark_buffer) ?
+                           (uint32_t)remaining : (uint32_t)sizeof(benchmark_buffer);
+        player_amp_service();
+        uint64_t before = platform_time_us();
+        int32_t received = io->read(io->opaque, benchmark_buffer, request);
+        uint64_t duration = platform_time_us() - before;
+        stats->read_us += duration;
+        if (duration < stats->min_read_us) stats->min_read_us = duration;
+        if (duration > stats->max_read_us) stats->max_read_us = duration;
+        ++stats->reads;
+        player_amp_service();
+        if (received < 0) { stats->result = received; break; }
+        if ((uint32_t)received > request) { stats->result = -EIO; break; }
+        if (!received) {
+            stats->eof = stats->truncated = 1;
+            stats->result = -EIO; /* Premature EOF, not a successful short file. */
+            break;
+        }
+        stats->bytes += (uint32_t)received;
+        vTaskDelay(1);
+    }
+    stats->elapsed_us = platform_time_us() - started;
+    if (!stats->reads) stats->min_read_us = 0;
+    if (!stats->result && stats->bytes == stats->file_bytes) stats->eof = 1;
+}
+
+void player_probe_benchmark(const char *path, uint32_t maxbytes)
+{
+    struct player_storage_file *file = NULL;
+    struct player_benchmark_stats stats = {0};
+    uint32_t requested = maxbytes ? maxbytes : PLAYER_BENCHMARK_DEFAULT_BYTES;
+    if (!path || !*path || !strcmp(path, "@embedded")) {
+        stats.result = -EINVAL;
+        goto done;
+    }
+    player_amp_service();
+    stats.result = player_storage_mount();
+    if (!stats.result) stats.result = player_storage_open_utf8(&file, path);
+    if (stats.result) goto done;
+    const struct player_media_io *io = player_storage_io(file);
+    if (!io || !io->read || !io->size) { stats.result = -EBADF; goto done; }
+    stats.file_bytes = io->size(io->opaque);
+    if (stats.file_bytes >= UINT64_C(0x100000000)) {
+        stats.result = -EOVERFLOW;
+        goto done;
+    }
+    stats.target_bytes = stats.file_bytes < requested ? stats.file_bytes : requested;
+    printf("TF_BENCH_BEGIN requested=%lu file_bytes=%llu target_bytes=%llu chunk_bytes=%lu path=%s\n",
+           (unsigned long)requested, (unsigned long long)stats.file_bytes,
+           (unsigned long long)stats.target_bytes, (unsigned long)sizeof(benchmark_buffer), path);
+    benchmark_read(io, &stats);
+done:
+    if (file) {
+        int closed = player_storage_close(file);
+        if (!stats.result) stats.result = closed;
+    }
+    /* File/request are below 4GiB, so bytes*1e6 fits a uint64_t. */
+    uint64_t wall_bps = stats.elapsed_us ? stats.bytes * UINT64_C(1000000) / stats.elapsed_us : 0;
+    uint64_t read_bps = stats.read_us ? stats.bytes * UINT64_C(1000000) / stats.read_us : 0;
+    printf("TF_BENCH result=%d bytes=%llu target_bytes=%llu file_bytes=%llu elapsed_us=%llu Bps=%llu read_us=%llu read_Bps=%llu reads=%lu min_read_us=%llu max_read_us=%llu eof=%lu truncated=%lu yield_ticks=1 source=tf-readonly\n",
+           stats.result, (unsigned long long)stats.bytes, (unsigned long long)stats.target_bytes,
+           (unsigned long long)stats.file_bytes, (unsigned long long)stats.elapsed_us,
+           (unsigned long long)wall_bps, (unsigned long long)stats.read_us,
+           (unsigned long long)read_bps, (unsigned long)stats.reads,
+           (unsigned long long)stats.min_read_us, (unsigned long long)stats.max_read_us,
+           (unsigned long)stats.eof, (unsigned long)stats.truncated);
+}
+/* TF_BENCHMARK_END */
 
 static int open_media(const char *path, struct player_storage_file **file,
                        struct player_media *media)

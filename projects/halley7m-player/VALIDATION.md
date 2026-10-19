@@ -12,7 +12,7 @@
 | 输入/帧池 | 使用生产C和虚拟时钟测试三键、连发、释放互斥、队列、session、768 stride及四槽持有 |
 | AMP主机 | 10,000消息、回绕/CRC、满空队列、会话重置；两owner控制状态机的ACK/PING/STOP丢确认/坏序号/超时退出 |
 | ILP32 helper | `__clzsi2` 最高位与随机向量；`__udivdi3` Debug/Release 各203,972向量；目标无外部helper/递归，栈16字节且无RVE |
-| 只读存储 | 真MIPS编译与主机FatFs接口边界通过；无写卡符号、无HAL_DMA引用。实际TF吞吐仍待测 |
+| 只读存储 | 真MIPS编译与主机FatFs接口边界通过；无写卡符号、无HAL_DMA引用。后续已完成真实TF首8MiB只读吞吐测试，结果见下；长期吞吐仍待验 |
 | 主核RAM加载 | 71,104B / CRC0eb994d6经YMODEM上传，FreeRTOS串口和heap命令通过。该旧诊断包未含小核 |
 | 双核RAM加载 | 真小核嵌入合包；由MIPS接管后复制高端DDR，READY/ACK成功，未在U-Boot期间上传高端区 |
 | 频率校准 | 首测575,996,390Hz，原600MHz配置正确FAULT/reset；改576MHz后测575,996,270Hz，通过2%误差门限，tick配置1000Hz |
@@ -35,9 +35,9 @@
 
 ## 尚未通过的交付条件
 
-- 真实WAV文件播放、音频主时钟与实际声学输出延迟校准。
-- 真实TF读速、2MiB预读及包池、完整AVI音画会话。
-- LVGL三页、中文字体、透明GUI叠加、三键在播放期间的实际操作。
+- 实际声学/显示延迟校准和手机声光同步。
+- 真实TF长期吞吐、长AVI/AVIX跨段、2MiB预读与包池持续稳定性。
+- 三键全部动作、暂停菜单残影与长期生命周期人工回归；中文/菜单和短片叠加已有实板证据。
 - 高运动片源720p30、30分钟有声播放、手机同步测量、长AVI/AVIX实板及单核/AMP负载对照。
 
 当前视频诊断以主核时间调度，不代表音画同步通过；短片结果不替代长文件和30分钟验收。
@@ -49,3 +49,18 @@
 - 在7%下，暂停测试于24,480样本冻结100ms，前后计数相同；恢复后96,000样本全部完成。另分别完成1、15、16、17、479、480、481、5,003样本的短尾测试，补零不计入媒体样本数。每次STOP=0、DMA错误/超时、队列欠载、FIFO欠载均为0，结束heap均为56,289,608B。
 - 这些结果验证了共享PCM传输、实际发声、周期尾段和暂停冻结；不替代真实TF/WAV、长期稳定性或音画同步验收。原始日志保留本地`build/player-tone-volume7-board.log`和`build/player-audio-volume7-lifecycle-board.log`。
 - 小核SDK的阻塞`ulTaskNotifyTake(..., timeout)`会在critical内yield后留下中断屏蔽，首个READY后任务不再前进。工程改用非阻塞通知获取和`vTaskDelay`，未改SDK源；重新RAM加载后READY、ACK、PING和上述音频实测通过。
+
+## 2026-10-19：三页GUI、TF文件和完整短会话
+
+- LVGL8.3.10仅构建核心，保留34869原始Unifont字形，按需放大；headless真实LVGL、显示driver、按键及回调测试通过。用户确认实际中文页面、方向及长按菜单正常。GUI单任务栈16KiB，首次运行最少剩余2970words；固定5ms扫描回调只操作输入队列，不进入LVGL。
+- 首次仅音频诊断包挂载TF出现CMD0/R1=ff无响应；整机重新RAM启动后挂载正常，SSI数据时钟18.75MHz，真实根目录读取成功。未根据首次失败盲改引脚或声称已定位物理原因。
+- 实际`0:/multimedia/audio/acceptance-tail-96017.wav`完整输出96017样本，包含最后17样本，EOF状态ENDED、underruns0、默认volume7。
+- 整机首轮同步片为90decode/63display/27drop，音频全144000且无错误；定位为GUI独立刷新占用DPU周期，并修正连续播放优先合并、待显期间预解码下一帧。33.033ms主机EOD回归达到90/90/0后重测实板：90/90/0、late0、max_late6666us，audio144000、全部音频错误0；29个GUI请求合入视频，video_busy0，EOD33.014..33.053ms，提交至确认最大32.943ms。
+- 高运动TF AVI前缀实测：暂停、继续、STOP，36.028s记录窗口（含准备和暂停），有效音频948480样本，decode594/display593、drop0/late0、max_late26666us；取消时保留的下一解码帧不计显示。音频underrun/DMA错误/超时0；最低采样MIPS free31681936B、RV127648B，短窗口平均忙率MIPS30.89%、RV1.32%。此为前缀测试，不能替代10/30分钟记录或AMP收益结论。
+- STOP后codec分配/释放计数相同，GUI继续运行。原始日志本地保留于`build/player-session-scheduling-fix-board.log`、`build/player-tf-avi-prefix-board.log`与`build/player-prefix-measurement-trace-board.log`，CSV与时序只在停止后导出。
+
+## 2026-10-19：真实TF只读吞吐与长跑状态
+
+- `tf bench 0:/multimedia/video/acceptance-30min.avi` 已实板完成，文件大小593,023,512B，仅读取文件开头8,388,608B，分512次、每次16KiB。`result=0`、`eof=0`、`truncated=0`；这是前缀读取成功，不是整文件或跨AVIX验收。
+- 全部读块及块间一个tick让出共耗时4,609,434us，壁钟吞吐为1,819,878B/s；纯读调用累计4,289,287us，对应1,955,711B/s。单次read最小8,285us、最大8,907us。窗口不包含挂载、打开、关闭和串口结果输出；原始实板证据为本地`build/player-tf-throughput-board.log`，主机边界测试不作为该速率的证据。
+- AMP的1,800秒正式长跑已开始，当前仍进行中，尚未判定通过。完成后的连续播放时长、音频/DMA错误、视频呈现、GUI序列及CSV仍待核对；此前36.028秒高运动前缀和本次8MiB吞吐不替代30分钟稳定性、同片源10分钟单核/AMP对照或手机声光同步验收。手机录像按用户选择后续补测。

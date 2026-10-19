@@ -9,15 +9,17 @@
 static int scheduler, in_isr;
 static uintptr_t task = 1;
 static uint32_t file_bytes = UINT32_MAX;
-static unsigned open_calls, seek_calls, read_calls, closed_directories;
+static unsigned open_calls, seek_calls, read_calls, closed_directories, closed_files;
 static FRESULT next_read_result = FR_OK;
+static FRESULT mount_result = FR_NOT_READY;
+static unsigned gpio_probes;
 static uint16_t last_path[512];
 
 int xPortIsInsideInterrupt(void) { return in_isr; }
 int xTaskGetSchedulerState(void) { return scheduler; }
 TaskHandle_t xTaskGetCurrentTaskHandle(void) { return (void *)task; }
 FRESULT f_mount(FATFS *fs, const TCHAR *path, uint8_t opt)
-{ assert(path[0] == '0' && opt == 1); fs->mounted = 1; return FR_OK; }
+{ assert(path[0] == '0' && opt == 1); fs->mounted = mount_result == FR_OK; return mount_result; }
 FRESULT f_open(FIL *fp, const TCHAR *path, uint8_t mode)
 {
     assert(mode == FA_READ);
@@ -28,7 +30,7 @@ FRESULT f_open(FIL *fp, const TCHAR *path, uint8_t mode)
     fp->fptr = 0;
     return FR_OK;
 }
-FRESULT f_close(FIL *fp) { (void)fp; return FR_OK; }
+FRESULT f_close(FIL *fp) { (void)fp; ++closed_files; return FR_OK; }
 FRESULT f_read(FIL *fp, void *buffer, UINT bytes, UINT *received)
 {
     ++read_calls;
@@ -54,6 +56,7 @@ FRESULT f_readdir(DIR *directory, FILINFO *entry)
     return FR_OK;
 }
 FRESULT f_closedir(DIR *directory) { (void)directory; ++closed_directories; return FR_OK; }
+int sdspi_gpio_probe(void) { ++gpio_probes; return 0; }
 
 static int visit(void *opaque, const char *name, uint64_t bytes, int directory)
 {
@@ -66,10 +69,40 @@ static int visit(void *opaque, const char *name, uint64_t bytes, int directory)
 
 int main(void)
 {
-    assert(player_storage_mount() == -EAGAIN);
-    scheduler = taskSCHEDULER_RUNNING;
-    assert(player_storage_mount() == 0);
+    static const uint8_t embedded[] = {0x11, 0x22, 0x33, 0x44, 0x55};
     struct player_storage_file *file = NULL, *other = NULL;
+    assert(player_storage_mount() == -EAGAIN);
+    assert(player_storage_gpio_probe() == -EAGAIN && !gpio_probes);
+    assert(player_storage_register_embedded(embedded, sizeof(embedded)) == -EAGAIN);
+    scheduler = taskSCHEDULER_RUNNING;
+    assert(player_storage_mount() == -ENODEV);
+    assert(player_storage_gpio_probe() == 0 && gpio_probes == 1u);
+    assert(player_storage_open_utf8(&file, "@embedded") == -ENOENT && !file);
+    assert(player_storage_register_embedded(embedded, sizeof(embedded)) == 0);
+    assert(player_storage_open_utf8(&file, "@embedded") == 0);
+    assert(player_storage_gpio_probe() == -EBUSY && gpio_probes == 1u);
+    assert(player_storage_register_embedded(embedded, sizeof(embedded)) == -EBUSY);
+    assert(player_storage_open_utf8(&other, "@embedded") == -EBUSY && !other);
+    const struct player_media_io *memory_io = player_storage_io(file);
+    uint8_t memory_bytes[8] = {0};
+    assert(memory_io && memory_io->size(memory_io->opaque) == sizeof(embedded));
+    assert(memory_io->read(memory_io->opaque, memory_bytes, 3) == 3 && memory_bytes[2] == 0x33);
+    assert(memory_io->seek(memory_io->opaque, 4) == 0);
+    assert(memory_io->read(memory_io->opaque, memory_bytes, sizeof(memory_bytes)) == 1 && memory_bytes[0] == 0x55);
+    assert(memory_io->read(memory_io->opaque, memory_bytes, 1) == 0);
+    assert(memory_io->seek(memory_io->opaque, 6) == -EOVERFLOW);
+    task = 2;
+    assert(player_storage_gpio_probe() == -EPERM && gpio_probes == 1u);
+    assert(memory_io->read(memory_io->opaque, memory_bytes, 1) == -EPERM);
+    assert(player_storage_register_embedded(embedded, sizeof(embedded)) == -EPERM);
+    assert(player_storage_close(file) == -EPERM);
+    task = 1;
+    assert(player_storage_close(file) == 0);
+    assert(!open_calls && !read_calls && !seek_calls && !closed_files);
+    assert(memory_io->read(memory_io->opaque, memory_bytes, 1) == -EBADF);
+    mount_result = FR_OK;
+    assert(player_storage_mount() == 0);
+    assert(player_storage_gpio_probe() == -EBUSY && gpio_probes == 1u);
     assert(player_storage_open_utf8(&file, "0:/\xe4\xb8\xad.avi") == 0);
     assert(last_path[3] == 0x4e2d);
     const struct player_media_io *io = player_storage_io(file);
@@ -101,6 +134,20 @@ int main(void)
     unsigned entries = 0;
     assert(player_storage_ls_utf8("0:/MEDIA", visit, &entries) == 17);
     assert(entries == 1 && closed_directories == 1);
+    struct player_storage_directory *directory = NULL, *other_directory = NULL;
+    player_storage_entry entry;
+    assert(player_storage_dir_open(&directory, "0:/MEDIA") == 0);
+    assert(player_storage_dir_open(&other_directory, "0:/") == -EBUSY && !other_directory);
+    task = 2;
+    assert(player_storage_dir_next(directory, &entry) == -EPERM);
+    assert(player_storage_dir_close(directory) == -EPERM);
+    task = 1;
+    assert(player_storage_dir_next(directory, &entry) == 0);
+    assert(!strcmp(entry.name, "\xe4\xb8\xad.wav") && entry.bytes == 4321 && !entry.is_directory);
+    assert(player_storage_dir_next(directory, &entry) == 1);
+    assert(player_storage_dir_close(directory) == 0 && closed_directories == 2);
+    assert(player_storage_dir_next(directory, &entry) == -EBADF);
+    assert(player_storage_dir_close(directory) == -EBADF);
     assert(player_storage_close(file) == 0);
     assert(player_storage_io(file) == NULL);
     assert(io->read(io->opaque, bytes, 1) == -EBADF);
@@ -112,6 +159,6 @@ int main(void)
     io = player_storage_io(file);
     assert(io->seek(io->opaque, 17) == -EOVERFLOW);
     assert(player_storage_close(file) == 0);
-    printf("PASS storage readonly modes/UTF-8/4GiB seek/EOF/task ownership/IO errors/list cleanup\n");
+    printf("PASS storage readonly/UTF-8/4GiB/task ownership/embedded without TF/GPIO probe gates/directory cursor\n");
     return 0;
 }

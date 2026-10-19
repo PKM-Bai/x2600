@@ -8,7 +8,7 @@
 
 - 输入为 48 kHz、单声道、S16LE。`write` 复制到私有存储后返回实际接收的 sample 数；返回 0 表示需服务或等待空间，不能丢弃未接收部分。
 - 六个 period，每个 480 samples / 10 ms。首次播放、饥饿恢复等待五个完整 period；EOF 允许不足五个立即起播。DMA 单次描述符不循环，已 READY 的后继直接在 DMA ISR 接续，任务通知延迟不会阻塞接续。
-- 默认音量来自 `common/player_config.h` 的 10%。初始化、无 PCM、PAUSE、STOP 和错误状态均保持 DAC mute、PE17 功放关闭。0% 保持 DMA 流程并静音。
+- 默认音量来自 `common/player_config.h`，当前按用户试听确认设为 7%：10% 偏大、5% 偏小。初始化、无 PCM、PAUSE、STOP 和错误状态均保持 DAC mute、PE17 功放关闭。0% 保持 DMA 流程并静音。
 - `open` 要求调度器已运行，`begin` 包括 DAC 模拟电路 300 ms 稳定等待；两者应由服务任务调用。所有后续 API 也由同一任务调用；ISR 是唯一另一访问方。
 - 调用者至少每 10 ms 调用 `service`，背压等待期间也要调用。ISR 会通知 `open` 时的任务，但不要求特定通知接收方式。DMA 或 FIFO 排空超过 50 ms 进入 FAULT。
 - `pause` 仅提出请求；当前 period 完成后禁止取后继，等待 FIFO 空，再等待至少一个 tick 让最后的串行 sample 离开，才发布 PAUSED。此时才能确认暂停。READY / 部分填充 PCM / EOF 均保留。`resume` 只接受 PAUSED。
@@ -50,4 +50,6 @@ cmake --build /mnt/e/GitProject/X2600/build/player-audio-rv -j4
 - 使用已构建的真实 RV FreeRTOS 固件对象保留全部公开 audio API，单独链接 `build/player-audio-rv/audio-link-probe.elf`；不传 `-lgcc`，无未解析符号，最终 ELF flags `0x1`，DDR 使用 191,360 bytes。该探针仅链接验证，没有更改或下载正式固件。
 - XBurst2 GCC 7.2.0：同一服务及五个 SDK 源的 MIPS32r2/O32 静态库真实编译通过，输出 `build/player-audio-mips`。
 
-这些结果不表示音频板测通过。仍需由完整固件验证 RV cache `fence.i` 对 DMA 可见性、PDMA/descriptor IRQ 和终止状态、48 kHz 时钟与出声、连续 period 的 FIFO underrun、暂停/恢复无漏样、0/1/15/16/17/479 sample 尾部、STOP 后无继续取数、错误时槽保留及 MIPS 单核对照。音画同步需结合共享样本时钟与同步片校准 FIFO / ICODEC 延迟。
+基础音频已由完整 AMP 固件实板验证：用户实际听到短音并确认默认7%合适；7%两秒500Hz短音完成96,000有效samples。暂停于24,480 samples冻结100ms，前后计数一致，恢复后完成96,000 samples。1、15、16、17、479、480、481及5,003 samples短尾均完成，补零未计入有效样本；各次STOP=0，DMA错误/超时、队列欠载、FIFO欠载均为0。证据见本地`build/player-tone-volume7-board.log`、`build/player-audio-volume7-lifecycle-board.log`及`../VALIDATION.md`。
+
+这些实板结果覆盖基础发声、暂停/恢复和短尾生命周期。当前AMP 30分钟长跑仍进行中，尚未判定通过；长期音频稳定性、同片源单核/AMP对照、错误注入后的硬件静音/资源保留和实际声光同步仍需各自验收。声光同步需使用同步片及手机录像校准FIFO / ICODEC和显示延迟，不能由短音完成计数推定。

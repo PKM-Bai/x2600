@@ -8,7 +8,8 @@ param(
     [ValidateSet('Debug','Release')][string]$Configuration = 'Release',
     [ValidateSet('mips','riscv')][string]$AudioOwner = 'riscv',
     [ValidateRange(1000000,1000000000)][long]$RiscvClockHz = 576000000,
-    [switch]$MipsOnly
+    [switch]$MipsOnly,
+    [switch]$DiagnosticsOnly
 )
 $ErrorActionPreference = 'Stop'
 $workspace = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
@@ -34,15 +35,16 @@ $riscvBuild = Join-Path $buildRoot 'riscv'
 $mipsBuild = Join-Path $buildRoot 'mips'
 $source = Join-Path $workspace 'projects\halley7m-player'
 $probeMediaPath = ''
+$diagnosticsMode = if ($DiagnosticsOnly) { 'ON' } else { 'OFF' }
 if ($ProbeMedia) { $probeMediaPath = (Resolve-Path -LiteralPath $ProbeMedia).Path -replace '\\', '/' }
 if ($MipsOnly) {
-    & cmake -S $source -B $mipsBuild -G Ninja "-DCMAKE_TOOLCHAIN_FILE=$workspace/cmake/xburst2-elf.cmake" "-DCROSS_COMPILE=$mipsPrefix" "-DCMAKE_BUILD_TYPE=$Configuration" '-DPLAYER_CORE=mips' '-DPLAYER_AUDIO_OWNER=mips' '-DPLAYER_MIPS_ONLY=ON' "-DPLAYER_RISCV_CLOCK_HZ=$RiscvClockHz" "-DPLAYER_TEST_AVI=$probeMediaPath"
+    & cmake -S $source -B $mipsBuild -G Ninja "-DCMAKE_TOOLCHAIN_FILE=$workspace/cmake/xburst2-elf.cmake" "-DCROSS_COMPILE=$mipsPrefix" "-DCMAKE_BUILD_TYPE=$Configuration" '-DPLAYER_CORE=mips' '-DPLAYER_AUDIO_OWNER=mips' '-DPLAYER_MIPS_ONLY=ON' "-DPLAYER_RISCV_CLOCK_HZ=$RiscvClockHz" "-DPLAYER_TEST_AVI=$probeMediaPath" "-DPLAYER_DIAGNOSTICS_ONLY=$diagnosticsMode"
     if ($LASTEXITCODE) { throw 'MIPS-only configuration failed.' }
     & cmake --build $mipsBuild --parallel 4
     if ($LASTEXITCODE) { throw 'MIPS-only compilation failed.' }
     & python (Join-Path $PSScriptRoot 'verify-player.py') --mips-only --mips-build $mipsBuild --audio-owner mips --manifest (Join-Path $buildRoot 'manifest.json')
     if ($LASTEXITCODE) { throw 'MIPS-only artifact verification failed.' }
-    Write-Host "MIPS-only diagnostics: $mipsBuild (RISC-V missing; no AMP validation; no hardware writes)."
+    Write-Host "MIPS-only player: $mipsBuild (RISC-V held reset; AudioOwner=mips; no hardware writes)."
     exit 0
 }
 if ($RiscvArchive) {
@@ -81,7 +83,7 @@ if ($linuxRiscv) {
 $embedHeader = Join-Path $riscvBuild 'player_embed.h'
 & python (Join-Path $PSScriptRoot 'verify-player.py') --riscv-build $riscvBuild --emit-embed-header $embedHeader
 if ($LASTEXITCODE) { throw 'RISC-V artifact verification failed.' }
-& cmake -S $source -B $mipsBuild -G Ninja "-DCMAKE_TOOLCHAIN_FILE=$workspace/cmake/xburst2-elf.cmake" "-DCROSS_COMPILE=$mipsPrefix" "-DCMAKE_BUILD_TYPE=$Configuration" '-DPLAYER_CORE=mips' "-DPLAYER_AUDIO_OWNER=$AudioOwner" "-DPLAYER_RISCV_CLOCK_HZ=$RiscvClockHz" "-DPLAYER_RISCV_BIN=$riscvBuild/player_riscv.bin" "-DPLAYER_EMBED_HEADER=$embedHeader" "-DPLAYER_TEST_AVI=$probeMediaPath"
+& cmake -S $source -B $mipsBuild -G Ninja "-DCMAKE_TOOLCHAIN_FILE=$workspace/cmake/xburst2-elf.cmake" "-DCROSS_COMPILE=$mipsPrefix" "-DCMAKE_BUILD_TYPE=$Configuration" '-DPLAYER_CORE=mips' "-DPLAYER_AUDIO_OWNER=$AudioOwner" "-DPLAYER_RISCV_CLOCK_HZ=$RiscvClockHz" "-DPLAYER_RISCV_BIN=$riscvBuild/player_riscv.bin" "-DPLAYER_EMBED_HEADER=$embedHeader" "-DPLAYER_TEST_AVI=$probeMediaPath" "-DPLAYER_DIAGNOSTICS_ONLY=$diagnosticsMode"
 if ($LASTEXITCODE) { throw 'MIPS configuration failed.' }
 & cmake --build $mipsBuild --parallel 4
 if ($LASTEXITCODE) { throw 'MIPS compilation failed.' }

@@ -61,7 +61,12 @@ if (-not $InputOnly -and -not $VideoOnly) {
                             'scripts/test-player-audio-client.py',
                             'scripts/test-player-cpu-diagnostics.py',
                             'scripts/test-player-udivdi3.py',
-                            'projects/halley7m-player/storage/test-storage.py')) {
+                            'projects/halley7m-player/storage/test-storage.py',
+                            'projects/halley7m-player/mips/test-session.py',
+                            'scripts/test-player-gui.py',
+                            'scripts/test-player-measurement.py',
+                            'scripts/test-player-ui-sequence.py',
+                            'scripts/test-player-benchmark.py')) {
         & $python (Join-Path $workspace $relative)
         if ($LASTEXITCODE) { throw "Player host regression failed: $relative" }
     }

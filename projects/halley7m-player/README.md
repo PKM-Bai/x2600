@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-2026-10-19：两套架构 Debug/Release 已构建并通过紧凑合包核验；实板 RAM 启动、双 FreeRTOS 握手、重复启停、256KiB共享区CRC与576MHz小核计时器校准通过。FELIX 90帧跨三个GOP的可见NV12两平面CRC全部与PC一致。修正合成器四层Z顺序重复导致的黑屏后，用户确认实际画面完整、方向及颜色正常；稳态30.272fps、late=0、显示欠载与描述符mismatch=0。音频、完整会话、LVGL GUI及30分钟联合验收仍在实施。
+2026-10-19：两架构独立构建、紧凑RAM合包、双FreeRTOS握手和256KiB共享校验通过，小核计时器实测校准为576MHz。FELIX跨3个GOP的90帧Y/UV CRC全部与PC一致；用户确认视频方向、颜色、中文媒体库和长按菜单正常。已接通音频主时钟的AVI/WAV会话、2MiB预读与2MiB包池、LVGL双表面及三键。修正GUI独立刷新占用视频周期后，同步片90帧全呈现、drop/late=0、音频144000样本完整且错误为0；真实TF的96017样本WAV尾段和高运动片前缀暂停恢复也通过。30分钟长跑、单核/AMP同窗口对照、真实跨AVIX大文件和手机声光同步仍需分别验收。
 
 本机使用 Windows XBurst2 R5.1.6、官方 Victory0 r1.1.1 Linux 包（Ubuntu-22.04 WSL），以及 FFmpeg/ffprobe 9.0.2 essentials。Victory0 的编译器支持 `rv32imc / ilp32`，但随包 libgcc 采用 RV32E ABI，因此本工程以自身的 ILP32 `__clzsi2` / `__udivdi3` 避免混入不兼容对象，ELF 核验器也拒绝 RVE 标记。当前板测串口为用户指定的 COM52。
 
@@ -13,6 +13,7 @@
 ## 工程与使用入口
 
 - `scripts/build-player.ps1`：两个架构分别构建，小核 BIN 紧凑嵌入主核；默认音频归属为 RISC-V。
+- `scripts/build-player.ps1 -DiagnosticsOnly`：只运行串口探针，保留旧`video`逐帧CRC/显示诊断；正常构建默认启动三页GUI和异步会话。
 - `scripts/build-player.ps1 -MipsOnly`：构建主核版本，音频服务由MIPS独占，小核保持停止；可用于单核对照，不代替完整双核构建。
 - `scripts/verify-player.py`：核对 ELF 架构、入口、段边界、合包内容及 6MiB 上传上限。
 - `scripts/prepare-player-tools.ps1 -RiscvArchive <包路径> -FfmpegArchive <包路径>`：解包并验证已下载的官方工具，不修改系统 PATH。
@@ -21,6 +22,9 @@
 - `scripts/prepare-player-media.py`：转为固定 AVI/WAV，并扫描实际封装及码流；13 项测试含真实 FFmpeg 转码、SAR 与公共时间轴。
 - `scripts/make-player-probe-media.py --frames 90`：生成彩条、灰阶、方向标记、帧号和静音 PCM，并导出 PC 首帧 NV12 参考 CRC。
 - `scripts/check-player-video.py --board-log <逐帧日志>`：将每个硬解输出的可见 Y/UV CRC 与 PC 解码逐帧比较，拒绝缺失、重复或错误帧。
+- `projects/halley7m-player/mips/test-session.py`：真实FFmpeg片源、生产会话生命周期和33.033ms周期DPU模型。
+- `scripts/test-player-gui.py`：实际LVGL的headless三页截图、双表面、真实显示driver边界与按键回调，无SDL。
+- `scripts/test-player-measurement.py`：RAM一秒采样、CPU缓存、计数回绕、CSV和EOF/STOP范围验证。
 
 ```powershell
 python scripts/make-player-probe-media.py --frames 90
@@ -31,7 +35,9 @@ python scripts/ramload-regba.py --port COM52 --execute --wait-boot --file build/
 
 首次上传时在串口监听就绪后正常复位开发板。已运行播放器诊断程序时，可用 `--reboot-player` 替代 `--wait-boot`，先识别诊断程序再用 WDT0 复位并自动打断 U-Boot。该通路不写 NOR 或持久环境。Linux 版工具链通过 WSL 运行时，系统需要允许当前进程调用 WSL。
 
-串口诊断命令包括 `status`、`heap`、`amp ping 123`、`amp shared`、`amp stop`、`amp start`、`ls 0:/`、`media <UTF-8路径>`、`video <帧数,0表示EOF> <AVI路径>`、`video hold <AVI路径>`、`video verify <AVI路径>`、`video stop`。`@embedded` 代表通过 `-ProbeMedia` 内嵌的受控 AVI，例如 `video 0 @embedded`；省略 `-ProbeMedia` 时不嵌入片源并清除之前的 CMake 配置。`video verify` 关闭显示调度、输出全部帧CRC供独立PC比对；`video hold` 保留末帧直到显式stop，方便人工看图。诊断播放以主核时间调度，不将它视为音频主时钟或音画同步验收。
+正常构建使用`play <UTF-8路径>`、`pause`、`resume`、`stop`、`session`，状态和资源由唯一media/storage worker管理，GUI只发送非阻塞命令。`@embedded`为显式RAM诊断路径，不出现在媒体库；例如`play @embedded`运行受控AVI的完整有声链路。省略`-ProbeMedia`时不嵌入片源并清除旧配置。`session trace`在STOP后导出512条固定RAM时序，`measure begin <秒数> <标签>`开始最多1800秒采样，`measure summary`查看摘要，STOP后`measure dump`导出CSV，长导出逐行保持AMP心跳。
+
+`status`、`heap`、`gui`、`buttons`、`metrics`、`audio`提供显式诊断；`tone`按默认7%播放两秒短音。`ls`、`media`、`tf bench <路径>`等同步探针要求先STOP，不在播放过程中遍历或打印大目录。旧`video <帧数,0=EOF> <路径>`、`video hold/verify/stop`和DSI彩条仅在`-DiagnosticsOnly`启用；`video verify`关闭呈现调度输出全部帧CRC，该模式不能作为音画同步证据。
 
 构建目录位于仓库 `build/`，工具链、下载包和媒体产物均为本地产物。RAM 上传复用 `scripts/ramload-regba.py --file <播放器合包>` 的 YMODEM、长度及 CRC 校验。进入应用前不能单独上传高端小核/共享区，因为 U-Boot 仍占用这些地址。
 

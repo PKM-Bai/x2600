@@ -6,6 +6,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(PLAYER_CORE "mips" CACHE STRING "Firmware processor: mips or riscv")
 set(PLAYER_AUDIO_OWNER "riscv" CACHE STRING "Audio hardware owner: mips or riscv")
 option(PLAYER_MIPS_ONLY "Build main-core diagnostics without a RISC-V firmware" OFF)
+option(PLAYER_DIAGNOSTICS_ONLY "Run serial probes without the player GUI/session worker" OFF)
 set(PLAYER_RISCV_CLOCK_HZ "576000000" CACHE STRING "Victory0 timer clock; measured against the board OST")
 get_filename_component(WORKSPACE "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
 set(SDK_PATH "${WORKSPACE}/libbare-cpu")
@@ -73,9 +74,11 @@ elseif(PLAYER_CORE STREQUAL "mips")
         mips/start.S mips/port/context.S mips/port/port.c
         mips/runtime.c mips/runtime_heap.c mips/runtime_syscalls.c
         mips/main.c mips/player_probe.c mips/player_audio_probe.c mips/player_audio_client.c
-        mips/player_diagnostics.c
+        mips/player_session.c mips/player_diagnostics.c mips/player_measurement.c
+        mips/player_ui_sequence.c
+        ${WORKSPACE}/projects/halley7m-regba/platform/buttons.c
         ${AMP_SOURCES} ${TEST_MEDIA_SOURCES} common/player_amp.c
-        common/player_video.c common/player_media.c
+        common/player_video.c common/player_media.c common/player_session_core.c
         common/player_cpu_diagnostics.c common/player_cpu_freertos.c
         ${SDK_PATH}/cpu/core/fpu.S ${SDK_PATH}/cpu/core/spinlock.c
         ${SDK_PATH}/cpu/soc-x2600/src/interrupt.c
@@ -87,17 +90,21 @@ elseif(PLAYER_CORE STREQUAL "mips")
     target_include_directories(${FIRMWARE} PRIVATE mips/include mips mips/port common
         "${CMAKE_CURRENT_BINARY_DIR}" ${SDK_PATH}/cpu/core/include
         ${SDK_PATH}/cpu/soc-x2600/include ${SDK_PATH}/drivers/drivers-x2600/include
-        ${KERNEL_PATH}/include)
+        ${KERNEL_PATH}/include ${WORKSPACE}/projects/halley7m-regba/platform)
     target_compile_definitions(${FIRMWARE} PRIVATE USE_NEWLIB=1 __SDE_MIPS_=1)
     if(PLAYER_TEST_AVI)
         target_compile_definitions(${FIRMWARE} PRIVATE PLAYER_HAVE_TEST_MEDIA=1)
+    endif()
+    if(PLAYER_DIAGNOSTICS_ONLY)
+        target_compile_definitions(${FIRMWARE} PRIVATE PLAYER_DIAGNOSTICS_ONLY=1)
     endif()
     set(ARCH_OPTIONS -mips32r2 -mabi=32 -mfp32 -mhard-float -EL -mno-abicalls -fno-pic -G0)
     add_subdirectory(codec)
     add_subdirectory(display)
     add_subdirectory(storage)
+    add_subdirectory(gui)
     target_link_libraries(${FIRMWARE} PRIVATE -Wl,--start-group
-        player_codec player_h264_vendor player_display player_storage c m gcc -Wl,--end-group)
+        player_gui player_lvgl player_codec player_h264_vendor player_display player_storage c m gcc -Wl,--end-group)
 else()
     message(FATAL_ERROR "PLAYER_CORE must be mips or riscv")
 endif()

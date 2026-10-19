@@ -33,6 +33,25 @@ def default_volume():
     return int(match[1])
 
 
+def firmware_features(build):
+    gui_enabled = cache_values(build).get('PLAYER_DIAGNOSTICS_ONLY', 'ON') == 'OFF'
+    features = {'mode': 'player' if gui_enabled else 'serial-diagnostics',
+                'gui_enabled': gui_enabled, 'audio_sample_rate': 48000,
+                'audio_channels': 1, 'audio_format': 'S16LE'}
+    if gui_enabled:
+        source = build / 'gui/generated/SOURCE.json'
+        require(source.is_file(), 'GUI build is missing its dependency source manifest')
+        data = json.loads(source.read_text(encoding='utf-8'))
+        require(data.get('lvgl_version') == '8.3.10', 'GUI LVGL version changed')
+        features['gui'] = {'lvgl_version': data['lvgl_version'],
+                           'sdk_commit': data['sdk_commit'],
+                           'unifont_sha256': data['unifont_sha256'],
+                           'glyph_count': data['glyph_count'],
+                           'logical_size': [1280, 720], 'native_size': [720, 1280],
+                           'alpha': 'straight', 'surfaces': 2}
+    return features
+
+
 def require(condition, message):
     if not condition:
         raise RuntimeError(message)
@@ -168,11 +187,14 @@ def main():
                 'MIPS-only build options mismatch')
         manifest = {
             'board': 'HALLEY7-M-KIT X2600M 64MiB DDR2',
-            'artifact_type': 'player-mips-only-diagnostics', 'audio_owner': 'mips',
+            'artifact_type': 'player-mips-only', 'audio_owner': 'mips',
+            'protocol_version': source_version('player_amp.h', 'PLAYER_AMP_VERSION'),
+            'memory_version': source_version('player_memory.h', 'PLAYER_MEMORY_VERSION'),
+            'features': firmware_features(args.mips_build),
             'audio_enabled_at_boot': False, 'audio_service_built': True,
             'audio_default_volume_percent': default_volume(),
             'hardware_validated': False, 'amp_validated': False,
-            'mips': artifact(binary, elf), 'riscv': {'status': 'missing'},
+            'mips': artifact(binary, elf), 'riscv': {'status': 'not-embedded', 'execution': 'held-reset'},
             'test_media': embedded_test_media(args.mips_build, elf, binary.read_bytes()),
             'memory': {'mips_base': hex(MIPS_BASE), 'mips_heap_end': hex(MIPS_END),
                        'riscv_reserved': [hex(RISCV_BASE), hex(RISCV_END)],
@@ -180,7 +202,7 @@ def main():
         }
         if args.manifest:
             args.manifest.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
-        print(f'MIPS-only verified: {binary.stat().st_size} bytes; RISC-V missing; hardware pending')
+        print(f'MIPS-only verified: {binary.stat().st_size} bytes; RISC-V held reset; hardware pending')
         return
     require(args.riscv_build is not None, 'Full AMP verification requires --riscv-build')
     remote_elf = Elf32(args.riscv_build / 'player_riscv.elf')
@@ -226,7 +248,8 @@ def main():
         require(cache.get('PLAYER_RISCV_CLOCK_HZ') == str(args.riscv_clock_hz), f'{core}: timer clock mismatch')
     manifest = {
         'board': 'HALLEY7-M-KIT X2600M 64MiB DDR2',
-        'artifact_type': 'player-amp-audio-diagnostics',
+        'artifact_type': 'player-compact-package',
+        'features': firmware_features(args.mips_build),
         'protocol_version': source_version('player_amp.h', 'PLAYER_AMP_VERSION'),
         'memory_version': source_version('player_memory.h', 'PLAYER_MEMORY_VERSION'),
         'audio_owner': args.audio_owner, 'audio_enabled_at_boot': False,
@@ -244,6 +267,7 @@ def main():
                    'no undefined global symbols', 'MIPS heap below AMP reservation',
                    'embedded image exact-byte match', '6 MiB compact upload bound', 'matching build options'],
     }
+    manifest['riscv']['execution'] = 'enabled' if args.audio_owner == 'riscv' else 'held-reset'
     for core, build in (('mips', args.mips_build), ('riscv', args.riscv_build)):
         compiler = cache_values(build).get('CMAKE_C_COMPILER')
         if compiler:

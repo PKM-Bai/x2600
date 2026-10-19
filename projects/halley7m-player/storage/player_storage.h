@@ -5,8 +5,16 @@
 #include <stdint.h>
 
 struct player_storage_file;
+struct player_storage_directory;
+#define PLAYER_STORAGE_ENTRY_NAME_BYTES (255u * 4u + 1u)
+typedef struct player_storage_entry {
+    char name[PLAYER_STORAGE_ENTRY_NAME_BYTES];
+    uint64_t bytes;
+    int is_directory;
+} player_storage_entry;
 
-/* Read-only SD-SPI/FAT12/16/32 adapter. The task that first calls mount owns
+/* Read-only SD-SPI/FAT12/16/32 adapter. The task that first claims mount or
+ * registers/opens the explicit embedded diagnostic owns
  * every operation, including parser IO callbacks and listing callbacks.
  * Calls are blocking, never from an ISR. No separate worker or mutex exists.
  * One file can be open at a time; close it before opening the next file.
@@ -16,6 +24,15 @@ struct player_storage_file;
  */
 int player_storage_mount(void);
 int player_storage_open_utf8(struct player_storage_file **stream, const char *path);
+/* Explicit RAM diagnostic only. Register immutable firmware-linked bytes on
+ * the storage worker before opening "@embedded". The bytes must outlive the
+ * stream. That path shares the unique file slot and task owner but needs no
+ * successful TF mount; it is never synthesized into directory listings. */
+int player_storage_register_embedded(const void *bytes, uint32_t length);
+/* Explicit CMD0/CMD8 GPIO transport diagnostic. Same worker only, and only
+ * before a successful mount with no open file/directory. Never writes media
+ * and never silently resets an already mounted card. */
+int player_storage_gpio_probe(void);
 int player_storage_close(struct player_storage_file *stream);
 /* NULL for a closed/invalid stream. The returned adapter lives with stream. */
 const struct player_media_io *player_storage_io(struct player_storage_file *stream);
@@ -28,5 +45,13 @@ const struct player_media_io *player_storage_io(struct player_storage_file *stre
 typedef int (*player_storage_visit_fn)(void *opaque, const char *name_utf8,
                                       uint64_t bytes, int is_directory);
 int player_storage_ls_utf8(const char *path, player_storage_visit_fn visit, void *opaque);
+
+/* Incremental directory cursor, owned by the same storage worker. One active
+ * cursor may coexist with the one read-only file. next performs one FatFs
+ * readdir and returns 0=entry, 1=end, negative=error. The caller schedules each
+ * step between audio/video service; GUI tasks never call these functions. */
+int player_storage_dir_open(struct player_storage_directory **directory, const char *path);
+int player_storage_dir_next(struct player_storage_directory *directory, player_storage_entry *entry);
+int player_storage_dir_close(struct player_storage_directory *directory);
 
 #endif
