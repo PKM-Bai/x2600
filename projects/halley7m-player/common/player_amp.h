@@ -6,7 +6,7 @@
 #include <stdint.h>
 
 #define PLAYER_AMP_MAGIC UINT32_C(0x50414d50)
-#define PLAYER_AMP_VERSION UINT32_C(1)
+#define PLAYER_AMP_VERSION UINT32_C(2)
 #define PLAYER_AMP_RING_CAPACITY 16u
 #define PLAYER_AUDIO_OWNER_MIPS 1u
 #define PLAYER_AUDIO_OWNER_RISCV 2u
@@ -20,8 +20,30 @@ enum player_amp_opcode {
     PLAYER_AMP_CMD_CHECKSUM,
     PLAYER_AMP_EVENT_READY = 0x100, PLAYER_AMP_EVENT_ACK,
     PLAYER_AMP_EVENT_PONG, PLAYER_AMP_EVENT_STOPPED, PLAYER_AMP_EVENT_ERROR,
-    PLAYER_AMP_EVENT_CHECKSUM
+    PLAYER_AMP_EVENT_CHECKSUM,
+    PLAYER_AMP_AUDIO_CMD_START = 0x200, PLAYER_AMP_AUDIO_CMD_PAUSE,
+    PLAYER_AMP_AUDIO_CMD_RESUME, PLAYER_AMP_AUDIO_CMD_STOP,
+    PLAYER_AMP_AUDIO_CMD_SET_VOLUME, PLAYER_AMP_AUDIO_CMD_EOF,
+    PLAYER_AMP_AUDIO_EVENT_ACK = 0x300, PLAYER_AMP_AUDIO_EVENT_PROGRESS,
+    PLAYER_AMP_AUDIO_EVENT_ENDED, PLAYER_AMP_AUDIO_EVENT_ERROR
 };
+
+enum player_amp_audio_state {
+    PLAYER_AMP_AUDIO_CLOSED, PLAYER_AMP_AUDIO_IDLE, PLAYER_AMP_AUDIO_BUFFERING,
+    PLAYER_AMP_AUDIO_PLAYING, PLAYER_AMP_AUDIO_PAUSING, PLAYER_AMP_AUDIO_PAUSED,
+    PLAYER_AMP_AUDIO_DRAINING, PLAYER_AMP_AUDIO_DRAINED, PLAYER_AMP_AUDIO_FAULT
+};
+
+/* Dedicated audio rings use message.session=media_session_id. Each session
+ * starts at command sequence 1; events have their own contiguous sequence.
+ * START arguments={total_samples,volume_percent,0,0}; SET_VOLUME={percent,0,0,0};
+ * EOF={total_samples,0,0,0}; PAUSE/RESUME/STOP have four zero arguments.
+ * ACK={command_sequence,command_opcode,audio_state,0};
+ * PROGRESS/ENDED={completed_valid_samples,underruns,audio_state,clock_valid};
+ * ERROR={negative_error_as_u32,completed_valid_samples,audio_state,command_sequence}.
+ * STOP ACK follows mute, DMA quiescence and audio clock release. PCM indices
+ * may be reset only after that ACK. Neither ring ever carries a private pointer.
+ */
 
 /* CHECKSUM is a bring-up diagnostic; it does not start an audio service.
  * Command arguments: shared-region offset, byte count, expected CRC32, 0.
@@ -64,20 +86,33 @@ struct player_amp_shared {
     uint32_t remote_tick_hz;
     uint32_t remote_build_crc32;
     uint32_t remote_rejected_messages;
-    /* Audio is disabled in bring-up. These counters become meaningful only
-     * after the audio owner starts its actual DMA/codec pipeline. */
+    /* PCM indices count mono int16 samples, with unsigned wrap arithmetic.
+     * The producer owns write_pos; read_pos advances only after a synchronous
+     * copy into the audio owner's private period. DMA never reads shared PCM.
+     */
     _Alignas(64) uint32_t pcm_write_pos;
     _Alignas(64) uint32_t pcm_read_pos;
     uint32_t audio_completed_frames;
     uint32_t audio_underruns;
     uint32_t audio_clock_valid;
+    uint32_t audio_media_session_id;
+    uint32_t audio_state;
+    uint32_t audio_total_samples;
+    int32_t audio_error;
+    uint32_t audio_session_active;
+    uint32_t audio_dma_errors;
+    uint32_t audio_dma_timeouts;
+    uint32_t audio_queue_underruns;
+    uint32_t audio_fifo_underruns;
     _Alignas(64) struct player_amp_ring host_to_remote;
     _Alignas(64) struct player_amp_ring remote_to_host;
+    _Alignas(64) struct player_amp_ring audio_host_to_remote;
+    _Alignas(64) struct player_amp_ring audio_remote_to_host;
 };
 
 _Static_assert(sizeof(struct player_amp_message) == 32, "AMP message ABI");
 _Static_assert(sizeof(struct player_amp_ring) == 640, "AMP ring ABI");
-_Static_assert(sizeof(struct player_amp_shared) == 1600, "AMP control ABI");
+_Static_assert(sizeof(struct player_amp_shared) == 2880, "AMP control ABI");
 _Static_assert(sizeof(struct player_amp_shared) <= PLAYER_PCM_OFFSET,
                "Control structures overlap the PCM ring");
 
@@ -92,5 +127,15 @@ int player_amp_send(volatile struct player_amp_ring *ring,
                     const struct player_amp_message *message);
 int player_amp_receive(volatile struct player_amp_ring *ring,
                        struct player_amp_message *message);
+
+#define PLAYER_AMP_PCM_SAMPLES (PLAYER_PCM_BYTES / 2u)
+/* Production SPSC helpers: write returns accepted samples, -1 on corrupt
+ * distance/arguments. peek returns a contiguous count and a SHARED byte offset;
+ * consume is permitted only after private-period copy has accepted that count.
+ */
+int player_amp_pcm_write(volatile struct player_amp_shared *shared,
+                          volatile int16_t *pcm, const int16_t *samples, uint32_t count);
+int player_amp_pcm_peek(const volatile struct player_amp_shared *shared, uint32_t *byte_offset);
+int player_amp_pcm_consume(volatile struct player_amp_shared *shared, uint32_t count);
 
 #endif

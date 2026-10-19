@@ -16,7 +16,7 @@
 #define PLAYER_PCM_OFFSET      UINT32_C(0x00010000)
 #define PLAYER_PCM_BYTES       UINT32_C(0x00040000)
 #define PLAYER_MAX_PACKAGE     UINT32_C(0x00600000)
-#define PLAYER_MEMORY_VERSION UINT32_C(1)
+#define PLAYER_MEMORY_VERSION UINT32_C(2)
 
 _Static_assert(PLAYER_RISCV_PHYS + PLAYER_RISCV_BYTES == PLAYER_SHARED_PHYS,
                "Private and shared memory must not overlap");

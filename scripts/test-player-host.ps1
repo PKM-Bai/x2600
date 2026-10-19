@@ -58,6 +58,7 @@ if (-not $InputOnly -and -not $VideoOnly) {
         if ($LASTEXITCODE) { throw 'Player media host regression failed.' }
     }
     foreach ($relative in @('scripts/test-player-amp.py', 'scripts/test-player-amp-control.py',
+                            'scripts/test-player-audio-client.py',
                             'scripts/test-player-udivdi3.py',
                             'projects/halley7m-player/storage/test-storage.py')) {
         & $python (Join-Path $workspace $relative)

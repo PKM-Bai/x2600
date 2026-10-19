@@ -2,6 +2,7 @@
 #include "player_probe.h"
 #include "player_config.h"
 #include "player_display.h"
+#include "player_audio_probe.h"
 #include "FreeRTOS.h"
 #include "task.h"
 #include <stdio.h>
@@ -15,7 +16,7 @@ static void console_task(void *unused)
     (void)unused;
     char line[512];
     size_t length = 0;
-    printf("PLAYER_BOOT core=mips rtos=FreeRTOS entry=80600000 heap_end=83c00000 stage=video-diagnostics\n");
+    printf("PLAYER_BOOT core=mips rtos=FreeRTOS entry=80600000 heap_end=83c00000 stage=audio-diagnostics\n");
     printf("PLAYER_NOTE audio_dma=disabled default_volume_percent=%u video_clock=diagnostic-wall\n",
            PLAYER_DEFAULT_VOLUME_PERCENT);
     (void)player_subcore_start();
@@ -33,6 +34,10 @@ static void console_task(void *unused)
                 else if (!strcmp(line, "display")) player_display_print_status();
                 else if (!strcmp(line, "display vpg")) printf("DISPLAY_VPG result=%d\n", player_display_test_pattern(true));
                 else if (!strcmp(line, "display normal")) printf("DISPLAY_VPG result=%d\n", player_display_test_pattern(false));
+                else if (!strcmp(line, "audio")) player_audio_probe_status();
+                else if (!strcmp(line, "tone")) player_audio_probe_tone(96000, 0);
+                else if (!strcmp(line, "tone pause")) player_audio_probe_tone(96000, 1);
+                else if (!strncmp(line, "tone ", 5)) player_audio_probe_tone((unsigned)strtoul(line + 5, NULL, 10), 0);
                 else if (!strcmp(line, "amp start")) (void)player_subcore_start();
                 else if (!strcmp(line, "amp stop")) (void)player_subcore_stop();
                 else if (!strcmp(line, "amp shared")) (void)player_subcore_shared_test();

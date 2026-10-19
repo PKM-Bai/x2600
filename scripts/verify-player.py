@@ -6,6 +6,7 @@ board evidence belongs to a separate validation record.
 import argparse
 import hashlib
 import json
+import re
 from pathlib import Path
 import struct
 import subprocess
@@ -15,6 +16,21 @@ MIPS_BASE, MIPS_END = 0x80600000, 0x83C00000
 RISCV_BASE, RISCV_END, RISCV_ENTRY = 0x03C00000, 0x03E00000, 0x03C00080
 SHARED_BASE, DDR_END = 0x03E00000, 0x04000000
 MAX_PACKAGE = 6 * 1024 * 1024
+PROJECT = Path(__file__).resolve().parents[1] / 'projects/halley7m-player'
+
+
+def source_version(filename, macro):
+    text = (PROJECT / 'common' / filename).read_text(encoding='utf-8')
+    match = re.search(r'^#define\s+' + re.escape(macro) + r'\s+UINT32_C\((\d+)\)', text, re.M)
+    require(match, f'Missing fixed-width version macro: {macro}')
+    return int(match[1])
+
+
+def default_volume():
+    text = (PROJECT / 'common/player_config.h').read_text(encoding='utf-8')
+    match = re.search(r'^#define\s+PLAYER_DEFAULT_VOLUME_PERCENT\s+(\d+)u\s*$', text, re.M)
+    require(match and 0 <= int(match[1]) <= 100, 'Invalid default volume percent')
+    return int(match[1])
 
 
 def require(condition, message):
@@ -153,7 +169,9 @@ def main():
         manifest = {
             'board': 'HALLEY7-M-KIT X2600M 64MiB DDR2',
             'artifact_type': 'player-mips-only-diagnostics', 'audio_owner': 'mips',
-            'audio_enabled': False, 'hardware_validated': False, 'amp_validated': False,
+            'audio_enabled_at_boot': False, 'audio_service_built': True,
+            'audio_default_volume_percent': default_volume(),
+            'hardware_validated': False, 'amp_validated': False,
             'mips': artifact(binary, elf), 'riscv': {'status': 'missing'},
             'test_media': embedded_test_media(args.mips_build, elf, binary.read_bytes()),
             'memory': {'mips_base': hex(MIPS_BASE), 'mips_heap_end': hex(MIPS_END),
@@ -208,8 +226,11 @@ def main():
         require(cache.get('PLAYER_RISCV_CLOCK_HZ') == str(args.riscv_clock_hz), f'{core}: timer clock mismatch')
     manifest = {
         'board': 'HALLEY7-M-KIT X2600M 64MiB DDR2',
-        'artifact_type': 'player-amp-diagnostics', 'protocol_version': 1, 'memory_version': 1,
-        'audio_owner': args.audio_owner, 'audio_enabled': False,
+        'artifact_type': 'player-amp-audio-diagnostics',
+        'protocol_version': source_version('player_amp.h', 'PLAYER_AMP_VERSION'),
+        'memory_version': source_version('player_memory.h', 'PLAYER_MEMORY_VERSION'),
+        'audio_owner': args.audio_owner, 'audio_enabled_at_boot': False,
+        'audio_service_built': True, 'audio_default_volume_percent': default_volume(),
         'riscv_clock_hz_configured': args.riscv_clock_hz,
         'riscv_clock_measured': False, 'hardware_validated': False,
         'mips': artifact(host_binary, host_elf), 'riscv': artifact(remote_binary, remote_elf),

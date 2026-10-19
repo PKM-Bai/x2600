@@ -11,6 +11,14 @@ static uint8_t test_remote_image[4];
 static uint8_t test_pcm[PLAYER_PCM_BYTES];
 static const uint8_t test_payload[4] = {1, 2, 3, 4};
 static struct player_amp_shared test_shared;
+static uint32_t test_gpio_port, test_gpio_pin, test_gpio_mode, test_gpio_calls;
+#define PE_Instance (&test_gpio_port)
+#define GPIO_MODE_OUTPUT0 8u
+static void LL_GPIO_setPinMode(uint32_t *port, uint32_t pin, uint32_t mode)
+{
+    assert(port == PE_Instance);
+    test_gpio_pin = pin; test_gpio_mode = mode; ++test_gpio_calls;
+}
 static struct {
     uint32_t CCSR, CRER, TIME_L, TIME_H, TIME_CMP_L, TIME_CMP_H;
     uint32_t MBOX_FROM_HOST, MBOX_TO_HOST, IRQ_MASK_L, IRQ_MASK_H;
@@ -25,6 +33,7 @@ static struct {
 static uint64_t platform_time_us(void) { return test_now; }
 static void HAL_uDelay(uint32_t us);
 static void vTaskDelay(uint32_t ticks);
+void player_subcore_force_silence(void);
 static void CleanInvalidateDCache_by_Addr(unsigned long *address, long bytes)
 { (void)address; (void)bytes; }
 
@@ -138,6 +147,8 @@ static void reset_fixture(enum peer_mode next_mode)
     memset(&test_shared, 0, sizeof(test_shared));
     memset(test_pcm, 0, sizeof(test_pcm));
     active = shared_initialized = remote_started = 0;
+    recovery_required = 0;
+    test_gpio_pin = test_gpio_mode = test_gpio_calls = 0;
     next_session = next_sequence = pending_opcode = pending_sequence = 0;
     completed_sequence = completed_event = 0;
     host_state = PLAYER_AMP_RESET;
@@ -208,6 +219,14 @@ int main(void)
     assert(player_subcore_start() == -1 && active);
     assert(test_now == before_busy && test_cfcr == before_cfcr && next_session == before_session);
     assert(!memcmp(&test_shared, &before_shared, sizeof(test_shared)));
+    test_shared.audio_session_active = 1;
+    uint32_t before_audio_sequence = next_sequence;
+    assert(player_subcore_shared_test() == -1 && player_subcore_stop() == -1);
+    assert(next_sequence == before_audio_sequence && !(test_cfcr & REMOTE_RESET));
+    active = 0; /* A failed core must not overwrite storage while DMA is pinned. */
+    assert(player_subcore_start() == -1 && !(test_cfcr & REMOTE_RESET));
+    active = 1;
+    test_shared.audio_session_active = 0;
     assert(player_subcore_ping(0x12345678) == 0);
     assert(player_subcore_shared_test() == 0 && player_subcore_shared_test() == 0);
     assert(test_shared.pcm_write_pos == 0 && test_shared.pcm_read_pos == 0);
@@ -249,6 +268,16 @@ int main(void)
     reset_fixture(WRONG_CLOCK);
     assert(player_subcore_start() == -1 && !strcmp(last_error, "remote-timer-clock-mismatch"));
     assert_terminal_fault();
+    reset_fixture(NORMAL);
+    assert(player_subcore_start() == 0);
+    test_shared.audio_session_active = 1;
+    test_shared.pcm_read_pos = 13; test_shared.pcm_write_pos = 31;
+    test_shared.magic ^= 1u;
+    player_amp_service();
+    assert(test_gpio_calls == 2 && test_gpio_pin == 17 && test_gpio_mode == GPIO_MODE_OUTPUT0);
+    assert(recovery_required && test_shared.pcm_read_pos == 13 && test_shared.pcm_write_pos == 31);
+    assert_terminal_fault();
+    assert(player_subcore_start() == -1 && player_subcore_stop() == -1);
     printf("PASS production AMP commands: busy guard, ACK/PONG/STOP, 256KiB shared CRC/bounds/payload, bounded timeouts, terminal reset, timer mismatch\n");
     return 0;
 }

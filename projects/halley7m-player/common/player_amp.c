@@ -101,3 +101,43 @@ int player_amp_receive(volatile struct player_amp_ring *r,
     return message->checksum == player_amp_crc32(message,
                offsetof(struct player_amp_message, checksum)) ? 1 : -1;
 }
+
+int player_amp_pcm_write(volatile struct player_amp_shared *s,
+                          volatile int16_t *pcm, const int16_t *samples, uint32_t count)
+{
+    if (!pcm || (!samples && count)) return -1;
+    uint32_t write = s->pcm_write_pos, used = write - s->pcm_read_pos;
+    if (used > PLAYER_AMP_PCM_SAMPLES) return -1;
+    player_amp_barrier();
+    uint32_t free_samples = PLAYER_AMP_PCM_SAMPLES - used;
+    if (count > free_samples) count = free_samples;
+    for (uint32_t i = 0; i < count; ++i)
+        pcm[(write + i) % PLAYER_AMP_PCM_SAMPLES] = samples[i];
+    player_amp_barrier();
+    s->pcm_write_pos = write + count;
+    player_amp_barrier();
+    return (int)count;
+}
+
+int player_amp_pcm_peek(const volatile struct player_amp_shared *s, uint32_t *byte_offset)
+{
+    if (!byte_offset) return -1;
+    uint32_t read = s->pcm_read_pos, used = s->pcm_write_pos - read;
+    if (used > PLAYER_AMP_PCM_SAMPLES) return -1;
+    player_amp_barrier();
+    uint32_t index = read % PLAYER_AMP_PCM_SAMPLES;
+    uint32_t contiguous = PLAYER_AMP_PCM_SAMPLES - index;
+    if (contiguous > used) contiguous = used;
+    *byte_offset = PLAYER_PCM_OFFSET + index * 2u;
+    return (int)contiguous;
+}
+
+int player_amp_pcm_consume(volatile struct player_amp_shared *s, uint32_t count)
+{
+    uint32_t read = s->pcm_read_pos, used = s->pcm_write_pos - read;
+    if (used > PLAYER_AMP_PCM_SAMPLES || count > used) return -1;
+    player_amp_barrier();
+    s->pcm_read_pos = read + count;
+    player_amp_barrier();
+    return 0;
+}

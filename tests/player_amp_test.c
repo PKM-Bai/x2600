@@ -4,6 +4,8 @@
 #include <string.h>
 
 static struct player_amp_shared shared;
+static int16_t pcm[PLAYER_AMP_PCM_SAMPLES];
+static int16_t samples[PLAYER_AMP_PCM_SAMPLES + 1u];
 
 static struct player_amp_message message(uint32_t sequence)
 {
@@ -87,13 +89,57 @@ static void rings_test(void)
     assert(player_amp_receive(&shared.host_to_remote, &received) == 0);
 }
 
+static void pcm_test(void)
+{
+    player_amp_initialize(&shared, 10, PLAYER_AUDIO_OWNER_RISCV, 1, 4096);
+    for (uint32_t i = 0; i < PLAYER_AMP_PCM_SAMPLES + 1u; ++i)
+        samples[i] = (int16_t)(i ^ (i >> 7));
+    uint32_t offset = UINT32_MAX;
+    assert(player_amp_pcm_peek(&shared, &offset) == 0 && offset == PLAYER_PCM_OFFSET);
+    assert(player_amp_pcm_write(&shared, pcm, samples, PLAYER_AMP_PCM_SAMPLES + 1u) == PLAYER_AMP_PCM_SAMPLES);
+    assert(player_amp_pcm_write(&shared, pcm, samples, 1) == 0);
+    assert(player_amp_pcm_peek(&shared, &offset) == PLAYER_AMP_PCM_SAMPLES);
+    assert(!memcmp(pcm, samples, sizeof(pcm)));
+    assert(player_amp_pcm_consume(&shared, PLAYER_AMP_PCM_SAMPLES + 1u) == -1);
+    assert(shared.pcm_read_pos == 0);
+    assert(player_amp_pcm_consume(&shared, PLAYER_AMP_PCM_SAMPLES - 3u) == 0);
+    assert(player_amp_pcm_write(&shared, pcm, samples, 7) == 7);
+    assert(player_amp_pcm_peek(&shared, &offset) == 3);
+    assert(offset == PLAYER_PCM_OFFSET + (PLAYER_AMP_PCM_SAMPLES - 3u) * 2u);
+    assert(player_amp_pcm_consume(&shared, 3) == 0);
+    assert(player_amp_pcm_peek(&shared, &offset) == 7 && offset == PLAYER_PCM_OFFSET);
+    assert(!memcmp(pcm, samples, 7 * sizeof(int16_t)));
+    assert(player_amp_pcm_consume(&shared, 7) == 0);
+    /* Both logical uint32 and physical ring wrap, preserving sample order. */
+    shared.pcm_write_pos = shared.pcm_read_pos = UINT32_MAX - 3u;
+    assert(player_amp_pcm_write(&shared, pcm, samples, 17) == 17);
+    uint32_t consumed = 0;
+    while (consumed < 17) {
+        int count = player_amp_pcm_peek(&shared, &offset);
+        assert(count > 0 && offset >= PLAYER_PCM_OFFSET && offset < PLAYER_PCM_OFFSET + PLAYER_PCM_BYTES);
+        assert(!memcmp(pcm + (offset - PLAYER_PCM_OFFSET) / 2u,
+                       samples + consumed, (size_t)count * sizeof(int16_t)));
+        assert(player_amp_pcm_consume(&shared, (uint32_t)count) == 0);
+        consumed += (uint32_t)count;
+    }
+    assert(player_amp_pcm_peek(&shared, &offset) == 0);
+    assert(shared.pcm_write_pos == 13 && shared.pcm_read_pos == 13);
+    assert(player_amp_pcm_write(&shared, pcm, NULL, 1) == -1);
+    assert(player_amp_pcm_peek(&shared, NULL) == -1);
+    shared.pcm_write_pos = shared.pcm_read_pos + PLAYER_AMP_PCM_SAMPLES + 1u;
+    assert(player_amp_pcm_write(&shared, pcm, samples, 1) == -1);
+    assert(player_amp_pcm_peek(&shared, &offset) == -1);
+    assert(player_amp_pcm_consume(&shared, 0) == -1);
+}
+
 int main(void)
 {
     assert(player_amp_crc32("123456789", 9) == 0xcbf43926u);
     assert(player_amp_crc32("", 0) == 0);
     header_test();
     rings_test();
-    printf("PASS AMP CRC/header/full-empty/order/10000 messages/counter wrap/corruption/reset; control=%lu PCM=%u\n",
+    pcm_test();
+    printf("PASS AMP CRC/header/full-empty/order/10000 messages/counter wrap/corruption/reset/PCM-copy-release; control=%lu PCM=%u\n",
            (unsigned long)sizeof(shared), PLAYER_PCM_BYTES);
     return 0;
 }

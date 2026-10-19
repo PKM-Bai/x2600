@@ -13,6 +13,7 @@ static uint64_t last_remote_change_us;
 static uint32_t last_remote_heartbeat;
 static int active;
 static int shared_initialized;
+static int recovery_required;
 static uint32_t host_state = PLAYER_AMP_RESET;
 static uint32_t pending_opcode, pending_sequence, pending_value, pending_length, pending_crc;
 static uint32_t completed_sequence, completed_event;
@@ -49,10 +50,33 @@ static void fail_session(const char *reason)
     printf("AMP_FAIL reason=%s pending_opcode=%lu pending_seq=%lu\n", reason,
            (unsigned long)pending_opcode, (unsigned long)pending_sequence);
     last_error = reason;
+    if (shared_initialized && shared->audio_session_active) {
+        player_subcore_force_silence();
+        last_error = reason;
+        return;
+    }
     hold_remote_reset();
     active = 0;
     pending_opcode = pending_sequence = 0;
     set_host_state(PLAYER_AMP_FAULT);
+}
+
+void player_subcore_force_silence(void)
+{
+    /* PE17 is the board amplifier enable. This single GPIO configuration
+     * write does not touch PDMA, codec or shared CPM clock registers.
+     */
+    LL_GPIO_setPinMode(PE_Instance, 17, GPIO_MODE_OUTPUT0);
+    player_amp_barrier();
+    hold_remote_reset();
+    LL_GPIO_setPinMode(PE_Instance, 17, GPIO_MODE_OUTPUT0);
+    player_amp_barrier();
+    recovery_required = 1;
+    active = 0;
+    pending_opcode = pending_sequence = 0;
+    last_error = "audio-emergency-mute-board-reset-required";
+    set_host_state(PLAYER_AMP_FAULT);
+    printf("AMP_FORCE_SILENCE amplifier=PE17-low remote=reset buffers=pinned recovery=board-reset\n");
 }
 
 static int send_command(uint32_t opcode, uint32_t value, uint32_t length, uint32_t crc)
@@ -208,7 +232,11 @@ static int measure_remote_clock(void)
 
 int player_subcore_start(void)
 {
-    if (active) {
+    if (recovery_required) {
+        printf("AMP_RECOVERY_REQUIRED board-reset=1 buffers=pinned\n");
+        return -1;
+    }
+    if (active || (shared_initialized && shared->audio_session_active)) {
         printf("AMP_BUSY stop-and-ack-before-next-session\n");
         return -1;
     }
@@ -276,6 +304,10 @@ int player_subcore_start(void)
 
 int player_subcore_stop(void)
 {
+    if (shared_initialized && shared->audio_session_active) {
+        printf("AMP_BUSY stop-audio-and-confirm-silence-before-core-halt\n");
+        return -1;
+    }
     if (!active) {
         hold_remote_reset();
         printf("AMP_STOP already_reset=1 fault=%d audio_service=disabled\n", host_state == PLAYER_AMP_FAULT);
@@ -301,7 +333,7 @@ int player_subcore_ping(uint32_t value)
 
 int player_subcore_shared_test(void)
 {
-    if (!active || host_state != PLAYER_AMP_RUNNING || pending_opcode) return -1;
+    if (!active || host_state != PLAYER_AMP_RUNNING || pending_opcode || shared->audio_session_active) return -1;
     /* This deliberately exercises the reserved PCM DDR, without advancing
      * audio indices or enabling a clock/DMA service. Both mappings are uncached.
      */
@@ -324,7 +356,7 @@ const volatile struct player_amp_shared *player_amp_state(void) { return shared_
 
 void player_amp_print_status(void)
 {
-    printf("AMP_STATUS active=%d session=%lu host=%lu remote=%lu heartbeat=%lu error=%lu rejected=%lu owner=%s audio_clock_valid=%lu pending_opcode=%lu pending_seq=%lu last_error=%s audio_service=disabled\n",
+    printf("AMP_STATUS active=%d session=%lu host=%lu remote=%lu heartbeat=%lu error=%lu rejected=%lu owner=%s audio_clock_valid=%lu pending_opcode=%lu pending_seq=%lu last_error=%s audio_remote_active=%lu\n",
            active, (unsigned long)(shared_initialized ? shared->session : 0), (unsigned long)host_state,
            (unsigned long)(shared_initialized ? shared->remote_state : PLAYER_AMP_RESET),
            (unsigned long)(shared_initialized ? shared->remote_heartbeat : 0),
@@ -332,5 +364,6 @@ void player_amp_print_status(void)
            (unsigned long)(shared_initialized ? shared->remote_rejected_messages : 0),
            PLAYER_AUDIO_OWNER == PLAYER_AUDIO_OWNER_RISCV ? "riscv" : "mips",
            (unsigned long)(shared_initialized ? shared->audio_clock_valid : 0),
-           (unsigned long)pending_opcode, (unsigned long)pending_sequence, last_error);
+           (unsigned long)pending_opcode, (unsigned long)pending_sequence, last_error,
+           (unsigned long)(shared_initialized ? shared->audio_session_active : 0));
 }

@@ -8,12 +8,12 @@
 
 本机使用 Windows XBurst2 R5.1.6、官方 Victory0 r1.1.1 Linux 包（Ubuntu-22.04 WSL），以及 FFmpeg/ffprobe 9.0.2 essentials。Victory0 的编译器支持 `rv32imc / ilp32`，但随包 libgcc 采用 RV32E ABI，因此本工程以自身的 ILP32 `__clzsi2` / `__udivdi3` 避免混入不兼容对象，ELF 核验器也拒绝 RVE 标记。当前板测串口为用户指定的 COM52。
 
-音视频测试默认音量为 **10%**，见 `common/player_config.h`；自动验收不调高音量。现有诊断固件音频输出关闭，测试片 PCM 为全零。
+音视频测试默认音量为 **7%**，见 `common/player_config.h`；2026-10-19用户试听后认为10%偏大、5%偏小，确认7%合适并设为默认。自动验收不调高音量，启动保持音频关闭。
 
 ## 工程与使用入口
 
 - `scripts/build-player.ps1`：两个架构分别构建，小核 BIN 紧凑嵌入主核；默认音频归属为 RISC-V。
-- `scripts/build-player.ps1 -MipsOnly`：只构建主核诊断程序，未嵌入小核，不启用 AMP 或音频；它不代替完整双核构建。
+- `scripts/build-player.ps1 -MipsOnly`：构建主核版本，音频服务由MIPS独占，小核保持停止；可用于单核对照，不代替完整双核构建。
 - `scripts/verify-player.py`：核对 ELF 架构、入口、段边界、合包内容及 6MiB 上传上限。
 - `scripts/prepare-player-tools.ps1 -RiscvArchive <包路径> -FfmpegArchive <包路径>`：解包并验证已下载的官方工具，不修改系统 PATH。
 - `scripts/test-player-host.ps1`：运行三键、视频布局/帧池、媒体解析、共享协议、确认超时、ILP32 除法和只读存储主机回归。

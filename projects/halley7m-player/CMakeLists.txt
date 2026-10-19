@@ -71,7 +71,8 @@ elseif(PLAYER_CORE STREQUAL "mips")
     add_executable(${FIRMWARE}
         mips/start.S mips/port/context.S mips/port/port.c
         mips/runtime.c mips/runtime_heap.c mips/runtime_syscalls.c
-        mips/main.c mips/player_probe.c ${AMP_SOURCES} ${TEST_MEDIA_SOURCES} common/player_amp.c
+        mips/main.c mips/player_probe.c mips/player_audio_probe.c mips/player_audio_client.c
+        ${AMP_SOURCES} ${TEST_MEDIA_SOURCES} common/player_amp.c
         common/player_video.c common/player_media.c
         ${SDK_PATH}/cpu/core/fpu.S ${SDK_PATH}/cpu/core/spinlock.c
         ${SDK_PATH}/cpu/soc-x2600/src/interrupt.c
@@ -96,6 +97,11 @@ elseif(PLAYER_CORE STREQUAL "mips")
         player_codec player_h264_vendor player_display player_storage c m gcc -Wl,--end-group)
 else()
     message(FATAL_ERROR "PLAYER_CORE must be mips or riscv")
+endif()
+if((PLAYER_CORE STREQUAL "riscv" AND PLAYER_AUDIO_OWNER STREQUAL "riscv") OR
+   (PLAYER_CORE STREQUAL "mips" AND PLAYER_AUDIO_OWNER STREQUAL "mips"))
+    add_subdirectory(audio)
+    target_link_libraries(${FIRMWARE} PRIVATE player_audio)
 endif()
 set_target_properties(${FIRMWARE} PROPERTIES SUFFIX ".elf")
 target_compile_definitions(${FIRMWARE} PRIVATE PLAYER_AUDIO_OWNER=${AUDIO_OWNER_ID}
