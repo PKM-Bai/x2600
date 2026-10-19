@@ -52,4 +52,6 @@ cmake --build /mnt/e/GitProject/X2600/build/player-audio-rv -j4
 
 基础音频已由完整 AMP 固件实板验证：用户实际听到短音并确认默认7%合适；7%两秒500Hz短音完成96,000有效samples。暂停于24,480 samples冻结100ms，前后计数一致，恢复后完成96,000 samples。1、15、16、17、479、480、481及5,003 samples短尾均完成，补零未计入有效样本；各次STOP=0，DMA错误/超时、队列欠载、FIFO欠载均为0。证据见本地`build/player-tone-volume7-board.log`、`build/player-audio-volume7-lifecycle-board.log`及`../VALIDATION.md`。
 
-这些实板结果覆盖基础发声、暂停/恢复和短尾生命周期。当前AMP 30分钟长跑仍进行中，尚未判定通过；长期音频稳定性、同片源单核/AMP对照、错误注入后的硬件静音/资源保留和实际声光同步仍需各自验收。声光同步需使用同步片及手机录像校准FIFO / ICODEC和显示延迟，不能由短音完成计数推定。
+AMP真实TF 30分钟板内长跑现已完成：ENDED时86,400,000/86,400,000有效音频样本，underrun、DMA错误/超时、队列欠载和FIFO欠载均为0，STOP后音频inactive、资源pinned0。原始证据为本地`build/player-amp30-r2.log`。测量在PLAY约3秒后才开始，CSV为1797条、1,797,734ms，不记作完整1800秒采样；完整媒体播放计数另由ENDED状态确认。
+
+基础发声、暂停/恢复、短尾和本次AMP 30分钟板内稳定性已有实板证据。同片源单核/AMP对照、错误注入后的硬件静音/资源保留和实际声光同步仍需各自验收；手机录像按用户选择后续补测，需校准FIFO / ICODEC和显示延迟，不能由完成样本计数推定声光误差。
