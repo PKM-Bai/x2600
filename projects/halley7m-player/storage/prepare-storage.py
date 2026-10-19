@@ -24,6 +24,16 @@ def main():
         source = platform / 'fatfs' / name
         data = source.read_bytes()
         generated = data
+        if name == 'ff.c':
+            text = data.decode('utf-8').replace('\r\n', '\n')
+            include = '#include "diskio.h"\t\t/* Declarations of device I/O functions */'
+            step = '\t\t\t\t\t\tcl = get_fat(&fp->obj, cl);'
+            if text.count(include) != 1 or text.count(step) != 1:
+                raise RuntimeError('Expected one FatFs include/CREATE_LINKMAP FAT step')
+            text = text.replace(include, include + '\n\n/* Player-only bounded/cancellable CLMT construction; no FatFs reentry. */\n'
+                'extern int player_storage_clmt_step(void);', 1)
+            text = text.replace(step, '\t\t\t\t\t\tif (player_storage_clmt_step()) LEAVE_FF(fs, FR_TIMEOUT);\n' + step, 1)
+            generated = text.encode('utf-8')
         if name == 'diskio.h':
             text = data.decode('utf-8')
             text, count = re.subn(r'#define _USE_WRITE\s+1\b', '#define _USE_WRITE\t0', text)

@@ -4,13 +4,16 @@
 #define _FS_READONLY 1
 #define _FS_EXFAT 0
 #define _FS_REENTRANT 0
+#define _USE_FASTSEEK 1
+#define CREATE_LINKMAP UINT32_MAX
 #define FA_READ 1
 #define AM_DIR 0x10
 typedef uint16_t TCHAR;
 typedef uint32_t FSIZE_t;
+typedef uint32_t DWORD;
 typedef unsigned int UINT;
 typedef struct { int mounted; } FATFS;
-typedef struct { struct { FSIZE_t objsize; } obj; FSIZE_t fptr; } FIL;
+typedef struct { struct { FSIZE_t objsize; } obj; FSIZE_t fptr; DWORD *cltbl; } FIL;
 typedef struct { unsigned index; } DIR;
 typedef struct { FSIZE_t fsize; uint8_t fattrib; TCHAR fname[256]; } FILINFO;
 typedef enum {

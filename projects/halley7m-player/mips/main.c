@@ -180,6 +180,15 @@ static void console_task(void *unused)
                 if (!strcmp(line, "status")) player_amp_print_status();
                 else if (!strcmp(line, "session")) print_session();
                 else if (!strcmp(line, "session trace")) dump_session_trace();
+                else if (!strcmp(line, "session storage")) {
+                    player_storage_seek_stats stats = {0};
+                    int result = player_session_storage_stats(&stats);
+                    printf("STORAGE_SEEK result=%d enabled=%lu capacity=%lu required=%lu used=%lu build_us=%llu seeks=%lu max_seek_us=%llu\n",
+                           result, (unsigned long)stats.enabled,
+                           (unsigned long)stats.capacity_entries, (unsigned long)stats.required_entries,
+                           (unsigned long)stats.used_entries, (unsigned long long)stats.build_us,
+                           (unsigned long)stats.seek_calls, (unsigned long long)stats.max_seek_us);
+                }
                 else if (!strncmp(line, "play ", 5)) (void)session_command(PLAYER_SESSION_PLAY_PATH, line + 5, 0);
                 else if (!strcmp(line, "pause")) (void)session_command(PLAYER_SESSION_PAUSE, NULL, 0);
                 else if (!strcmp(line, "resume")) (void)session_command(PLAYER_SESSION_RESUME, NULL, 0);

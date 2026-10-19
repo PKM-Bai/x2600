@@ -4,18 +4,23 @@
 #include "ff.h"
 #include "FreeRTOS.h"
 #include "task.h"
+#include "platform_runtime.h"
 #include <errno.h>
 #include <limits.h>
 #include <stddef.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define PLAYER_STORAGE_PATH_UNITS 512u
 #define PLAYER_STORAGE_NAME_BYTES (255u * 4u + 1u)
 #define PLAYER_STORAGE_FILE_LIMIT UINT64_C(0x100000000)
+#define PLAYER_STORAGE_MAP_MIN UINT64_C(0x40000000)
+#define PLAYER_STORAGE_MAP_ENTRIES 4096u
 
 _Static_assert(sizeof(FSIZE_t) == 4, "Player read-only FAT adapter expects 32-bit FSIZE_t");
 _Static_assert(_FS_READONLY == 1 && _FS_EXFAT == 0 && _FS_REENTRANT == 0,
                "Player storage requires serialized read-only FAT without exFAT");
+_Static_assert(_USE_FASTSEEK == 1 && sizeof(DWORD) == 4, "Player CLMT ABI");
 
 struct player_storage_file {
     FIL fat_file;
@@ -23,6 +28,8 @@ struct player_storage_file {
     uint64_t bytes;
     const uint8_t *embedded;
     uint32_t embedded_position;
+    DWORD *linkmap;
+    player_storage_seek_stats seek_stats;
     int opened;
 };
 
@@ -38,6 +45,29 @@ struct player_storage_directory {
 };
 static struct player_storage_directory media_directory;
 static const TCHAR drive[] = { '0', ':', 0 };
+static struct {
+    player_storage_pump_fn pump;
+    void *opaque;
+    uint32_t steps;
+    int active, error;
+} map_build;
+
+static int map_pump(void)
+{
+    int result = map_build.pump ? map_build.pump(map_build.opaque) : 0;
+    if (result) map_build.error = result < 0 ? result : -ECANCELED;
+    return map_build.error;
+}
+
+/* Called only by the generated CREATE_LINKMAP inner FAT loop. Its counter
+ * spans fragments: fully fragmented chains receive the same bounded pump. */
+int player_storage_clmt_step(void)
+{
+    if (!map_build.active || (++map_build.steps & 255u)) return 0;
+    if (map_pump()) return 1;
+    vTaskDelay(1);
+    return 0;
+}
 
 static int fat_error(FRESULT result)
 {
@@ -128,7 +158,22 @@ static int stream_seek(void *opaque, uint64_t absolute)
         stream->embedded_position = (uint32_t)absolute;
         return 0;
     }
-    FRESULT fr = f_lseek(&stream->fat_file, (FSIZE_t)absolute);
+    uint64_t started = platform_time_us();
+    FRESULT fr;
+    if (stream->linkmap && absolute == (uint64_t)CREATE_LINKMAP) {
+        /* FatFs reserves UINT32_MAX for map construction. Keep the adapter's
+         * <4GiB contract even for the last possible EOF offset. */
+        uint8_t last;
+        UINT received = 0;
+        fr = f_lseek(&stream->fat_file, (FSIZE_t)(absolute - 1u));
+        if (fr == FR_OK) fr = f_read(&stream->fat_file, &last, 1, &received);
+        if (fr == FR_OK && received != 1) fr = FR_DISK_ERR;
+    } else {
+        fr = f_lseek(&stream->fat_file, (FSIZE_t)absolute);
+    }
+    ++stream->seek_stats.seek_calls;
+    uint64_t elapsed = platform_time_us() - started;
+    if (elapsed > stream->seek_stats.max_seek_us) stream->seek_stats.max_seek_us = elapsed;
     if (fr != FR_OK) return fat_error(fr);
     return (uint64_t)f_tell(&stream->fat_file) == absolute ? 0 : -EIO;
 }
@@ -182,6 +227,8 @@ int player_storage_open_utf8(struct player_storage_file **stream, const char *pa
         media_file.bytes = embedded_length;
         media_file.embedded = embedded_bytes;
         media_file.embedded_position = 0;
+        media_file.linkmap = NULL;
+        memset(&media_file.seek_stats, 0, sizeof(media_file.seek_stats));
         media_file.io = (struct player_media_io){ &media_file, stream_read, stream_seek, stream_size };
         media_file.opened = 1;
         *stream = &media_file;
@@ -200,8 +247,57 @@ int player_storage_open_utf8(struct player_storage_file **stream, const char *pa
     }
     media_file.io = (struct player_media_io){ &media_file, stream_read, stream_seek, stream_size };
     media_file.embedded = NULL;
+    media_file.linkmap = NULL;
+    memset(&media_file.seek_stats, 0, sizeof(media_file.seek_stats));
     media_file.opened = 1;
     *stream = &media_file;
+    return 0;
+}
+
+int player_storage_prepare_seek(struct player_storage_file *stream,
+                                player_storage_pump_fn pump, void *opaque)
+{
+    int result = stream_check(stream);
+    if (result) return result;
+    if (stream->embedded || stream->bytes < PLAYER_STORAGE_MAP_MIN || stream->linkmap) return 0;
+    if (!pump) return -EINVAL;
+    stream->seek_stats.enabled = stream->seek_stats.required_entries = stream->seek_stats.used_entries = 0;
+    stream->seek_stats.build_us = 0;
+    stream->seek_stats.capacity_entries = PLAYER_STORAGE_MAP_ENTRIES;
+    stream->linkmap = malloc(PLAYER_STORAGE_MAP_ENTRIES * sizeof(DWORD));
+    if (!stream->linkmap) return -ENOMEM;
+    stream->linkmap[0] = PLAYER_STORAGE_MAP_ENTRIES;
+    stream->fat_file.cltbl = stream->linkmap;
+    memset(&map_build, 0, sizeof(map_build));
+    map_build.pump = pump;
+    map_build.opaque = opaque;
+    map_build.active = 1;
+    uint64_t started = platform_time_us();
+    FRESULT fr = FR_OK;
+    if (!map_pump()) fr = f_lseek(&stream->fat_file, CREATE_LINKMAP);
+    if (!map_build.error) (void)map_pump();
+    stream->seek_stats.build_us = platform_time_us() - started;
+    map_build.active = 0;
+    if ((fr == FR_OK && !map_build.error) || fr == FR_NOT_ENOUGH_CORE)
+        stream->seek_stats.required_entries = stream->linkmap[0];
+    result = map_build.error ? map_build.error : fr == FR_NOT_ENOUGH_CORE ? -E2BIG : fat_error(fr);
+    if (result) {
+        stream->fat_file.cltbl = NULL;
+        free(stream->linkmap);
+        stream->linkmap = NULL;
+        return result;
+    }
+    stream->seek_stats.used_entries = stream->linkmap[0];
+    stream->seek_stats.enabled = 1;
+    return 0;
+}
+
+int player_storage_get_seek_stats(struct player_storage_file *stream, player_storage_seek_stats *out)
+{
+    int result = task_check();
+    if (result) return result;
+    if (!out || (stream && stream != &media_file)) return -EINVAL;
+    *out = media_file.seek_stats;
     return 0;
 }
 
@@ -210,6 +306,9 @@ int player_storage_close(struct player_storage_file *stream)
     int result = stream_check(stream);
     if (result) return result;
     FRESULT fr = stream->embedded ? FR_OK : f_close(&stream->fat_file);
+    stream->fat_file.cltbl = NULL;
+    free(stream->linkmap);
+    stream->linkmap = NULL;
     /* Do not retain a failed stale FIL as a usable parser stream. */
     stream->opened = 0;
     stream->bytes = 0;

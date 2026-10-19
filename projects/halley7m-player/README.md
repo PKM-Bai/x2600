@@ -6,7 +6,9 @@
 
 2026-10-19：两架构独立构建、紧凑RAM合包、双FreeRTOS握手和256KiB共享校验通过，小核计时器实测校准为576MHz。FELIX跨3个GOP的90帧Y/UV CRC全部与PC一致；用户确认视频方向、颜色、中文媒体库和长按菜单正常。已接通音频主时钟的AVI/WAV会话、2MiB预读与2MiB包池、LVGL双表面及三键。同步片90帧全呈现，真实TF的96017样本WAV尾段和高运动片前缀暂停恢复已通过。
 
-AMP已完成真实TF高运动片的30分钟板内稳定性验证：ENDED时86,400,000/86,400,000有效音频样本、54,000帧全部解码及呈现，drop/late和全部音频错误均为0，默认音量7%；固定GUI序列15/15轮、无abort，STOP后资源未锁住且音频inactive。采样在PLAY约3秒后才启动，CSV为1797条、1,797,734ms，未将其记作完整1800秒采样。同片源600秒单核/AMP对照也已完成，本轮AMP的MIPS忙率高于单核，具体窗口及结束阶段差异见下；真实跨AVIX大文件仍待验，手机声光同步按用户选择延期补测。精选证据见`VALIDATION.md`。
+AMP已完成真实TF高运动片的30分钟板内稳定性验证：ENDED时86,400,000/86,400,000有效音频样本、54,000帧全部解码及呈现，drop/late和全部音频错误均为0，默认音量7%；固定GUI序列15/15轮、无abort，STOP后资源未锁住且音频inactive。采样在PLAY约3秒后才启动，CSV为1797条、1,797,734ms，未将其记作完整1800秒采样。同片源600秒单核/AMP对照也已完成，本轮AMP的MIPS忙率高于单核，具体窗口及结束阶段差异见下；大AVIX修复复测结果见下，手机声光同步按用户选择延期补测。精选证据见`VALIDATION.md`。
+
+2GiB以上AVIX首轮解码90帧、呈现82帧，drop/late各8。针对FatFs大JUNK跳转增加LOADING阶段CLMT后，新包实板复测为90帧全呈现、drop/late0、144000有效音频样本完整且所有音频错误0；STOP后heap恢复，跨段播放呈现通过。上面的30分钟与单核对照属于CLMT修复前固件；原产物已保存于`build/player-evidence-before-fastseek/`，不将旧记录迁到新包散列。
 
 本机使用 Windows XBurst2 R5.1.6、官方 Victory0 r1.1.1 Linux 包（Ubuntu-22.04 WSL），以及 FFmpeg/ffprobe 9.0.2 essentials。Victory0 的编译器支持 `rv32imc / ilp32`，但随包 libgcc 采用 RV32E ABI，因此本工程以自身的 ILP32 `__clzsi2` / `__udivdi3` 避免混入不兼容对象，ELF 核验器也拒绝 RVE 标记。当前板测串口为用户指定的 COM52。
 
@@ -42,6 +44,8 @@ python scripts/ramload-regba.py --port COM52 --execute --wait-boot --file build/
 
 正常构建使用`play <UTF-8路径>`、`pause`、`resume`、`stop`、`session`，状态和资源由唯一media/storage worker管理，GUI只发送非阻塞命令。`@embedded`为显式RAM诊断路径，不出现在媒体库；例如`play @embedded`运行受控AVI的完整有声链路。省略`-ProbeMedia`时不嵌入片源并清除旧配置。`session trace`在STOP后导出512条固定RAM时序，`measure begin <秒数> <标签>`开始最多1800秒采样，`measure summary`查看摘要，STOP后`measure dump`导出CSV，长导出逐行保持AMP心跳。
 
+至少1GiB的TF文件在LOADING先建立16KiB簇链映射，容量不足时报告错误；小文件和RAM片源不分配映射表。`session storage`显示建图与实际定位统计，STOP后保留最近文件的记录。集中UART查询可能造成窗口外偶发跳帧，长摘要和CSV均安排在STOP确认后输出；播放性能以冻结的采样窗口和GUI操作记录核验。
+
 `status`、`heap`、`gui`、`buttons`、`metrics`、`audio`提供显式诊断；`tone`按默认7%播放两秒短音。`ls`、`media`、`tf bench <路径>`等同步探针要求先STOP，不在播放过程中遍历或打印大目录。旧`video <帧数,0=EOF> <路径>`、`video hold/verify/stop`和DSI彩条仅在`-DiagnosticsOnly`启用；`video verify`关闭呈现调度输出全部帧CRC，该模式不能作为音画同步证据。
 
 构建目录位于仓库 `build/`，工具链、下载包和媒体产物均为本地产物。RAM 上传复用 `scripts/ramload-regba.py --file <播放器合包>` 的 YMODEM、长度及 CRC 校验。进入应用前不能单独上传高端小核/共享区，因为 U-Boot 仍占用这些地址。
@@ -75,7 +79,7 @@ python projects/halley7m-player/mips/prepare-acceptance-fixture.py
 python projects/halley7m-player/mips/prepare-avix-fixture.py
 ```
 
-当前TF目录为 `0:/multimedia/video/` 放AVI、`0:/multimedia/audio/` 放WAV；正式长片路径为 `0:/multimedia/video/acceptance-30min.avi`。生成后需另行拷卡，再通过媒体库或 `play <路径>` 打开。大AVIX产物在PC上使用稀疏JUNK区，拷到FAT32后会实际占用2GiB以上；**仍待拷卡与跨段实板播放验收**，不能以PC解析/解码代替。
+当前TF目录为 `0:/multimedia/video/` 放AVI、`0:/multimedia/audio/` 放WAV；正式长片路径为 `0:/multimedia/video/acceptance-30min.avi`。生成后需另行拷卡，再通过媒体库或 `play <路径>` 打开。大AVIX产物在PC上使用稀疏JUNK区，拷到FAT32后会实际占用2GiB以上；现已实板完成跨2GiB扫描，首轮掉帧问题经CLMT修复后复测90/90、drop/late0，原始失败及复测均保留在`VALIDATION.md`。
 
 SW3/A 与 SW4/B 在列表前后选择、播放时调节音量、诊断页滚动；按住350ms后每100ms重复。SW6/Start 短按确认或暂停/继续、诊断返回，长按800ms打开/关闭菜单，长按释放不再短按。连续短按逐次生效，无双击/三击命令。首版不使用蓝牙或触摸。
 

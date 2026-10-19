@@ -21,6 +21,8 @@ static uint8_t wav[44u + 19201u * 2u];
 static uint8_t *avi;
 static size_t avi_size;
 static unsigned mount_failed;
+static int seek_prepare_error;
+static unsigned cancel_seek_prepare;
 static player_session_snapshot_t snapshot;
 
 void *player_test_memalign(size_t alignment, size_t bytes)
@@ -77,6 +79,32 @@ int player_storage_open_utf8(struct player_storage_file **output, const char *pa
 }
 int player_storage_close(struct player_storage_file *stream)
 { assert(stream == &file && file.open); file.open = 0; return 0; }
+int player_storage_prepare_seek(struct player_storage_file *stream,
+                                player_storage_pump_fn pump, void *opaque)
+{
+    player_session_snapshot_t current;
+    unsigned starts = audio_starts;
+    assert(stream == &file && file.open);
+    assert(!player_session_snapshot(&current) && current.state == PLAYER_SESSION_LOADING);
+    if (cancel_seek_prepare) {
+        player_session_command_t stop = {0};
+        stop.kind = PLAYER_SESSION_STOP;
+        stop.request_id = ++request_id;
+        assert(!player_session_post(&stop));
+        cancel_seek_prepare = 0;
+    }
+    int result = pump ? pump(opaque) : 0;
+    assert(audio_starts == starts);
+    return result ? result : seek_prepare_error;
+}
+int player_storage_get_seek_stats(struct player_storage_file *stream, player_storage_seek_stats *out)
+{
+    assert((!stream || stream == &file) && out);
+    memset(out, 0, sizeof(*out));
+    out->capacity_entries = 4096;
+    out->required_entries = seek_prepare_error == -E2BIG ? 4098u : 4u;
+    return 0;
+}
 const struct player_media_io *player_storage_io(struct player_storage_file *stream)
 {
     static struct player_media_io io;
@@ -341,6 +369,17 @@ int main(int argc, char **argv)
     assert(snapshot.state == PLAYER_SESSION_LOADING && !audio_starts);
     step(1);
     assert(snapshot.state == PLAYER_SESSION_IDLE && !allocations && !snapshot.last_request_result);
+    seek_prepare_error = -E2BIG;
+    post(PLAYER_SESSION_PLAY_PATH, 0, "0:/sound.wav");
+    assert(snapshot.state == PLAYER_SESSION_ERROR && snapshot.error_code == -E2BIG &&
+           !file.open && !allocations && !audio_starts);
+    seek_prepare_error = 0;
+    post(PLAYER_SESSION_STOP, 0, NULL);
+    cancel_seek_prepare = 1;
+    post(PLAYER_SESSION_PLAY_PATH, 0, "0:/sound.wav");
+    assert(snapshot.state == PLAYER_SESSION_LOADING && !audio_starts);
+    step(1);
+    assert(snapshot.state == PLAYER_SESSION_IDLE && !file.open && !allocations && !audio_starts);
     post(PLAYER_SESSION_PLAY_PATH, 0, "0:/sound.wav");
     assert(snapshot.state == PLAYER_SESSION_LOADING && audio_starts == 0);
     wait_state(PLAYER_SESSION_PLAYING);

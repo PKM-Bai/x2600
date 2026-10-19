@@ -24,6 +24,24 @@ typedef struct player_storage_entry {
  */
 int player_storage_mount(void);
 int player_storage_open_utf8(struct player_storage_file **stream, const char *path);
+typedef int (*player_storage_pump_fn)(void *opaque);
+typedef struct player_storage_seek_stats {
+    uint32_t enabled, capacity_entries, required_entries, used_entries;
+    uint64_t build_us;
+    uint32_t seek_calls;
+    uint64_t max_seek_us;
+} player_storage_seek_stats;
+/* LOADING only, before audio/codec starts. >=1GiB TF files get a bounded,
+ * malloc-owned 4096-DWORD CLMT. Smaller files and @embedded keep their path.
+ * pump must not reenter storage; nonzero cancels. Build services pump and
+ * yields one tick every 256 FAT steps. Insufficient map capacity is -E2BIG;
+ * no silent slow-seek fallback. Close releases the map. */
+int player_storage_prepare_seek(struct player_storage_file *stream,
+                                player_storage_pump_fn pump, void *opaque);
+/* Same owner; NULL stream returns the most recent file's retained stats.
+ * Stats remain available after close until the next successful open. */
+int player_storage_get_seek_stats(struct player_storage_file *stream,
+                                  player_storage_seek_stats *out);
 /* Explicit RAM diagnostic only. Register immutable firmware-linked bytes on
  * the storage worker before opening "@embedded". The bytes must outlive the
  * stream. That path shares the unique file slot and task owner but needs no

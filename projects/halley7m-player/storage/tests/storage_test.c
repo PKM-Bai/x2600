@@ -14,6 +14,9 @@ static FRESULT next_read_result = FR_OK;
 static FRESULT mount_result = FR_NOT_READY;
 static unsigned gpio_probes;
 static uint16_t last_path[512];
+static uint64_t now_us;
+uint64_t platform_time_us(void) { return now_us++; }
+void vTaskDelay(TickType_t ticks) { now_us += (uint64_t)ticks * 1000u; }
 
 int xPortIsInsideInterrupt(void) { return in_isr; }
 int xTaskGetSchedulerState(void) { return scheduler; }
@@ -28,6 +31,7 @@ FRESULT f_open(FIL *fp, const TCHAR *path, uint8_t mode)
     do { last_path[length] = path[length]; } while (path[length++]);
     fp->obj.objsize = file_bytes;
     fp->fptr = 0;
+    fp->cltbl = NULL;
     return FR_OK;
 }
 FRESULT f_close(FIL *fp) { (void)fp; ++closed_files; return FR_OK; }
@@ -80,6 +84,9 @@ int main(void)
     assert(player_storage_open_utf8(&file, "@embedded") == -ENOENT && !file);
     assert(player_storage_register_embedded(embedded, sizeof(embedded)) == 0);
     assert(player_storage_open_utf8(&file, "@embedded") == 0);
+    assert(player_storage_prepare_seek(file, NULL, NULL) == 0);
+    player_storage_seek_stats seek_stats;
+    assert(player_storage_get_seek_stats(file, &seek_stats) == 0 && !seek_stats.enabled && !seek_stats.capacity_entries);
     assert(player_storage_gpio_probe() == -EBUSY && gpio_probes == 1u);
     assert(player_storage_register_embedded(embedded, sizeof(embedded)) == -EBUSY);
     assert(player_storage_open_utf8(&other, "@embedded") == -EBUSY && !other);
@@ -92,6 +99,8 @@ int main(void)
     assert(memory_io->read(memory_io->opaque, memory_bytes, 1) == 0);
     assert(memory_io->seek(memory_io->opaque, 6) == -EOVERFLOW);
     task = 2;
+    assert(player_storage_prepare_seek(file, NULL, NULL) == -EPERM);
+    assert(player_storage_get_seek_stats(file, &seek_stats) == -EPERM);
     assert(player_storage_gpio_probe() == -EPERM && gpio_probes == 1u);
     assert(memory_io->read(memory_io->opaque, memory_bytes, 1) == -EPERM);
     assert(player_storage_register_embedded(embedded, sizeof(embedded)) == -EPERM);
@@ -156,6 +165,9 @@ int main(void)
     assert(!file && open_calls == before);
     file_bytes = 16;
     assert(player_storage_open_utf8(&file, "0:/small.wav") == 0);
+    before = seek_calls;
+    assert(player_storage_prepare_seek(file, NULL, NULL) == 0 && seek_calls == before);
+    assert(player_storage_get_seek_stats(file, &seek_stats) == 0 && !seek_stats.capacity_entries);
     io = player_storage_io(file);
     assert(io->seek(io->opaque, 17) == -EOVERFLOW);
     assert(player_storage_close(file) == 0);

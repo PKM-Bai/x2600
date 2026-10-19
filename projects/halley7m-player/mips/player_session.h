@@ -8,6 +8,8 @@
  * The GUI uses only the public common header. */
 int player_session_init(void);
 void player_session_step(void);
+struct player_storage_seek_stats;
+int player_session_storage_stats(struct player_storage_seek_stats *out);
 
 #define PLAYER_SESSION_TRACE_CAPACITY 512u
 enum player_session_trace_event {

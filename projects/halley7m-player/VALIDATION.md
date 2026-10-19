@@ -12,7 +12,7 @@
 | 输入/帧池 | 使用生产C和虚拟时钟测试三键、连发、释放互斥、队列、session、768 stride及四槽持有 |
 | AMP主机 | 10,000消息、回绕/CRC、满空队列、会话重置；两owner控制状态机的ACK/PING/STOP丢确认/坏序号/超时退出 |
 | ILP32 helper | `__clzsi2` 最高位与随机向量；`__udivdi3` Debug/Release 各203,972向量；目标无外部helper/递归，栈16字节且无RVE |
-| 只读存储 | 真MIPS编译与主机FatFs接口边界通过；无写卡符号、无HAL_DMA引用。后续真实TF首8MiB吞吐与30分钟会话已验证，分别见下；跨AVIX仍待验 |
+| 只读存储 | 真MIPS编译与主机FatFs接口边界通过；无写卡符号、无HAL_DMA引用。后续真实TF首8MiB吞吐、30分钟会话和CLMT修复后的大AVIX分别验证，按固件版本记录于下 |
 | 主核RAM加载 | 71,104B / CRC0eb994d6经YMODEM上传，FreeRTOS串口和heap命令通过。该旧诊断包未含小核 |
 | 双核RAM加载 | 真小核嵌入合包；由MIPS接管后复制高端DDR，READY/ACK成功，未在U-Boot期间上传高端区 |
 | 频率校准 | 首测575,996,390Hz，原600MHz配置正确FAULT/reset；改576MHz后测575,996,270Hz，通过2%误差门限，tick配置1000Hz |
@@ -36,9 +36,7 @@
 ## 尚未通过的交付条件
 
 - 实际声学/显示延迟校准和手机声光同步。
-- 真实长AVI/AVIX跨段；已完成的593,023,512B片源不构成跨AVIX证据。
 - 三键全部动作、暂停菜单残影与长期生命周期人工回归；中文/菜单和短片叠加已有实板证据。
-- 修正采集器输出顺序后的窗口结束/STOP阶段复测；600秒冻结窗口对照已完成，MIPS结束阶段的drop/late事实见下。
 
 旧`video`串口诊断以主核时间调度；完整session使用音频样本时钟。当前已通过下述AMP 30分钟板内稳定性，实际声光偏差及其累积仍需手机录像独立验收。
 
@@ -73,7 +71,7 @@
 - `build/player-board-analysis/amp30-r2-window600.md` 对测量相对时间0..600秒窗口的CSV核验为完整：MIPS按599.235秒有效CPU窗口加权为39.941%，RV按599.472秒为1.753%；窗口有效`heap_free`最低观测分别为31,661,128B、127,648B。两核窗口边界不同步，CPU口径为scheduler idle，ISR归被打断任务；同片源单核对照见下。
 - 本轮固件为2,046,432B、CRC32 `58178d21`、SHA256 `b2c7450017fe04f38f9726244c8f22e4e5e5d3036f82771b8a5e2c27142f7e56`。原始本地日志`build/player-amp30-r2.log`的SHA256为`8aa2f3a05a7051d304d80d60f17ec0b6c48392d5dc01172a9a6740812f48e957`，含ENDED、音频、GUI、序列完成、STOP和CSV证据。
 
-本轮通过的是AMP的30分钟板内稳定性。真实跨AVIX、手机声光同步及物理按键完整人工回归仍待验，尚未完成全部交付验收；下述MIPS采集结束阶段的窗口外变化另行保留。
+本轮通过的是CLMT修复前固件的AMP 30分钟板内稳定性；修复后固件的大AVIX结果独立记于下。手机声光同步及物理按键完整人工回归仍待验，尚未完成全部交付验收；下述MIPS采集结束阶段的窗口外变化另行保留。
 
 ## 2026-10-19：同片源600秒单核/AMP对照
 
@@ -94,4 +92,19 @@ CPU使用各核实际有效`window_us`加权，核窗口边界独立；scheduler
 
 冻结窗口与结束阶段分别保留：MIPS结束前会话查询drop=0；冻结的600条测量摘要与CSV中drop/late均为0。其后长CLI摘要输出及STOP阶段新增drop1、late1，最大迟到53,333us，STOP后会话IDLE、kind0、pinned0、音频inactive。这个窗口外问题不能删掉，也不混入前600秒CPU/视频对照。采集器现已把长摘要移至IDLE后输出，12项主机测试通过；尚未用该修正采集器重跑实板。
 
-MIPS本轮固件为2,035,536B、CRC32 `2c877f19`、SHA256 `975f1d0ee256d7182d7a261400d3d2deef60c6007eea0e20c053aa4fef374a2d`。原始日志`build/player-mips10-formal.log`的SHA256为`bd3b241c4171a9be53a183c6ddbabd750604dde5569b04a63700fd637a370b76`；AMP原始日志及散列见上一节。以上CPU值和零错误边界已直接按两份原始CSV及真实`mips10`/`amp30`标签核对。真实AVIX已拷卡、等待播放验证，手机声光测量按用户选择延期。
+MIPS本轮固件为2,035,536B、CRC32 `2c877f19`、SHA256 `975f1d0ee256d7182d7a261400d3d2deef60c6007eea0e20c053aa4fef374a2d`。原始日志`build/player-mips10-formal.log`的SHA256为`bd3b241c4171a9be53a183c6ddbabd750604dde5569b04a63700fd637a370b76`；AMP原始日志及散列见上一节。以上CPU值和零错误边界已直接按两份原始CSV及真实`mips10`/`amp30`标签核对。手机声光测量按用户选择延期。
+
+## 2026-10-19：大AVIX首轮呈现失败与CLMT修复复测
+
+- 实际TF文件为2,147,591,940B，包含三段RIFF。首轮完整扫描90帧、144000样本；播放到ENDED时解码90帧、呈现82帧、drop8、late8、max_late120,000us。音频144000/144000样本且所有音频错误为0，STOP后heap恢复45,756,248B。证据为本地`build/player-avix-over2gib-board.log`及`build/player-avix-trace-board.log`。首轮只确认跨大偏移的数据可读与解码完整，呈现验收失败。
+- trace中两段owner事件包围的空档分别为146.487ms、151.650ms，掉帧为18..21和38..41；这些空档没有单独测量seek函数，不能称为精确seek耗时。IDR解码约5.6ms，定位到read-ahead提前遇到JUNK跳跃时的FatFs簇链遍历。
+- 修复在至少1GiB的真实TF文件LOADING阶段、音频启动前建立4096DWORD（16KiB）的CLMT；每256个FAT步骤维护AMP/取消并让出一个tick，容量不足明确返回`-E2BIG`，close释放。小文件和`@embedded`不分配该表，只派生build内FatFs，SDK原件不改。真实FatFs虚拟FAT32、storage边界及session失败/取消测试通过；两核Debug/Release、MIPS owner真实构建与相关每组17项产物核验通过。
+- 修复后Release包为2,048,864B、CRC32 `91cbfe5d`、SHA256 `8dbf8f327540ad7646338a921531b190246c047ef677eda4502af46b27e6f95e`；`build/player-avix-fastseek-final-ramload.log`确认RAM上传长度、板端CRC与SHA完整匹配，未更新NOR。`build/player-fastseek-full-host.log`完整主机回归通过，含真实FatFs新增测试；两架构Debug/Release与MIPS owner均已真实构建。
+- 新包实板复测日志`build/player-avix-over2gib-fixed-board.log`记录ENDED时90帧解码、90帧呈现、drop0、late0、max_late13,333us；音频total/written/completed均为144000，全部音频错误为0，volume7、pinned0。STOP后IDLE、音频inactive，播放前后heap均为45,752,152B，跨大偏移的本片播放呈现与回收通过。
+- 本次CLMT诊断为enabled1、capacity4096、required/used6，LOADING建表335,417us；后续仅观测到3次实际seek，`max_seek_us=2`只代表这3次调用，不推定其他文件、卡或所有seek均为2us以内。
+- 独立逐条核对修正版340条RAM trace：90次DECODE、SUBMIT、LATCH分别完整覆盖0..89，DROP/BUSY事件为0。旧两处LATCH16→17、36→37的165.169/132.133ms间隔均变为33.034ms；frame1..89的相邻latch间隔范围33.030..33.037ms，每次仅1个IRQ，旧百毫秒停顿消失。
+- 既有30分钟AMP与600秒单核对照都来自CLMT修复前固件，仍对应上文原SHA。旧产物已备份于`build/player-evidence-before-fastseek/amp-release`、`amp-debug`和`mips-release`；新包AVIX结果为本节独立记录，不将旧包30分钟结果记到新SHA。
+
+同一新包另完成普通593,023,512B AVI的45,000ms冻结窗口回归，45条CSV、一次完整菜单/诊断GUI循环，窗口drop/late及音频错误均为0。普通文件CLMT disabled、未分配映射表，4次实际seek最大455us。随后WAV完整输出96,017有效样本，含末17样本，音频错误0，STOP后IDLE、inactive、pinned0。证据为本地`build/player-post-fastseek-regression-board.log`。
+
+该短回归在冻结窗口后集中查询状态并STOP，仍记录到窗口外drop1/late1、max_late33,333us；这说明把长摘要后置并未消除集中UART查询的全部影响。正式窗口内的GUI操作没有持续掉帧，窗口外变化如实保留，不以短回归替代旧版本的30分钟记录。

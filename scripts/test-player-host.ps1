@@ -62,6 +62,7 @@ if (-not $InputOnly -and -not $VideoOnly) {
                             'scripts/test-player-cpu-diagnostics.py',
                             'scripts/test-player-udivdi3.py',
                             'projects/halley7m-player/storage/test-storage.py',
+                            'scripts/test-player-fastseek.py',
                             'projects/halley7m-player/mips/test-session.py',
                             'scripts/test-player-gui.py',
                             'scripts/test-player-measurement.py',

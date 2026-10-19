@@ -352,6 +352,17 @@ static int begin_media_impl(const char *path)
     result = !strcmp(path, "@embedded") ? 0 : player_storage_mount();
     if (!result) result = player_storage_open_utf8(&file, path);
     if (result) return result;
+    result = player_storage_prepare_seek(file, control_pump, NULL);
+    if (result) {
+        player_storage_seek_stats stats;
+        memset(&stats, 0, sizeof(stats));
+        (void)player_storage_get_seek_stats(file, &stats);
+        (void)snprintf(failure_detail, sizeof(failure_detail),
+                       "seek map: required=%lu capacity=%lu result=%d",
+                       (unsigned long)stats.required_entries,
+                       (unsigned long)stats.capacity_entries, result);
+        return result;
+    }
     read_bytes = memalign(128, PLAYER_READ_AHEAD_BYTES);
     packet_bytes = memalign(128, PLAYER_PACKET_POOL_BYTES);
     if (!read_bytes || !packet_bytes) return -ENOMEM;
@@ -399,6 +410,11 @@ static int begin_media(const char *path)
         (view.state == PLAYER_SESSION_LOADING || view.resources_pinned))
         fail_session(result, "open media");
     return result;
+}
+
+int player_session_storage_stats(player_storage_seek_stats *out)
+{
+    return player_storage_get_seek_stats(file, out);
 }
 
 static int demux_one(void)
