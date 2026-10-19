@@ -1,0 +1,7 @@
+    .section .rodata.riscv_image,"a",@progbits
+    .balign 64
+    .globl player_riscv_image_start
+    .globl player_riscv_image_end
+player_riscv_image_start:
+    .incbin "@PLAYER_RISCV_BIN@"
+player_riscv_image_end:

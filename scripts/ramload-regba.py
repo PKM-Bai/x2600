@@ -123,6 +123,26 @@ class Console:
         self.log("RX identify " + bytes(data).decode("ascii", errors="backslashreplace"))
         raise RuntimeError("Linux shell not confirmed; no reboot sent")
 
+    def reboot_player(self):
+        """Identify our RAM player diagnostics before its watchdog reboot."""
+        self.drain()
+        self.log("TX status (identify player before software reboot)")
+        self.write(b"\rstatus\r")
+        data = bytearray()
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            chunk = self.serial.read(1)
+            if chunk:
+                data.extend(chunk)
+                if re.search(rb"(?:^|\n)AMP_STATUS active=", data):
+                    self.log("RX " + bytes(data).decode("ascii", errors="backslashreplace"))
+                    self.log("TX reboot (player watchdog reset; no NOR programming)")
+                    self.write(b"reboot\r")
+                    self.wait_boot(timeout=30.0)
+                    return
+        self.log("RX identify " + bytes(data).decode("ascii", errors="backslashreplace"))
+        raise RuntimeError("Player diagnostics not confirmed; no reboot sent")
+
 
 def memory_words(output: bytes) -> dict[int, int]:
     words = {}
@@ -394,6 +414,8 @@ def main():
                         help="Wait for a physical normal reset and interrupt autoboot before probing")
     parser.add_argument("--reboot-linux", action="store_true",
                         help="Verify a running Linux shell, reboot it and interrupt U-Boot on the same UART")
+    parser.add_argument("--reboot-player", action="store_true",
+                        help="Verify player diagnostics, watchdog reboot and interrupt U-Boot on the same UART")
     parser.add_argument("--log", type=Path)
     args = parser.parse_args()
     if args.self_test:
@@ -401,8 +423,8 @@ def main():
         return 0
     if args.no_go and not args.execute:
         parser.error("--no-go requires --execute")
-    if args.reboot_linux and args.wait_boot:
-        parser.error("Choose --reboot-linux or --wait-boot")
+    if sum((args.reboot_linux, args.reboot_player, args.wait_boot)) > 1:
+        parser.error("Choose --reboot-linux, --reboot-player or --wait-boot")
     data = args.file.read_bytes() if args.execute else b""
     if args.execute and not 0 < len(data) <= MAX_IMAGE:
         parser.error("BIN must be non-empty and fit the fixed 6MiB RAM upload window")
@@ -420,6 +442,8 @@ def main():
         console = Console(serial_port, log)
         if args.reboot_linux:
             console.reboot_linux()
+        elif args.reboot_player:
+            console.reboot_player()
         elif args.wait_boot:
             console.wait_boot()
         else:

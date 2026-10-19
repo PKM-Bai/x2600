@@ -1,0 +1,58 @@
+cmake_minimum_required(VERSION 3.16)
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    if(PLAYER_CODEC_HOST_TEST AND CMAKE_HOST_WIN32)
+        set(CMAKE_TRY_COMPILE_CONFIGURATION Release)
+    endif()
+    project(player_codec_probe LANGUAGES C)
+endif()
+get_filename_component(PLAYER_CODEC_WORKSPACE "${CMAKE_CURRENT_SOURCE_DIR}/../../.." ABSOLUTE)
+set(PLAYER_CODEC_SDK "${PLAYER_CODEC_WORKSPACE}/libbare-cpu")
+set(PLAYER_CODEC_DERIVED "${CMAKE_CURRENT_BINARY_DIR}/derived-libh264")
+file(GLOB_RECURSE PLAYER_CODEC_VENDOR_INPUTS CONFIGURE_DEPENDS
+    "${PLAYER_CODEC_SDK}/drivers/drivers-x2000/src/felix/libh264/*.c"
+    "${PLAYER_CODEC_SDK}/drivers/drivers-x2000/src/felix/libh264/*.h")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${PLAYER_CODEC_VENDOR_INPUTS}
+    "${PLAYER_CODEC_WORKSPACE}/scripts/prepare-player-codec.py")
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+execute_process(COMMAND "${Python3_EXECUTABLE}" "${PLAYER_CODEC_WORKSPACE}/scripts/prepare-player-codec.py"
+    --output "${PLAYER_CODEC_DERIVED}" RESULT_VARIABLE PLAYER_CODEC_PREPARE_RESULT)
+if(NOT PLAYER_CODEC_PREPARE_RESULT EQUAL 0)
+    message(FATAL_ERROR "Failed to derive player libh264 sources")
+endif()
+option(PLAYER_CODEC_HOST_TEST "Build the derived Annex B/RBSP parser test only" OFF)
+if(PLAYER_CODEC_HOST_TEST)
+    add_executable(player_codec_rbsp_test tests/rbsp_test.c "${PLAYER_CODEC_DERIVED}/src/h2645_parse.c")
+    target_include_directories(player_codec_rbsp_test SYSTEM PRIVATE
+        "${PLAYER_CODEC_DERIVED}" "${PLAYER_CODEC_DERIVED}/include")
+    if(MSVC)
+        target_compile_options(player_codec_rbsp_test PRIVATE /std:c11 /utf-8 /W3 /wd4090 /wd4113 /wd4028 /wd4005)
+    else()
+        target_compile_options(player_codec_rbsp_test PRIVATE -Wno-ignored-qualifiers)
+    endif()
+    enable_testing()
+    add_test(NAME player_codec_rbsp COMMAND player_codec_rbsp_test)
+    return()
+endif()
+file(GLOB PLAYER_H264_SOURCES CONFIGURE_DEPENDS "${PLAYER_CODEC_DERIVED}/src/*.c")
+list(FILTER PLAYER_H264_SOURCES EXCLUDE REGEX "/(vpu_ops|hexdump)\\.c$")
+list(APPEND PLAYER_H264_SOURCES "${PLAYER_CODEC_DERIVED}/api/jzm_h264_dec.c")
+add_library(player_h264_vendor STATIC ${PLAYER_H264_SOURCES})
+add_library(player_codec STATIC player_codec.c player_felix.c)
+target_link_libraries(player_codec PUBLIC player_h264_vendor)
+target_include_directories(player_codec PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/../common")
+set(PLAYER_CODEC_PRIVATE_INCLUDES "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/include")
+set(PLAYER_CODEC_SYSTEM_INCLUDES "${PLAYER_CODEC_DERIVED}" "${PLAYER_CODEC_DERIVED}/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../mips/include" "${CMAKE_CURRENT_SOURCE_DIR}/../mips/port"
+    "${PLAYER_CODEC_SDK}/Middlewares/FreeRTOS-Kernel/include"
+    "${PLAYER_CODEC_SDK}/cpu/core/include" "${PLAYER_CODEC_SDK}/cpu/soc-x2600/include"
+    "${PLAYER_CODEC_SDK}/drivers/drivers-x2600/include")
+foreach(PLAYER_CODEC_TARGET player_h264_vendor player_codec)
+    target_include_directories(${PLAYER_CODEC_TARGET} PRIVATE ${PLAYER_CODEC_PRIVATE_INCLUDES})
+    target_include_directories(${PLAYER_CODEC_TARGET} SYSTEM PRIVATE ${PLAYER_CODEC_SYSTEM_INCLUDES})
+    target_compile_definitions(${PLAYER_CODEC_TARGET} PRIVATE USE_NEWLIB=1 __SDE_MIPS_=1)
+    target_compile_options(${PLAYER_CODEC_TARGET} PRIVATE -mips32r2 -mabi=32 -mfp32 -mhard-float -EL
+        -mno-abicalls -fno-pic -G0 -O2 -ffunction-sections -fdata-sections -fno-common)
+endforeach()
+# Keep diagnostics on the new adapter; vendor warnings precede this port.
+target_compile_options(player_h264_vendor PRIVATE -w)
+target_compile_options(player_codec PRIVATE -Wall -Wextra -Werror -Wno-unused-parameter)

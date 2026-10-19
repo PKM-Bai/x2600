@@ -57,6 +57,12 @@ if (-not $InputOnly -and -not $VideoOnly) {
         & $python $mediaTest
         if ($LASTEXITCODE) { throw 'Player media host regression failed.' }
     }
+    foreach ($relative in @('scripts/test-player-amp.py', 'scripts/test-player-amp-control.py',
+                            'scripts/test-player-udivdi3.py',
+                            'projects/halley7m-player/storage/test-storage.py')) {
+        & $python (Join-Path $workspace $relative)
+        if ($LASTEXITCODE) { throw "Player host regression failed: $relative" }
+    }
 }
 Write-Host "Player host checks passed. Artifacts: $output"
 Write-Host 'Input/video checks use production C with virtual time and RAM buffers; no board or physical TF access.'

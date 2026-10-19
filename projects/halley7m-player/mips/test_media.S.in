@@ -1,0 +1,7 @@
+    .section .rodata.player_test_media,"a",@progbits
+    .balign 128
+    .global player_test_media_start
+    .global player_test_media_end
+player_test_media_start:
+    .incbin "@PLAYER_TEST_AVI@"
+player_test_media_end:
