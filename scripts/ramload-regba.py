@@ -88,9 +88,38 @@ class Console:
         self.log("Waiting for normal board reset; will interrupt U-Boot autoboot")
         data = bytearray()
         interrupted = False
+        reconnect = False
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            chunk = self.serial.read(1)
+            if reconnect:
+                try:
+                    # Reuse the same object/port/settings, with modem lines
+                    # inactive before open. Re-enumeration never authorizes a
+                    # command or upload, only another boot-banner observation.
+                    self.serial.dtr = self.serial.rts = False
+                    self.serial.open()
+                except OSError as exc:
+                    self.log(f"Serial boot reopen pending: {exc}")
+                    remaining = deadline - time.monotonic()
+                    if remaining > 0:
+                        time.sleep(min(0.1, remaining))
+                    continue
+                self.log("Serial boot port reopened; waiting for a fresh autoboot banner")
+                reconnect = False
+            try:
+                chunk = self.serial.read(1)
+            except OSError as exc:  # pyserial SerialException also derives from OSError.
+                self.log(f"Serial boot disconnected: {exc}")
+                # Neither a partial old banner nor an old interruption may
+                # match bytes from a different boot after the port reopens.
+                data.clear()
+                interrupted = False
+                try:
+                    self.serial.close()
+                except OSError as close_error:
+                    self.log(f"Serial boot close after disconnect: {close_error}")
+                reconnect = True
+                continue
             if not chunk:
                 continue
             data.extend(chunk)
@@ -282,6 +311,120 @@ def upload(console: Console, path: Path, data: bytes, no_go=False):
 
 
 def self_test():
+    class BootClock:
+        def __init__(self):
+            self.now = 0.0
+
+        def monotonic(self):
+            return self.now
+
+        def sleep(self, seconds):
+            self.now += seconds
+
+    class BootSerial:
+        def __init__(self, clock, events, fail_opens=1):
+            self.clock, self.events = clock, list(events)
+            self.fail_opens = fail_opens
+            self.open_attempts = self.close_count = 0
+            self.writes, self.open_settings = [], []
+            self.port, self.baudrate, self.timeout = "FAKE52", 115200, 0.1
+            self.write_timeout = 10
+            self.xonxoff = self.rtscts = self.dsrdtr = False
+            self.dtr = self.rts = False
+            self.is_open = True
+            self.received_since_open = bytearray()
+
+        def read(self, size=1):
+            assert self.is_open
+            self.clock.now += 0.01
+            if not self.events:
+                return b""
+            event = self.events[0]
+            if isinstance(event, OSError):
+                self.events.pop(0)
+                raise event
+            result = event[:size]
+            self.events[0] = event[size:]
+            if not self.events[0]:
+                self.events.pop(0)
+            self.received_since_open.extend(result)
+            return result
+
+        def write(self, data):
+            assert self.is_open
+            self.writes.append((data, bytes(self.received_since_open)))
+            return len(data)
+
+        def flush(self):
+            pass
+
+        def close(self):
+            self.close_count += 1
+            self.is_open = False
+
+        def open(self):
+            assert not self.is_open
+            self.open_attempts += 1
+            self.open_settings.append((self.port, self.baudrate, self.timeout,
+                                       self.write_timeout, self.xonxoff, self.rtscts,
+                                       self.dsrdtr, self.dtr, self.rts))
+            if self.open_attempts <= self.fail_opens:
+                raise PermissionError(13, "fake port is still re-enumerating")
+            self.received_since_open.clear()
+            self.is_open = True
+
+    original_monotonic, original_sleep = time.monotonic, time.sleep
+    try:
+        # Exercise both a previously interrupted boot and a partial old banner.
+        # A post-reopen prompt/suffix must not authorize any transmission.
+        for old_banner, new_prefix, old_spaces in (
+            (b"Hit any key", b"\nstale# \n", 1),
+            (b"Hit any", b" key\nstale# \n", 0),
+        ):
+            clock = BootClock()
+            time.monotonic, time.sleep = clock.monotonic, clock.sleep
+            peer = BootSerial(clock, [old_banner, PermissionError(13, "ClearCommError"),
+                                     new_prefix, b"new boot: Hit any key\nx2600# "])
+            Console(peer, lambda _: None).wait_boot(timeout=5.0)
+            assert peer.close_count == 1 and peer.open_attempts == 2
+            assert len(peer.writes) == old_spaces + 1
+            assert all(data == b" " for data, _ in peer.writes)
+            assert b"new boot: Hit any key" in peer.writes[-1][1]
+            assert all(settings == ("FAKE52", 115200, 0.1, 10, False,
+                                    False, False, False, False)
+                       for settings in peer.open_settings)
+
+        # Reopen failures consume the original deadline; they never extend it
+        # or fall through to an upload when no fresh boot banner was observed.
+        clock = BootClock()
+        time.monotonic, time.sleep = clock.monotonic, clock.sleep
+        peer = BootSerial(clock, [OSError("disconnected")], fail_opens=1000)
+        try:
+            Console(peer, lambda _: None).wait_boot(timeout=0.35)
+        except RuntimeError as exc:
+            assert "no upload sent" in str(exc)
+        else:
+            raise AssertionError("Disconnected boot wait did not time out")
+        assert not peer.writes and 0.35 <= clock.now <= 0.36
+
+        # Reconnection belongs only to wait_boot. A command or an in-flight
+        # YMODEM packet must propagate a disconnect without reopen/retransmit.
+        for during_command in (True, False):
+            peer = BootSerial(clock, [OSError("transfer disconnected")])
+            console = Console(peer, lambda _: None)
+            try:
+                if during_command:
+                    console.command("help loady", timeout=0.1)
+                else:
+                    YModem(console).acknowledged(packet(1, b"x", 128), "disconnect")
+            except OSError:
+                pass
+            else:
+                raise AssertionError("Command/transfer disconnect was hidden")
+            assert peer.open_attempts == 0 and len(peer.writes) == 1
+    finally:
+        time.monotonic, time.sleep = original_monotonic, original_sleep
+
     class FakeSerial:
         def __init__(self, eot_nak=False, reject_first=True, header_c=False):
             self.pending = bytearray()
@@ -397,7 +540,7 @@ def self_test():
         else:
             raise AssertionError("Incorrect transfer length was accepted")
         assert not any(command.startswith("go ") for command in fake.commands)
-    print("PASS: YMODEM CRC16, 128/1K framing, header with/without C, NAK retry, one/two EOT, sequence wrap, exact length/padding, clocks, board CRC32/filesize rejection; no serial port opened.")
+    print("PASS: boot disconnect/re-enumeration, failed reopen/recovery with original settings and inactive DTR/RTS, stale banner/prompt rejection, fixed deadline/no upload, command/YMODEM disconnect propagation; YMODEM CRC16, 128/1K framing, header with/without C, NAK retry, one/two EOT, sequence wrap, exact length/padding, clocks, board CRC32/filesize rejection; no serial port opened.")
 
 
 def main():
