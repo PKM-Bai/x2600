@@ -55,6 +55,13 @@ def parse_log(text):
 
     for line_number, raw in enumerate(text.splitlines(), 1):
         line = raw.strip().lstrip('\ufeff')
+        # Runner JSON can contain quoted values followed by commas. It is
+        # metadata, never a damaged CSV row or another measurement label.
+        if re.search(r'\[host (?:event:|command:|rx\b)', line):
+            continue
+        # Allow ordinary bracketed clock prefixes, but do not search arbitrary
+        # prose/JSON for the first quote and accidentally start parsing there.
+        line = re.sub(r'^(?:\[[^\]\r\n]*\]\s*)+', '', line)
         if 'MEASURE_SUMMARY ' in line:
             data = fields(line.split('MEASURE_SUMMARY ', 1)[1])
             if data.get('label'):
@@ -79,14 +86,18 @@ def parse_log(text):
             continue
         if header is None:
             continue
-        quoted = re.search(r'"(?:""|[^"])*",', line)
-        if quoted:
-            line = line[quoted.start():]
         if not line.startswith('"'):
             continue
+        label = None
         try:
             values = next(csv.reader([line], strict=True))
             label = values[0]
+            # The first payload column is a decimal elapsed_ms, not a JSON
+            # property. Malformed rows can only attach to a known run.
+            if len(values) < 2 or not re.fullmatch(r'\d+', values[1]):
+                if label not in runs:
+                    continue
+                raise ValueError('invalid elapsed_ms')
             if len(values) != len(header):
                 raise ValueError('column count')
             row = dict(zip(header, values))
@@ -97,11 +108,8 @@ def parse_log(text):
             run(label)['rows'].append(row)
         except (csv.Error, ValueError, IndexError):
             malformed += 1
-            # Even a partial label can usually identify the damaged dump.
-            try:
-                run(next(csv.reader([line]))[0])['malformed_rows'] += 1
-            except (csv.Error, IndexError):
-                pass
+            if label in runs:
+                runs[label]['malformed_rows'] += 1
     return dict(runs=list(runs.values()), statuses=statuses, malformed_rows=malformed)
 
 
@@ -257,7 +265,9 @@ def completion_evidence(rows, summaries, statuses, single_run):
     playback = [row for row in rows if row['session'] == ended_scope and row['state'] in (1, 2, 3, 4)]
     if len({row['amp_session'] for row in playback}) > 1:
         issues.append('同一媒体播放期间AMP scope改变，未证明连续运行')
-    video = video_evidence(rows, summaries, statuses)
+    # Queries and STOP can happen after the RAM recorder has stopped. They
+    # retain useful facts, but cannot contaminate recorded playback metrics.
+    video = video_evidence(rows, summaries, [])
     return dict(internal_30min='evidenced' if not issues else 'not-proven', issues=issues,
         ended_csv_line=final.get('_line') if final else None, ended_session_status=status,
         zero_error_eof_summary=zero_summary[-1] if zero_summary else None,
@@ -381,6 +391,23 @@ def analyze_run(run, statuses, window, single_run):
             complete['issues'].append('日志存在冲突/截断/计数复位/运行边界歧义，需核对原始证据')
     related_statuses = [item for item in statuses if number(item, 'session') in
         {row['session'] for row in all_rows} or (single_run and not all_rows)]
+    window_video = video_evidence(rows, [], [])
+    summary_boundary = min((item['_line'] for item in summaries if number(item, 'active') == 0), default=None)
+    last_session = all_rows[-1]['session'] if all_rows else None
+    post_statuses = [item for item in related_statuses if
+        (summary_boundary is not None and item['_line'] > summary_boundary) or
+        (last_session is not None and number(item, 'session') == last_session and number(item, 'state') == 0)]
+    post_video = video_evidence([], [], post_statuses)
+    post_video.update(source_session_statuses=post_statuses, summary_boundary_line=summary_boundary,
+        timing='Queries after the first inactive MEASURE_SUMMARY in UART order, or IDLE '
+               'queries proving STOP for the final CSV media session (summary may print later). '
+               'No measurement elapsed_ms is inferred from UART order.')
+    if all_rows and post_statuses and {number(item, 'session') for item in post_statuses} == {all_rows[-1]['session']}:
+        for output, name in (('new_dropped_since_last_csv', 'dropped_frames'), ('new_late_since_last_csv', 'late_frames')):
+            key = 'dropped' if name == 'dropped_frames' else 'late'
+            peak = post_video['observed_cumulative_peaks'][key]
+            baseline = all_rows[-1].get(name)
+            post_video[output] = peak - baseline if peak is not None and baseline is not None and peak >= baseline else None
     return dict(label=run['label'], window_s=window, sampling=dict(rows=len(rows), all_unique_rows=len(all_rows),
         duplicate_rows=duplicates, conflicting_elapsed_ms=conflicts, malformed_rows=run['malformed_rows'],
         declared_records=declared, final_record_present=final_record,
@@ -391,6 +418,7 @@ def analyze_run(run, statuses, window, single_run):
         cpu=cpu, counters=counters, watermarks=watermarks, error_observations=errors,
         flags=flags, scopes=scopes, states=dict(Counter(str(row['state']) for row in rows)),
         source_summaries=summaries, source_session_statuses=related_statuses,
+        window_video=window_video, post_recording_video=post_video,
         completion=complete, warnings=warnings)
 
 
@@ -412,8 +440,8 @@ def analyze_file(path, window=600, label=None):
 
 def markdown(report):
     lines = ['# 播放器板端日志分析', '', f'比较窗口：快照 `elapsed_ms` 在 0..{report["window_s"]:g} 秒。CPU 按各核真实有效 `window_us` 加权；核窗口边界不同步。', '',
-             '| 来源 / 标签 | CSV末采样 | MIPS忙率 / 有效窗秒 | RV忙率 / 有效窗秒 | MIPS / RV最低观测空闲堆 | 完整窗口 | 板内30分钟 | 视频观察 |',
-             '| --- | ---: | ---: | ---: | ---: | --- | --- | --- |']
+             '| 来源 / 标签 | CSV末采样 | MIPS忙率 / 有效窗秒 | RV忙率 / 有效窗秒 | MIPS / RV最低观测空闲堆 | 完整窗口 | 板内30分钟 | 窗口视频 | 采集全段视频 | 结束后查询 |',
+             '| --- | ---: | ---: | ---: | ---: | --- | --- | --- | --- | --- |']
     for file in report['files']:
         for run in file['runs']:
             def cpu(core):
@@ -424,8 +452,11 @@ def markdown(report):
             last = run['sampling']['last_ms']
             elapsed = f'{last / 1000:.3f}s' if last is not None else '仅摘要'
             label = run['label'].replace('|', '\\|')
-            video_label = {'needs-review': 'drop/late待复核', 'no-drop-late-observed': '未观察到drop/late', 'not-evaluated': '证据不足'}[run['completion']['video_acceptance']]
-            lines.append(f'| {Path(file["source"]).name} / {label} | {elapsed} | {cpu("mips")} | {cpu("rv")} | {heap} | {"完整" if run["sampling"]["csv_window_complete"] else "未证明"} | {"已有证据" if run["completion"]["internal_30min"] == "evidenced" else "未证明"} | {video_label} |')
+            def video_label(assessment):
+                return {'needs-review': 'drop/late待复核', 'no-drop-late-observed': '未观察到drop/late', 'not-evaluated': '证据不足'}[assessment]
+            labels = ' | '.join(video_label(item) for item in (run['window_video']['assessment'],
+                run['completion']['video_acceptance'], run['post_recording_video']['assessment']))
+            lines.append(f'| {Path(file["source"]).name} / {label} | {elapsed} | {cpu("mips")} | {cpu("rv")} | {heap} | {"完整" if run["sampling"]["csv_window_complete"] else "未证明"} | {"已有证据" if run["completion"]["internal_30min"] == "evidenced" else "未证明"} | {labels} |')
     for file in report['files']:
         for run in file['runs']:
             lines += ['', f'## {run["label"]}', '', f'原始日志：`{file["source"]}`；SHA256 `{file["sha256"]}`。', '']
@@ -450,7 +481,12 @@ def markdown(report):
             lines.extend('- ' + warning for warning in run['warnings'])
             lines.extend('- ' + issue for issue in run['completion']['issues'])
             video = run['completion']['video']
-            lines += ['', '视频累计观测峰值：`' + json.dumps(video['observed_cumulative_peaks'], ensure_ascii=False) + '`。内部完成按 decoded=displayed+dropped 核对；偶发 drop/late 不直接否定完整播放。']
+            lines += ['', '指定窗口CSV视频峰值：`' + json.dumps(run['window_video']['observed_cumulative_peaks'], ensure_ascii=False) + '`。', '',
+                '采集全段CSV/摘要视频峰值：`' + json.dumps(video['observed_cumulative_peaks'], ensure_ascii=False) + '`。内部完成按 decoded=displayed+dropped 核对；偶发 drop/late 不直接否定完整播放。']
+            post = run['post_recording_video']
+            lines += ['', '测量结束后的查询/STOP状态视频峰值：`' + json.dumps(post['observed_cumulative_peaks'], ensure_ascii=False) + '`。来源为已结束摘要之后的查询，或同末CSV会话的IDLE/STOP确认；支持STOP后才打印摘要。这组查询不混入CSV比较窗口或采集全段，不从UART行序推算精确elapsed_ms。']
+            if post.get('new_dropped_since_last_csv') or post.get('new_late_since_last_csv'):
+                lines += ['', f'末条CSV之后新增 drop={post.get("new_dropped_since_last_csv")}、late={post.get("new_late_since_last_csv")}；该实际后测现象仍需保留，UART查询/STOP期间的因果由原始时序另行判断。']
             if video['assessment'] == 'needs-review':
                 lines += ['', '视频质量需人工复核。以下为有变化或无法确定的真实采样区间，不设自动“持续性”阈值；完整逐区间列表保存在JSON。', '',
                           '| 区间ms | session | drop差分 | late差分 |', '| --- | ---: | ---: | ---: |']

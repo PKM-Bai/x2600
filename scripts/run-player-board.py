@@ -244,7 +244,6 @@ class Runner:
         audio = self.query("audio", "AUDIO_STATUS")
         gui = self.query("gui", "GUI_STATUS")
         sequence = self.query("ui sequence", "UI_SEQUENCE")
-        summary = self.query("measure summary", "MEASURE_SUMMARY")
         self.check_running(state, self.console.clock() - started)
         self.clean_audio(audio)
         self.clean_gui(gui, require_playback=True)
@@ -252,13 +251,21 @@ class Runner:
         expected_cycles = len(range(30, self.args.seconds, 120))
         if value(sequence, "active") or value(sequence, "reason") != 2 or value(sequence, "cycles_completed") != expected_cycles or value(sequence, "cycles_started") != expected_cycles or value(sequence, "duration_ms") != self.args.seconds * 1000 or value(sequence, "keys"):
             raise BoardError(f"UI sequence did not complete all {expected_cycles} cycles: {sequence}")
-        if summary.get("label") != self.args.label or value(summary, "active") or value(summary, "target_s") != self.args.seconds:
-            raise BoardError(f"measurement did not finish under the requested label: {summary}")
         if self.args.seconds == 1800:
             if value(state, "state") != 4 or state.get("samples") != "86400000/86400000" or value(state, "decoded") != 54000 or value(state, "displayed") + value(state, "dropped") != 54000:
                 raise BoardError("30-minute media did not reach ENDED with decoded=displayed+dropped=54000 / 86400000 samples")
             if any(value(audio, name) != 86400000 for name in ("total", "written", "completed")):
                 raise BoardError("30-minute audio did not complete exactly 86400000 valid samples")
+        self.event("evidence-collected", media_state=value(state, "state"))
+        self.query("ui sequence stop", "UI_SEQUENCE")
+        self.post("stop")
+        stop_state, stop_audio = self.idle()
+        # The recorder has already stopped at duration/EOF. Its long summary
+        # must not stall a still-PLAYING worker and create post-window drops.
+        summary = self.query("measure summary", "MEASURE_SUMMARY")
+        if summary.get("label") != self.args.label or value(summary, "active") or value(summary, "target_s") != self.args.seconds:
+            raise BoardError(f"measurement did not finish under the requested label: {summary}")
+        if self.args.seconds == 1800:
             if summary.get("reason") not in ("eof", "duration") or value(summary, "elapsed_ms") < 1795000:
                 raise BoardError(f"30-minute measurement ended too early: {summary}")
         elif summary.get("reason") != "duration" or value(summary, "elapsed_ms") < 600000:
@@ -266,21 +273,18 @@ class Runner:
         for name in ("underruns", "dma_errors", "dma_timeouts"):
             if value(summary, name):
                 raise BoardError(f"measurement {name} is nonzero: {summary}")
-        self.event("evidence-collected", media_state=value(state, "state"), measurement_reason=summary.get("reason"))
-        self.query("ui sequence stop", "UI_SEQUENCE")
-        self.post("stop")
-        self.idle()
         self.dump(summary)
         video_review = self.video_observed_issue or value(summary, "dropped") or value(summary, "late")
         self.event("complete", valid=True, collection_complete=True,
             video_acceptance="needs-review" if video_review else "no-drop-late-observed",
             dropped=value(state, "dropped"), late=value(state["queues"], "late"),
+            measurement_dropped=value(summary, "dropped"), measurement_late=value(summary, "late"),
+            post_stop_dropped=value(stop_state, "dropped"), post_stop_late=value(stop_state["queues"], "late"),
             max_late_us=value(state["queues"], "max_late_us"), physical_sync_100ms="not-evaluated")
 
     def cleanup(self):
         self.event("cleanup-start")
-        for command, marker in (("ui sequence stop", "UI_SEQUENCE"), ("stop", "SESSION_POST"),
-                                ("measure stop", "MEASURE_SUMMARY"), ("session", "SESSION_STATUS"), ("audio", "AUDIO_STATUS")):
+        for command, marker in (("ui sequence stop", "UI_SEQUENCE"), ("stop", "SESSION_POST")):
             try:
                 self.console.command(command, marker, timeout=3, ignore_faults=True)
             except Exception as error:
@@ -291,6 +295,11 @@ class Runner:
         except Exception as error:
             confirmed = False
             self.console.host(f"cleanup IDLE not confirmed: {error}")
+        if confirmed:
+            try:
+                self.console.command("measure stop", "MEASURE_SUMMARY", timeout=3, ignore_faults=True)
+            except Exception as error:
+                self.console.host(f"cleanup failed: measure stop: {error}")
         self.event("cleanup-complete", valid=False, idle_confirmed=confirmed)
 
 

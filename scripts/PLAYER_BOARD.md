@@ -12,6 +12,8 @@ python scripts/analyze-player-board.py --compare build/mips-run.log build/amp-ru
 
 单日志 `--label` 选择日志中已存的 measurement 标签；不指定时逐标签报告。对照模式保留两个日志的标签，分别列出同一个 0..600 秒快照窗口，不要求同名。一个标签应只对应一次记录器运行。重复导出同一 CSV 会按时间和完整字段去重；同标签、同时间但内容不同会标记冲突，不能据此宣称完成验收。重新运行时使用不同标签，避免把复位前后的记录混为一次。
 
+runner 的 `[host event: {...}]`、命令和接收元数据不当作 CSV。数据只从合法行首或普通时钟前缀后解析，要求正确字段数量和整数列；JSON 中的 `"event": "dump-complete"`、`"event": "complete"` 不会生成伪 measurement run。
+
 默认输出到 `build/player-board-analysis/`。`--output` 指定 JSON 路径，Markdown 使用相同文件名和 `.md` 后缀。日志不存在、没有 measurement 数据、指定标签不存在等输入错误返回非零。成功生成“证据不足”的报告仍返回零；验收状态由 JSON 字段给出，不能仅检查程序退出码。CSV 存在时，配对的 `SESSION_STATUS` 必须属于该 CSV 出现的 session；不同已结束 summary 或非末行 FINAL 都视为运行边界歧义。
 
 ## 指标口径
@@ -40,7 +42,15 @@ CSV 没有导出 measure begin 的绝对时钟，两个核的计数时钟起点�
 
 `completion.internal_30min=evidenced` 要求真实 AVI ENDED 的 **86400000/86400000 samples、decoded=54000、displayed+dropped=54000**，且有音频/协议零错误证据：完整 ENDED CSV 错误字段，或同一日志中的匹配 `SESSION_STATUS` 与完整音频零错误 EOF summary。单独 `reason=eof`、`target_s=1800`、日志墙钟到 1800 秒或文件名含 30min 都不成立。CSV 冲突、截断和疑似计数复位会阻止工具给出该结论。1800 秒结束证据与前 600 秒 CPU 统计分开评价；完整媒体的尾部一行可以证明板内完成，但不能补全缺少的 600 秒采样。错误审核使用完整 run，600 秒之后出现的音频/协议错误也不能被干净的前 600 秒掩盖。
 
-用户的视频标准是无持续性掉帧，并非绝对零。`completion.video_acceptance` 单独报告：观测到任何 drop/late 为 `needs-review`，全部已有观测为零则为 `no-drop-late-observed`，数据不足为 `not-evaluated`。少量 drop/late 不会推翻内部播放完成，也不自动等于视频质量通过。JSON 的 `video.sample_interval_deltas` 保留完整运行的相邻采样时间、scope、实际 drop/late 差分；跨 scope、无效快照或疑似复位返回未知，不补造“一秒”。Markdown 列出有变化或未知的区间，供人工判断出现位置和是否持续。工具不发明持续性阈值。
+用户的视频标准是无持续性掉帧，并非绝对零。视频证据按来源明确分为：
+
+- `window_video`：仅指定 0..`--window` 秒 CSV，供同窗口性能对照。
+- `completion.video` 与 `completion.video_acceptance`：整个 RAM 采集区间的 CSV/summary，包含比较窗口之后仍被采集的真实 drop/late；不混入结束后的查询状态。
+- `post_recording_video`：已结束 summary 之后的查询，或同末条 CSV 会话的 IDLE/STOP 确认。后者兼容 runner 先STOP、确认IDLE，再打印长摘要的顺序。保留完整源状态及相对末CSV新增的 drop/late，不从UART行序猜测准确测量时间。原始相关状态也完整保留在 `source_session_statuses`。
+
+各组独立报告：观测到任何 drop/late 为 `needs-review`，全部已有观测为零则为 `no-drop-late-observed`，数据不足为 `not-evaluated`。少量 drop/late 不会推翻内部播放完成，也不自动等于视频质量通过。`video.sample_interval_deltas` 保留实际相邻采样时间、scope 和 drop/late 差分；跨 scope、无效快照或疑似复位返回未知，不补造“一秒”。Markdown 列出有变化或未知的区间，供人工判断出现位置和是否持续。工具不发明持续性阈值。
+
+真实 MIPS600 日志的 CSV 和 600.005 秒摘要均为 drop=late=0，而后续查询/STOP 的 IDLE 状态为 drop=late=1。工具同时保留前者的干净测量窗口与后者的实际后测现象，不把后测值改成零或混入比较窗口。UART阻塞等因果应根据原始时序另行判断。
 
 当前 `player-tf-avi-prefix-board.log` 只有 36.028 秒固件摘要，含暂停/恢复，累计 samples=948480、decoded=594、displayed=593、drop/late=0。它是功能短跑记录，不能算 10 分钟或 30 分钟验收；无 CSV 时也不重算 CPU 窗口。
 
@@ -54,4 +64,4 @@ CSV 没有导出 measure begin 的绝对时钟，两个核的计数时钟起点�
 python scripts/test-player-board.py
 ```
 
-18 项回归直接导入生产解析器，覆盖 CPU 真时长加权、无效/未运行 RV、重复/重叠 CPU 窗、带引号标签、混合串口前缀、重复/冲突 CSV、scope 切换、小幅 uint32 回绕与疑似复位、截断/缺行、窗口外数据隔离、无效水位与负错误、虚假 EOF、完整 ENDED 计数、600 秒以后的错误、无关 session 的 ENDED、非末 FINAL/冲突摘要及 CLI 对照。另覆盖非零 drop/late 的帧守恒、逐区间事实与独立视频复核状态，以及非零 DMA 错误仍阻止完成证明。测试不会连接 COM 或修改播放器源码。
+21 项回归直接导入生产解析器，覆盖 CPU 真时长加权、无效/未运行 RV、重复/重叠 CPU 窗、带引号标签、混合串口前缀、重复/冲突 CSV、scope 切换、小幅 uint32 回绕与疑似复位、截断/缺行、窗口外数据隔离、无效水位与负错误、虚假 EOF、完整 ENDED 计数、600 秒以后的错误、无关 session 的 ENDED、非末 FINAL/冲突摘要及 CLI 对照。另覆盖非零 drop/late 的帧守恒、逐区间事实与独立视频复核状态，以及非零 DMA 错误仍阻止完成证明。`tests/fixtures/player-board-runner-metadata.log` 只保存真实 runner 日志的首末两条 CSV 与必要元数据/状态摘录，明确不是完整验收记录；用于验证无 `--label` 的 CLI 对照、过滤伪run及查询/STOP阶段分离，另测先STOP后summary顺序。测试不会连接 COM 或修改播放器源码。

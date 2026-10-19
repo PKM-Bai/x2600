@@ -228,6 +228,60 @@ class BoardTests(unittest.TestCase):
         self.assertTrue(result['sampling']['ambiguous_summary'])
         self.assertFalse(result['sampling']['csv_window_complete'])
 
+    def test_real_runner_metadata_excerpt_does_not_create_fake_runs(self):
+        path = ROOT / 'tests/fixtures/player-board-runner-metadata.log'
+        result = BOARD.analyze_file(path)
+        self.assertEqual([run['label'] for run in result['runs']], ['mips10'])
+        self.assertEqual(result['malformed_csv_rows'], 0)
+        run = result['runs'][0]
+        self.assertEqual(run['sampling']['all_unique_rows'], 2)
+        self.assertEqual(run['sampling']['missing_dump_rows'], 598)
+        self.assertEqual(run['window_video']['assessment'], 'no-drop-late-observed')
+        self.assertEqual(run['completion']['video_acceptance'], 'no-drop-late-observed')
+        self.assertEqual(run['post_recording_video']['assessment'], 'needs-review')
+        self.assertEqual(run['post_recording_video']['new_dropped_since_last_csv'], 1)
+        self.assertEqual(run['post_recording_video']['new_late_since_last_csv'], 1)
+        self.assertEqual(run['post_recording_video']['source_session_statuses'][-1]['state'], '0')
+        with tempfile.TemporaryDirectory(dir=ROOT / 'build') as directory:
+            output = Path(directory) / 'comparison.json'
+            subprocess.run([sys.executable, str(ROOT / 'scripts/analyze-player-board.py'),
+                '--compare', str(path), str(path), '--output', str(output)], check=True,
+                stdout=subprocess.DEVNULL)
+            compared = json.loads(output.read_text(encoding='utf-8'))
+            self.assertEqual([[run['label'] for run in file['runs']] for file in compared['files']],
+                             [['mips10'], ['mips10']])
+
+    def test_post_stop_drop_does_not_replace_clean_window_video(self):
+        rows = [row(1000), row(2000, flags=15)]
+        summary = 'MEASURE_SUMMARY label=amp active=0 reason=duration records=2/1860 dropped=0 late=0'
+        post = ('SESSION_STATUS session=1 state=0 kind=0 samples=100000/86400000 '
+            'decoded=64 displayed=62 dropped=1 underruns=0 pinned=0 error=0\n'
+            'SESSION_QUEUES late=1 max_late_us=53333\n')
+        result = analyze(log(rows, summary, post), 2)
+        self.assertEqual(result['window_video']['observed_cumulative_peaks']['dropped'], 0)
+        self.assertEqual(result['completion']['video']['observed_cumulative_peaks']['dropped'], 0)
+        self.assertEqual(result['post_recording_video']['observed_cumulative_peaks']['dropped'], 1)
+        # An event after the CPU cutoff but inside the RAM recording remains
+        # visible as a recording issue, independently of post-recording state.
+        rows.append(row(3000, flags=15, dropped_frames=2, late_frames=2))
+        rows[1]['flags'] = 14
+        result = analyze(log(rows), 2)
+        self.assertEqual(result['window_video']['assessment'], 'no-drop-late-observed')
+        self.assertEqual(result['completion']['video_acceptance'], 'needs-review')
+        self.assertEqual(result['completion']['video']['observed_cumulative_peaks']['dropped'], 2)
+
+    def test_stop_before_summary_still_retains_post_stop_drop(self):
+        rows = [row(1000), row(2000, flags=15)]
+        post = ('SESSION_STATUS session=1 state=0 kind=0 samples=100000/86400000 '
+            'decoded=64 displayed=62 dropped=1 underruns=0 pinned=0 error=0\n'
+            'SESSION_QUEUES late=1 max_late_us=53333\n')
+        summary = 'MEASURE_SUMMARY label=amp active=0 reason=duration records=2/1860 dropped=0 late=0\n'
+        result = analyze(log(rows, suffix=post + summary), 2)
+        self.assertEqual(result['window_video']['assessment'], 'no-drop-late-observed')
+        self.assertEqual(result['completion']['video_acceptance'], 'no-drop-late-observed')
+        self.assertEqual(result['post_recording_video']['new_dropped_since_last_csv'], 1)
+        self.assertEqual(result['post_recording_video']['new_late_since_last_csv'], 1)
+
     def test_summary_only_real_prefix_and_compare_cli(self):
         prefix = ROOT / 'build/player-tf-avi-prefix-board.log'
         if prefix.is_file():

@@ -1,0 +1,16 @@
+# Small verbatim UART excerpt from player-mips10-formal.log; only first/last CSV rows.
+# Deliberately incomplete (2 of 600 rows); tests parsing/phase separation, not acceptance.
+SESSION_STATUS session=1 state=2 kind=2 samples=28972320/86400000 decoded=18109 displayed=18108 dropped=0 underruns=0 volume=7 pinned=0 error=0 request=2147483650 result=0 path=0:/multimedia/video/acceptance-30min.avi detail=
+SESSION_QUEUES late=0 max_late_us=23333 video_packets=64 audio_packets=100 pcm_queued=102304
+MEASURE_SUMMARY label=mips10 active=0 reason=duration records=600/1860 record_bytes=216 elapsed_ms=600005 target_s=600 mips_windows=600 mips_busy_bp=3707 rv_windows=0 rv_busy_bp=0 mips_min_heap=31665224 rv_min_heap=0 samples=28800480 decoded=18001 displayed=18001 dropped=0 late=0 max_late_us=23333 underruns=0 dma_errors=0 dma_timeouts=0 max_shared_ring_samples=0 max_pending_valid_samples=2880 max_video_packets=64 max_audio_packets=102 max_queued_pcm_samples=103200
+[2026-10-19T11:07:17.167+00:00 +604.737s] [host event: {"event": "evidence-collected", "media_state": 2, "measurement_reason": "duration"}]
+SESSION_STATUS session=1 state=0 kind=0 samples=28990560/86400000 decoded=18120 displayed=18118 dropped=1 underruns=0 volume=7 pinned=0 error=0 request=2147483651 result=0 path=0:/multimedia/video/acceptance-30min.avi detail=
+SESSION_QUEUES late=1 max_late_us=53333 video_packets=0 audio_packets=0 pcm_queued=0
+[2026-10-19T11:07:17.469+00:00 +605.038s] [host event: {"event": "dump-start"}]
+label,elapsed_ms,session,audio_session,amp_session,flags,state,mips_valid,mips_counter_end,mips_counter_hz,mips_window_us,mips_busy_bp,mips_heap_free,mips_heap_min,mips_heap_total,mips_heap_min_kind,rv_valid,rv_counter_end,rv_counter_hz,rv_window_us,rv_busy_bp,rv_heap_free,rv_heap_min,rv_heap_total,rv_heap_min_kind,elapsed_samples,decoded_frames,displayed_frames,dropped_frames,late_frames,audio_underruns,audio_written_samples,audio_completed_samples,dma_errors,dma_timeouts,queue_underruns,fifo_underruns,diag_tx,diag_remote_rx,diag_event_tx,diag_host_rx,audio_tx,audio_remote_rx,audio_event_tx,audio_host_rx,rejected,total_samples,max_late_us,shared_ring_samples,pending_valid_samples,video_packets,audio_packets,queued_pcm_samples,pinned,session_error,audio_error
+"mips10",1002,1,1,0,2,2,1,42079164,1000000,1010703,7999,31666368,31666368,53346304,2,0,0,0,0,0,0,0,0,0,196320,124,123,0,0,0,199200,196800,0,0,0,0,0,0,0,0,0,0,0,0,0,86400000,23333,0,2400,42,64,64992,0,0,0
+[host rx [2026-10-19T11:07:28.869+00:00 +616.438s]]
+"mips10",600005,1,1,0,3,2,1,641352018,1000000,1000166,3668,31665224,31665224,53346304,2,0,0,0,0,0,0,0,0,0,28948800,18095,18093,0,0,0,28951680,28948800,0,0,0,0,0,0,0,0,0,0,0,0,0,86400000,23333,0,2880,63,99,101248,0,0,0
+MEASURE_DUMP result=0
+[2026-10-19T11:07:28.869+00:00 +616.438s] [host event: {"event": "dump-complete", "records": 600}]
+[2026-10-19T11:07:28.869+00:00 +616.439s] [host event: {"event": "complete", "valid": true, "collection_complete": true, "video_acceptance": "no-drop-late-observed", "dropped": 0, "late": 0, "max_late_us": 23333, "physical_sync_100ms": "not-evaluated"}]

@@ -26,6 +26,8 @@ class FakeBoard:
         self.ui_stopped = False
         self.measure_stopped = False
         self.fault_emitted = False
+        self.summary_induced_drops = 0
+        self.summary_audio_active = []
 
     def clock(self):
         return self.now
@@ -97,6 +99,8 @@ class FakeBoard:
             rejected = command.startswith("play") and self.fault == "reject-play"
             response = f"SESSION_POST request={self.request} kind={1 if command.startswith('play') else 5} result={-16 if rejected else 0}"
             if command == "stop":
+                if self.fault == "stop-drop" and not self.stopped and self.measure_elapsed() >= self.seconds:
+                    self.summary_induced_drops += 1
                 self.stopped = True
             elif not rejected:
                 self.stopped = False
@@ -104,7 +108,7 @@ class FakeBoard:
         elif command == "session":
             elapsed = min(1800, self.playback_seconds())
             state = 0 if self.stopped else 4 if self.media_ended() else 2
-            dropped = int(self.fault == "drop" and elapsed > 90)
+            dropped = int(self.fault == "drop" and elapsed > 90) + self.summary_induced_drops
             late = int(self.fault == "late" and elapsed > 90)
             response = (f"SESSION_STATUS session=1 state={state} kind=2 samples={int(elapsed*48000)}/86400000 decoded={int(elapsed*30)} "
                 f"displayed={int(elapsed*30)-dropped} dropped={dropped} underruns=0 volume=7 pinned=0 error=0 "
@@ -134,6 +138,9 @@ class FakeBoard:
         elif command == "ui sequence":
             response = self.sequence()
         elif command in ("measure summary", "measure stop"):
+            self.summary_audio_active.append(not self.stopped)
+            if self.fault == "summary-drop" and not self.stopped and not self.media_ended() and self.measure_elapsed() >= self.seconds:
+                self.summary_induced_drops += 1
             if command == "measure stop":
                 self.measure_stopped = True
             response = self.summary()
@@ -215,8 +222,9 @@ class RunnerTests(unittest.TestCase):
         commands = [command for _, command in board.commands]
         self.assertEqual(commands[:6], ["stop", "ui sequence stop", "session", "audio", "play " + board.media, "session"])
         self.assertLess(commands.index("measure begin 600 mips10"), commands.index("ui sequence start 600"))
-        self.assertLess(commands.index("measure summary"), len(commands) - 1 - commands[::-1].index("stop"))
-        self.assertEqual(commands[-4:], ["stop", "session", "audio", "measure dump"])
+        self.assertGreater(commands.index("measure summary"), len(commands) - 1 - commands[::-1].index("stop"))
+        self.assertEqual(commands[-5:], ["stop", "session", "audio", "measure summary", "measure dump"])
+        self.assertEqual(board.summary_audio_active, [False])
         self.assertFalse(any(command in ("metrics", "display", "volume 7", "reboot", "tone") for command in commands))
         self.assertEqual(sum(event["event"] == "progress" for event in events), 9)
         self.assertIn('\nlabel,elapsed_ms,session,', log)
@@ -256,7 +264,7 @@ class RunnerTests(unittest.TestCase):
                 self.assertFalse(any(event["event"] == "complete" for event in events))
                 commands = [command for _, command in board.commands]
                 self.assertIn("measure stop", commands)
-                self.assertEqual(commands[-2:], ["session", "audio"])
+                self.assertEqual(commands[-3:], ["session", "audio", "measure stop"])
                 self.assertTrue(events[-1]["idle_confirmed"])
 
     def test_serial_disconnect_attempts_cleanup_without_reopen(self):
@@ -286,6 +294,28 @@ class RunnerTests(unittest.TestCase):
                 self.assertTrue(events[-1]["valid"])
                 self.assertEqual(events[-1]["video_acceptance"], "needs-review")
                 self.assertEqual(events[-1]["dropped" if fault == "drop" else "late"], 1)
+
+    def test_completed_window_summary_does_not_stall_playing_audio(self):
+        # This model makes the old ordering visibly wrong: a long summary
+        # while PLAYING causes a real drop after the measurement has frozen.
+        old = FakeBoard("summary-drop")
+        old.play_started, old.measure_started, old.now, old.stopped = 0, 3, 604, False
+        old.write(b"measure summary\r")
+        self.assertEqual(old.summary_induced_drops, 1)
+        self.assertIn("dropped=0", old.summary())  # Frozen measurement remains valid.
+        board, _, events, error = exercise(fault="summary-drop")
+        self.assertIsNone(error, str(error))
+        self.assertEqual(board.summary_audio_active, [False])
+        self.assertEqual(board.summary_induced_drops, 0)
+        self.assertEqual(events[-1]["measurement_dropped"], 0)
+
+    def test_post_window_stop_drop_is_retained_separately(self):
+        _, _, events, error = exercise(fault="stop-drop")
+        self.assertIsNone(error, str(error))
+        self.assertTrue(events[-1]["collection_complete"])
+        self.assertEqual(events[-1]["measurement_dropped"], 0)
+        self.assertEqual(events[-1]["dropped"], 0)
+        self.assertEqual(events[-1]["post_stop_dropped"], 1)
 
 
 if __name__ == "__main__":

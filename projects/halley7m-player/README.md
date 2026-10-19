@@ -6,7 +6,7 @@
 
 2026-10-19：两架构独立构建、紧凑RAM合包、双FreeRTOS握手和256KiB共享校验通过，小核计时器实测校准为576MHz。FELIX跨3个GOP的90帧Y/UV CRC全部与PC一致；用户确认视频方向、颜色、中文媒体库和长按菜单正常。已接通音频主时钟的AVI/WAV会话、2MiB预读与2MiB包池、LVGL双表面及三键。同步片90帧全呈现，真实TF的96017样本WAV尾段和高运动片前缀暂停恢复已通过。
 
-AMP已完成真实TF高运动片的30分钟板内稳定性验证：ENDED时86,400,000/86,400,000有效音频样本、54,000帧全部解码及呈现，drop/late和全部音频错误均为0，默认音量7%；固定GUI序列15/15轮、无abort，STOP后资源未锁住且音频inactive。采样在PLAY约3秒后才启动，CSV为1797条、1,797,734ms，未将其记作完整1800秒采样。前600秒独立CSV窗口中MIPS忙率39.941%、RV1.753%，这是AMP本轮结果；单核/AMP同窗口对照、真实跨AVIX大文件仍待验，手机声光同步按用户选择延期补测。精选证据及精确窗口口径见`VALIDATION.md`。
+AMP已完成真实TF高运动片的30分钟板内稳定性验证：ENDED时86,400,000/86,400,000有效音频样本、54,000帧全部解码及呈现，drop/late和全部音频错误均为0，默认音量7%；固定GUI序列15/15轮、无abort，STOP后资源未锁住且音频inactive。采样在PLAY约3秒后才启动，CSV为1797条、1,797,734ms，未将其记作完整1800秒采样。同片源600秒单核/AMP对照也已完成，本轮AMP的MIPS忙率高于单核，具体窗口及结束阶段差异见下；真实跨AVIX大文件仍待验，手机声光同步按用户选择延期补测。精选证据见`VALIDATION.md`。
 
 本机使用 Windows XBurst2 R5.1.6、官方 Victory0 r1.1.1 Linux 包（Ubuntu-22.04 WSL），以及 FFmpeg/ffprobe 9.0.2 essentials。Victory0 的编译器支持 `rv32imc / ilp32`，但随包 libgcc 采用 RV32E ABI，因此本工程以自身的 ILP32 `__clzsi2` / `__udivdi3` 避免混入不兼容对象，ELF 核验器也拒绝 RVE 标记。当前板测串口为用户指定的 COM52。
 
@@ -67,7 +67,7 @@ python scripts/ramload-regba.py --port COM52 --execute --wait-boot --file build/
 | --- | --- |
 | [prepare-sync-fixture.py](mips/prepare-sync-fixture.py) | `build/player-fixture/sync-flash-tone.avi`：3秒白闪/1500Hz短音，同帧事件，用于短链路与实拍工具准备。 |
 | [prepare-acceptance-fixture.py](mips/prepare-acceptance-fixture.py) | `build/player-fixture/acceptance/acceptance-30min.avi`：30分钟运动/每秒闪音片；同目录另有 `acceptance-tail-96017.wav` 验证音频尾段。 |
-| [prepare-avix-fixture.py](mips/prepare-avix-fixture.py) | `build/player-fixture/avix/sync-flash-tone-over-2gib.avi`：保持90帧/144000样本，跨1GiB与2GiB的AVI/AVIX偏移边界。 |
+| [prepare-avix-fixture.py](mips/prepare-avix-fixture.py) | `build/player-fixture/avix/sync-flash-tone-over-2gib.avi`：3秒黑底，帧15/45/75（0.5/1.5/2.5秒）各白闪1帧，共90帧/144000样本；体积来自合法JUNK区，用于跨1GiB与2GiB的AVI/AVIX偏移测试，常见黑画面符合片源内容。 |
 
 ```powershell
 python projects/halley7m-player/mips/prepare-sync-fixture.py
@@ -83,6 +83,18 @@ SW3/A 与 SW4/B 在列表前后选择、播放时调节音量、诊断页滚动�
 
 完整验收要求 720p30 有声播放30分钟、音频欠载及DMA错误为0、无持续性视频掉帧，稳态音画偏差不超过100ms且不累积。实际输出使用同帧闪光/短音样片和手机录像核验；单核/AMP以相同10分钟窗口对照。主机测试、真实编译和实板/人工验收分别记录，不相互替代。
 
+已完成同片源、7%音量和相同GUI序列的测量相对时间0..600秒对照：
+
+| 观测 | AudioOwner=mips | AudioOwner=riscv（AMP） |
+| --- | ---: | ---: |
+| MIPS忙率 / 有效CPU窗口 | 37.074% / 599.283s | 39.941% / 599.235s |
+| RV忙率 / 有效CPU窗口 | 保持reset，无窗口 | 1.753% / 599.472s |
+| 最低观测MIPS空闲堆 | 31,665,224B | 31,661,128B |
+| 冻结窗口drop / late / 音频错误 | 0 / 0 / 0 | 0 / 0 / 0 |
+| 前600秒GUI序列 | 5/5轮、无abort | 5/5轮、无abort |
+
+CPU按各核真实`window_us`加权，口径为scheduler idle，ISR归被打断任务，两核窗口边界不同步。本轮AMP的MIPS忙率增加约2.867个百分点、最低观测空闲堆少4096B；AMP约每秒10次进度事件，收发差分相等，单核无IPC。结果不支持AMP降低MIPS负载或提升稳定性的结论。MIPS测量冻结后，长CLI摘要与STOP阶段另出现drop1/late1、max_late53333us，已保留在原始日志；其冻结CSV仍为0，不将结束阶段问题隐藏或混入600秒窗口。采集器已将长摘要移到IDLE后，12项主机测试通过，尚未用修正顺序重新板测。
+
 正式采集先在STOP状态单独完成 `tf bench`，再运行固定7%音量的采集器。单核与AMP分别加载对应固件，以相同片源、`--seconds 600`、不同label/新日志进行对照；完整长片使用1800秒。采集器每60秒仅查询短状态，结束前保留ENDED证据，停止媒体后再导出CSV，不周期打印CPU摘要。运行期间不要按实体键，实体键中止GUI序列会使该次采集无效。
 
 ```powershell
@@ -91,7 +103,7 @@ python scripts/analyze-player-board.py build/player-amp30.log --window 600 --out
 python scripts/analyze-player-board.py --compare build/player-mips10.log build/player-amp10.log --window 600 --output build/player-board-analysis/comparison.json
 ```
 
-runner的 `valid=true` 表示采集流程完整；drop/late保留实际数字，非零标记 `video_acceptance=needs-review`，由日志窗口与连续性分析判断，不自动宣称720p30通过。当前正式30分钟长跑**进行中，尚未形成通过结论**；单核/AMP对照也需以各自完整日志为准。
+runner的 `valid=true` 表示采集流程完整；drop/late保留实际数字，非零标记 `video_acceptance=needs-review`，由日志窗口与连续性分析判断，不自动宣称720p30通过。当前已有上述AMP 30分钟板内稳定性及600秒对照记录；MIPS窗口结束后的掉帧与修正采集顺序后的复测仍单独记录。
 
 手机实拍按用户要求延期，尚无稳态声光偏差≤100ms的实测结论。后续使用同机、同设置与摆位拍摄1/15/29分钟附近的正常帧率片段及拍手校准，再交给声光分析脚本；其合成回归、板内PTS和计数均不能替代物理声光验收。
 

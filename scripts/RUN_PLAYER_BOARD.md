@@ -23,8 +23,10 @@ CPU 摘要。stdout 提供稀疏 JSON 进度，UART 原始行完整保留，主�
 600秒运行要求测量自然 duration 完成；1800秒允许媒体由于三秒预热比测量/UI序列
 提前约三秒 EOF。1800秒结束必须保存完整 ENDED decoded=displayed+dropped=54000、
 86400000 audio samples、零 underrun/error 和完整15次 UI cycle 的证据；
-600秒为5次 cycle。最终先采集 session/audio/gui/UI/measure summary，保存 ENDED
-证据，再停止 UI sequence、stop媒体、确认 IDLE/音频 inactive，最后导出测量 CSV。
+600秒为5次 cycle。最终先采集并验证短 session/audio/gui/UI，保存 ENDED
+证据，再停止 UI sequence、stop媒体、确认 IDLE/音频 inactive，之后才查询长
+measure summary、验证已冻结的测量记录并导出 CSV。异常清理同样先确认空闲，
+再打印 measure stop 摘要，避免长UART占用仍PLAYING的worker。
 固件导出必须具备每行 AMP heartbeat pump。脚本核对返回码、记录数与唯一末 FINAL。
 
 用户不要在正式 run 期间按实体键；任一实体按键使 UI sequence aborted，该 run
@@ -38,12 +40,17 @@ drop/late 保留实际数字，不因一次掉帧或迟帧提前中止长跑。�
 不代表720p30或实拍声光同步≤100ms通过。结果仍需 `analyze-player-board.py`
 审核，物理声光须另用校准手机录像。
 
+完成事件分别保留测量窗口 drop/late、STOP前状态和STOP后状态。边界操作之后的
+掉帧属于窗口外观测，不能回填到已冻结CSV或被隐去。首个正式MIPS600测量为
+600005ms、decoded/displayed增量18001/18001、窗口drop/late为0；旧顺序在仍播放时
+打印长摘要后，STOP状态另见1帧窗口外掉帧。原始记录保留，600秒窗口仍有效。
+
 命令完成以完整响应换行判定，session 还需完整 SESSION_QUEUES 第二行；不等待
 尾部 `player> `。真实 newlib stdout 可将没有换行的 prompt 缓存到下一次命令
 回显时才发送，不能把 prompt 当作响应结束保证。
 
 无硬件回归命令：`python scripts/test-player-runner.py`。Fake UART 按真实行缓冲方式
 分块发送响应，虚拟时间运行600/1800秒，覆盖提前EOF、拒绝、前置条件、实体键/GUI中止、
-串口断开、超时、截断CSV及异常停止确认。另将首次失败日志中的 stop/UI/session/audio
+串口断开、超时、截断CSV、异常停止确认与长摘要导致的窗口外掉帧。另将首次失败日志中的 stop/UI/session/audio
 实际响应保存为 `tests/player_runner_uart_fixture.json`，逐字节回放且不提供尾prompt。
 测试不会 import/open 真串口。
