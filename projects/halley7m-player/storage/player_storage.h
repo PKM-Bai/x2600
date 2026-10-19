@@ -38,6 +38,9 @@ typedef struct player_storage_seek_stats {
  * no silent slow-seek fallback. Close releases the map. */
 int player_storage_prepare_seek(struct player_storage_file *stream,
                                 player_storage_pump_fn pump, void *opaque);
+/* Indexed containers also need bounded backward seeks below 1GiB. */
+int player_storage_prepare_indexed_seek(struct player_storage_file *stream,
+                                        player_storage_pump_fn pump, void *opaque);
 /* Same owner; NULL stream returns the most recent file's retained stats.
  * Stats remain available after close until the next successful open. */
 int player_storage_get_seek_stats(struct player_storage_file *stream,

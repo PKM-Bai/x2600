@@ -254,12 +254,12 @@ int player_storage_open_utf8(struct player_storage_file **stream, const char *pa
     return 0;
 }
 
-int player_storage_prepare_seek(struct player_storage_file *stream,
-                                player_storage_pump_fn pump, void *opaque)
+static int prepare_seek(struct player_storage_file *stream,
+                         player_storage_pump_fn pump, void *opaque, unsigned indexed)
 {
     int result = stream_check(stream);
     if (result) return result;
-    if (stream->embedded || stream->bytes < PLAYER_STORAGE_MAP_MIN || stream->linkmap) return 0;
+    if (stream->embedded || (!indexed && stream->bytes < PLAYER_STORAGE_MAP_MIN) || stream->linkmap) return 0;
     if (!pump) return -EINVAL;
     stream->seek_stats.enabled = stream->seek_stats.required_entries = stream->seek_stats.used_entries = 0;
     stream->seek_stats.build_us = 0;
@@ -290,6 +290,18 @@ int player_storage_prepare_seek(struct player_storage_file *stream,
     stream->seek_stats.used_entries = stream->linkmap[0];
     stream->seek_stats.enabled = 1;
     return 0;
+}
+
+int player_storage_prepare_seek(struct player_storage_file *stream,
+                                player_storage_pump_fn pump, void *opaque)
+{
+    return prepare_seek(stream, pump, opaque, 0);
+}
+
+int player_storage_prepare_indexed_seek(struct player_storage_file *stream,
+                                        player_storage_pump_fn pump, void *opaque)
+{
+    return prepare_seek(stream, pump, opaque, 1);
 }
 
 int player_storage_get_seek_stats(struct player_storage_file *stream, player_storage_seek_stats *out)

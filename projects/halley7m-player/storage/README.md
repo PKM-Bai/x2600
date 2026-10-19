@@ -22,6 +22,8 @@
 
 CLMT 每个连续片段占两个 DWORD，另外有长度和终止项，4096 项支持最多 2047 个片段。图满返回 `-E2BIG`，保留所需与容量统计，清除半成品并释放内存；不静默退回播放时的慢 seek。取消或 I/O 错误也清除半图。成功的 map 属于唯一文件，直到 close 才释放，不会增加所有会话的 BSS 或为小文件保留额外堆。
 
+MP4/M4A 会在样本表和媒体 payload 之间回退，新增 `player_storage_prepare_indexed_seek` 让这类文件在不足 1GiB 时也建立同样的有界 CLMT。原顺序 AVI/WAV 入口和阈值保持原有行为，内存片源仍无需建图。小文件显式建图、必需 pump、重复调用不重建及 close 释放已通过生产适配器主机回归；原真实 FatFs 大文件回归也通过。新格式在 TF 上的定位时延由集成板测记录。
+
 `_USE_FASTSEEK=1` 仅用于播放器派生 FatFs。`prepare-storage.py` 在 build 内的 `ff.c` 的 CREATE_LINKMAP 内层 FAT 步插入 `player_storage_clmt_step`，原 SDK/ReGBA 源文件不变。计数跨片段连续，每 256 次 FAT 步调用一次用户 pump 并 `vTaskDelay(1)`，初末也调用 pump，避免每簇等待一个 tick 的长启动。pump 返回非零可取消，且不能重入 FatFs；生产调用负责维护 AMP 并观察 STOP。图建立后，后续随机 JUNK/AVIX 跳转根据内存片段表定位，不逐次遍历 GiB FAT 链。
 
 `player_storage_get_seek_stats(stream, &stats)` 返回 `enabled/capacity_entries/required_entries/used_entries/build_us/seek_calls/max_seek_us`；传 NULL stream 读取最近文件的统计。close 后保留统计到下一次成功 open，便于停止后诊断。`build_us` 单列建图成本，`seek_calls/max_seek_us` 记录实际定位调用，包含所需的数据扇区缓存读取。最大 4GiB-1 的 EOF offset 与 FatFs 的 CREATE_LINKMAP 哨兵值相同，适配器用末字节读取完成这一 EOF 定位，保留原来小于 4GiB 的偏移契约。

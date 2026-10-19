@@ -13,6 +13,7 @@ static unsigned open_calls, seek_calls, read_calls, closed_directories, closed_f
 static FRESULT next_read_result = FR_OK;
 static FRESULT mount_result = FR_NOT_READY;
 static unsigned gpio_probes;
+static unsigned map_calls, pump_calls;
 static uint16_t last_path[512];
 static uint64_t now_us;
 uint64_t platform_time_us(void) { return now_us++; }
@@ -46,7 +47,16 @@ FRESULT f_read(FIL *fp, void *buffer, UINT bytes, UINT *received)
     return FR_OK;
 }
 FRESULT f_lseek(FIL *fp, FSIZE_t offset)
-{ ++seek_calls; assert(offset <= fp->obj.objsize); fp->fptr = offset; return FR_OK; }
+{
+    ++seek_calls;
+    if (offset == CREATE_LINKMAP) {
+        assert(fp->cltbl && fp->cltbl[0] >= 4u);
+        ++map_calls; fp->cltbl[0] = 4; fp->cltbl[1] = 1; fp->cltbl[2] = 2; fp->cltbl[3] = 0;
+        return FR_OK;
+    }
+    assert(offset <= fp->obj.objsize); fp->fptr = offset; return FR_OK;
+}
+static int seek_pump(void *opaque) { assert(opaque == &pump_calls); ++pump_calls; return 0; }
 FRESULT f_opendir(DIR *directory, const TCHAR *path)
 { assert(path[0] != 0); directory->index = 0; return FR_OK; }
 FRESULT f_readdir(DIR *directory, FILINFO *entry)
@@ -168,6 +178,11 @@ int main(void)
     before = seek_calls;
     assert(player_storage_prepare_seek(file, NULL, NULL) == 0 && seek_calls == before);
     assert(player_storage_get_seek_stats(file, &seek_stats) == 0 && !seek_stats.capacity_entries);
+    assert(player_storage_prepare_indexed_seek(file, NULL, NULL) == -EINVAL);
+    assert(player_storage_prepare_indexed_seek(file, seek_pump, &pump_calls) == 0);
+    assert(map_calls == 1 && pump_calls == 2);
+    assert(player_storage_get_seek_stats(file, &seek_stats) == 0 && seek_stats.enabled && seek_stats.used_entries == 4);
+    assert(player_storage_prepare_indexed_seek(file, seek_pump, &pump_calls) == 0 && map_calls == 1);
     io = player_storage_io(file);
     assert(io->seek(io->opaque, 17) == -EOVERFLOW);
     assert(player_storage_close(file) == 0);
