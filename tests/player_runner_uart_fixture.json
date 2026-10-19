@@ -1,0 +1,27 @@
+{
+  "source": "build\\player-amp30-formal.log",
+  "source_sha256": "e0fc30df594b46e573d757e737ce2fb7cbdbd79547ab63a57d4fc680769d9198",
+  "note": "Actual failed first runner attempt; board remained IDLE. Newlib sends no trailing prompt until the next echoed command newline.",
+  "responses": [
+    {
+      "command": "stop",
+      "marker": "SESSION_POST",
+      "wire": "player> stop\r\nSESSION_POST request=2147483649 kind=5 result=0\r\n"
+    },
+    {
+      "command": "ui sequence stop",
+      "marker": "UI_SEQUENCE",
+      "wire": "player> ui sequence stop\r\nUI_SEQUENCE active=0 reason=0 phase=0 cycles_started=0 cycles_completed=0 elapsed_ms=0 duration_ms=0 keys=000 aborted=0 cancel_may_emit_short=0\r\n"
+    },
+    {
+      "command": "session",
+      "marker": "SESSION_STATUS",
+      "wire": "player> session\r\nSESSION_STATUS session=0 state=0 kind=0 samples=0/0 decoded=0 displayed=0 dropped=0 underruns=0 volume=7 pinned=0 error=0 request=2147483650 result=0 path= detail=\r\nSESSION_QUEUES late=0 max_late_us=0 video_packets=0 audio_packets=0 pcm_queued=0\r\n"
+    },
+    {
+      "command": "audio",
+      "marker": "AUDIO_STATUS",
+      "wire": "player> audio\r\nAUDIO_STATUS session=0 state=0 active=0 total=0 written=0 completed=0 underruns=0 volume=0 clock_valid=0 error=0 dma_errors=0 dma_timeouts=0 queue_underruns=0 fifo_underruns=0\r\n"
+    }
+  ]
+}

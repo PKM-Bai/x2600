@@ -25,6 +25,9 @@
 - `projects/halley7m-player/mips/test-session.py`：真实FFmpeg片源、生产会话生命周期和33.033ms周期DPU模型。
 - `scripts/test-player-gui.py`：实际LVGL的headless三页截图、双表面、真实显示driver边界与按键回调，无SDL。
 - `scripts/test-player-measurement.py`：RAM一秒采样、CPU缓存、计数回绕、CSV和EOF/STOP范围验证。
+- [run-player-board.py](../../scripts/run-player-board.py)：按固定顺序执行600/1800秒采集、GUI操作序列和STOP后CSV导出，保留原始UART行；用法见[运行说明](../../scripts/RUN_PLAYER_BOARD.md)。
+- [analyze-player-board.py](../../scripts/analyze-player-board.py)：分析原始日志/CSV，按真实CPU窗口加权，对照单核与AMP的同一600秒窗口，另核对完整媒体结束证据。
+- [analyze-player-sync.py](../../scripts/analyze-player-sync.py)：独立分析手机录像的闪光/1500Hz短音与拍手校准；用法见[声光分析说明](../../scripts/PLAYER_SYNC.md)，不以板内PTS代替实拍。
 
 ```powershell
 python scripts/make-player-probe-media.py --frames 90
@@ -52,15 +55,43 @@ python scripts/ramload-regba.py --port COM52 --execute --wait-boot --file build/
 
 主核负责存储、解封装、H.264、显示、LVGL 和三键；小核负责共享 PCM 消费、AIC/Codec/主 PDMA。两核通过共享环和邮箱通信，256KiB PCM 环在共享区内，音频播放进度作为视频主时钟。
 
-## 媒体与输入契约
+## 媒体准备与输入契约
 
 视频由电脑先保持比例补黑，再顺时针预旋转为 720×1280。使用 AVI / H264 FourCC，Baseline L3.1、YUV420、30fps、单参考、无 B 帧、GOP30、Annex B、重复 SPS/PPS 和 AUD；目标/最大/VBV 为 2/3/3Mbit。音频为 48kHz / S16LE / mono PCM；独立音频使用 WAV。支持 AVI/AVIX 顺序跨段，文件小于 4GiB，首版无进度跳转。
+
+普通片源用 [prepare-player-media.py](../../scripts/prepare-player-media.py) 转换为 `.avi` 或 `.wav`，也可用 `--validate-only` 检查已有产物。受控验收片源有三个独立入口，脚本只准备PC本地产物，不写TF卡：
+
+| 准备脚本 | 默认产物与用途 |
+| --- | --- |
+| [prepare-sync-fixture.py](mips/prepare-sync-fixture.py) | `build/player-fixture/sync-flash-tone.avi`：3秒白闪/1500Hz短音，同帧事件，用于短链路与实拍工具准备。 |
+| [prepare-acceptance-fixture.py](mips/prepare-acceptance-fixture.py) | `build/player-fixture/acceptance/acceptance-30min.avi`：30分钟运动/每秒闪音片；同目录另有 `acceptance-tail-96017.wav` 验证音频尾段。 |
+| [prepare-avix-fixture.py](mips/prepare-avix-fixture.py) | `build/player-fixture/avix/sync-flash-tone-over-2gib.avi`：保持90帧/144000样本，跨1GiB与2GiB的AVI/AVIX偏移边界。 |
+
+```powershell
+python projects/halley7m-player/mips/prepare-sync-fixture.py
+python projects/halley7m-player/mips/prepare-acceptance-fixture.py
+python projects/halley7m-player/mips/prepare-avix-fixture.py
+```
+
+当前TF目录为 `0:/multimedia/video/` 放AVI、`0:/multimedia/audio/` 放WAV；正式长片路径为 `0:/multimedia/video/acceptance-30min.avi`。生成后需另行拷卡，再通过媒体库或 `play <路径>` 打开。大AVIX产物在PC上使用稀疏JUNK区，拷到FAT32后会实际占用2GiB以上；**仍待拷卡与跨段实板播放验收**，不能以PC解析/解码代替。
 
 SW3/A 与 SW4/B 在列表前后选择、播放时调节音量、诊断页滚动；按住350ms后每100ms重复。SW6/Start 短按确认或暂停/继续、诊断返回，长按800ms打开/关闭菜单，长按释放不再短按。连续短按逐次生效，无双击/三击命令。首版不使用蓝牙或触摸。
 
 ## 验收
 
 完整验收要求 720p30 有声播放30分钟、音频欠载及DMA错误为0、无持续性视频掉帧，稳态音画偏差不超过100ms且不累积。实际输出使用同帧闪光/短音样片和手机录像核验；单核/AMP以相同10分钟窗口对照。主机测试、真实编译和实板/人工验收分别记录，不相互替代。
+
+正式采集先在STOP状态单独完成 `tf bench`，再运行固定7%音量的采集器。单核与AMP分别加载对应固件，以相同片源、`--seconds 600`、不同label/新日志进行对照；完整长片使用1800秒。采集器每60秒仅查询短状态，结束前保留ENDED证据，停止媒体后再导出CSV，不周期打印CPU摘要。运行期间不要按实体键，实体键中止GUI序列会使该次采集无效。
+
+```powershell
+python scripts/run-player-board.py --port COM52 --media 0:/multimedia/video/acceptance-30min.avi --seconds 1800 --label amp30 --log build/player-amp30.log
+python scripts/analyze-player-board.py build/player-amp30.log --window 600 --output build/player-board-analysis/amp30.json
+python scripts/analyze-player-board.py --compare build/player-mips10.log build/player-amp10.log --window 600 --output build/player-board-analysis/comparison.json
+```
+
+runner的 `valid=true` 表示采集流程完整；drop/late保留实际数字，非零标记 `video_acceptance=needs-review`，由日志窗口与连续性分析判断，不自动宣称720p30通过。当前正式30分钟长跑**进行中，尚未形成通过结论**；单核/AMP对照也需以各自完整日志为准。
+
+手机实拍按用户要求延期，尚无稳态声光偏差≤100ms的实测结论。后续使用同机、同设置与摆位拍摄1/15/29分钟附近的正常帧率片段及拍手校准，再交给声光分析脚本；其合成回归、板内PTS和计数均不能替代物理声光验收。
 
 现有 ReGBA Release 基线重新构建为2308336字节，SHA256 `6d5a7e99a36c812776d7427c9ae3b2e8edf29666256f42ac1f3d57b8bfb378e6`；其完整主机回归通过。本次未更新 NOR。
 
