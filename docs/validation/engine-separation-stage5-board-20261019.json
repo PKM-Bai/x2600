@@ -1,0 +1,960 @@
+{
+  "schema_version": 1,
+  "date": "2026-10-19",
+  "phase": 5,
+  "status": "PASS",
+  "full_phase_gate_pass": true,
+  "description": "本次阶段 5 的软件与规定实板门禁通过：核心、TF 原生存档、GUI、真实 ROM 性能、32MiB、音频生命周期、660 秒联合稳定性及正常卸载均有证据；4× 实测性能限制单独保留。",
+  "software_snapshot": "docs/validation/engine-separation-stage5-20261019.json",
+  "firmware_source_commit": "14ce18bac6adf42f75ca07c81a1f6deafeaeb7f2",
+  "validation_tools_commit": "999f88a7ac24f189f5afe948f038b8f20653c18a",
+  "engine": "mGBA",
+  "mgba_version": "0.10.5",
+  "native_save_directory": "/GBA/SAVES/mGBA",
+  "firmware": {
+    "archive": "build/firmware-revisions/engine-stage5-final-20261019/mgba-Release",
+    "binary_bytes": 2386540,
+    "crc32": "3d64aa82",
+    "sha256": "b13fa27e635421662e3ac0f92fd17c374c24d4892a7e4112ed381eb530341ab1",
+    "entry": "0x80600000",
+    "ram_load_pass": true,
+    "ram_load_evidence": "ram_load_log",
+    "nor_written": false
+  },
+  "core_board": {
+    "status": "PASS",
+    "evidence": [
+      "core_initial_json",
+      "core_and_gpio_log"
+    ],
+    "frames": 120,
+    "elapsed_us": 2007070,
+    "rgb555_crc32": "19b3e686",
+    "irq_count": 114,
+    "mailbox_actual": [
+      42,
+      55,
+      66,
+      77,
+      6,
+      24589
+    ],
+    "mailbox_expected": [
+      42,
+      55,
+      66,
+      77,
+      6,
+      24589
+    ],
+    "core_stack_min_remaining_bytes": 242456,
+    "core_stack_allocated_bytes": 245760,
+    "audio_requested": false,
+    "scope": "内置 CPU 诊断及 LCD 通路；此项未请求音频，不包含 TF 保存或商业 ROM。"
+  },
+  "tf_power_recovery": {
+    "status": "RECOVERED",
+    "evidence": [
+      "initial_mount_retry_log",
+      "core_and_gpio_log",
+      "tf_reconnected_log"
+    ],
+    "initial_mount_pass": false,
+    "initial_cmd0_r1": "ff",
+    "initial_gpio_trials": 8,
+    "initial_gpio_passed": 0,
+    "user_report": "发现 TF 卡座供电线松动",
+    "operation": "按原针脚插牢供电线后拔卡约 5 秒再插入，保持 RAM 固件且未复位",
+    "recovered_mount_pass": true,
+    "filesystem": "FAT32",
+    "sectors": 62333952,
+    "cluster_sectors": 64,
+    "spi_data_hz": 18750000,
+    "listed_chinese_roms": 8,
+    "scope": "记录供电接触故障及恢复；早期无响应不记作适配器验收通过。"
+  },
+  "native_save_roundtrip": {
+    "status": "PASS",
+    "evidence": [
+      "native_roundtrip_json",
+      "native_roundtrip_log"
+    ],
+    "scenario": "三类内置诊断分别验证自动保存 A/1、手动保存 B/2、停止落盘 A/3及每次重载；全文件 CRC 与客体内容一致。",
+    "kinds": [
+      {
+        "kind": "sram",
+        "bytes": 32768,
+        "auto_A1_crc32": "5868628d",
+        "manual_B2_crc32": "ea94c97d",
+        "stop_A3_crc32": "f223ae84",
+        "path": "/GBA/SAVES/mGBA/__save_sram.sav",
+        "reloaded_write_events": 0
+      },
+      {
+        "kind": "flash",
+        "bytes": 65536,
+        "auto_A1_crc32": "1c69ce88",
+        "manual_B2_crc32": "122a3817",
+        "stop_A3_crc32": "9aede117",
+        "path": "/GBA/SAVES/mGBA/__save_flash.sav",
+        "reloaded_write_events": 0
+      },
+      {
+        "kind": "eeprom",
+        "bytes": 512,
+        "auto_A1_crc32": "248d5c5d",
+        "manual_B2_crc32": "562c2112",
+        "stop_A3_crc32": "f5d9ea32",
+        "path": "/GBA/SAVES/mGBA/__save_eeprom.sav",
+        "reloaded_write_events": 0
+      }
+    ],
+    "save_queued_initial": 0,
+    "save_completed_initial": 0,
+    "save_queued_final": 9,
+    "save_completed_final": 9,
+    "save_errors": 0,
+    "save_busy": 0,
+    "muted_all_selected_states": true,
+    "nonzero_pcm": false,
+    "zero_pcm_dma_verified": true,
+    "scope": "真实 TF 文件与内置存档诊断；零样本 PCM 的 DMA 活动不延伸为真实游戏声音结论。"
+  },
+  "native_cleanup": {
+    "status": "PASS",
+    "evidence": [
+      "native_cleanup_json",
+      "native_cleanup_log"
+    ],
+    "first_empty_heap_bytes": 49904784,
+    "first_empty_heap_evidence": "initial_mount_retry_log",
+    "warm_empty_heap_bytes": 49904352,
+    "first_warmup_retained_bytes": 432,
+    "loaded_before_exit_heap_bytes": 47676048,
+    "reclaimed_bytes": 2228304,
+    "final": {
+      "heap_free_bytes": 49904352,
+      "ui_page": 0,
+      "ui_showing": 1,
+      "rom_loaded": 0,
+      "core_running": 0,
+      "audio_running": 0,
+      "audio_requested": 0,
+      "audio_muted": 1,
+      "volume": 100,
+      "frameskip": 0,
+      "speed": 1,
+      "save_queued": 9,
+      "save_completed": 9,
+      "save_errors": 0,
+      "save_busy": 0,
+      "backup_dirty": 0,
+      "backup_in_flight": 0,
+      "backup_requested": 0,
+      "lcd_underrun": 0
+    }
+  },
+  "gui_reload_first_attempt": {
+    "status": "TOOL_SYNCHRONIZATION_FAILURE",
+    "evidence": [
+      "gui_reload_first_json",
+      "gui_reload_first_log"
+    ],
+    "failed_stage": "boot-A-after-reload",
+    "cause": "before-run 与串口回显交错，将 time_us= 行拆开；状态采集未建立起点，虽原始 audio_timing 行存在仍报不完整。",
+    "correction": "释放第二次 A 后先消费启动诊断输出，再开始首次状态采样；状态完整性和存档验收条件保持。",
+    "corrected_tools_commit": "999f88a7ac24f189f5afe948f038b8f20653c18a",
+    "rerun_status": "PASS",
+    "rerun_evidence": "gui_reload_r2_json"
+  },
+  "gui_native_reload": {
+    "status": "PASS",
+    "evidence": [
+      "gui_reload_r2_json",
+      "gui_reload_r2_log"
+    ],
+    "status_samples": 70,
+    "scenario": "GUI 保存 A 后产生未保存 B，暂停与确认界面保持 B dirty、TF 文件仍为 A；缓存 ROM 读档重启后恢复 A，writes=0，不回写 B。",
+    "kinds": [
+      {
+        "kind": "sram",
+        "saved_A_count": 5,
+        "unsaved_B_count": 6,
+        "bytes": 32768,
+        "saved_A_crc32": "d78efcde",
+        "paused_B_card_crc32": "d78efcde",
+        "reloaded_A_crc32": "d78efcde",
+        "reloaded_writes": 0,
+        "write_B_to_pause_seconds": 0.9156945999711752
+      },
+      {
+        "kind": "flash",
+        "saved_A_count": 4,
+        "unsaved_B_count": 5,
+        "bytes": 65536,
+        "saved_A_crc32": "64ea0318",
+        "paused_B_card_crc32": "64ea0318",
+        "reloaded_A_crc32": "64ea0318",
+        "reloaded_writes": 0,
+        "write_B_to_pause_seconds": 2.042066199996043
+      },
+      {
+        "kind": "eeprom",
+        "saved_A_count": 4,
+        "unsaved_B_count": 5,
+        "bytes": 512,
+        "saved_A_crc32": "d847eed5",
+        "paused_B_card_crc32": "d847eed5",
+        "reloaded_A_crc32": "d847eed5",
+        "reloaded_writes": 0,
+        "write_B_to_pause_seconds": 1.2002865000395104
+      }
+    ],
+    "heap_before_bytes": 49904352,
+    "heap_after_bytes": 49904352,
+    "save_completed_initial": 10,
+    "save_completed_final": 13,
+    "muted_all_samples": true,
+    "zero_audio_lcd_save_errors": true
+  },
+  "dragon_cpu_profile": {
+    "status": "PASS",
+    "evidence": [
+      "dragon_profile_json",
+      "dragon_profile_log"
+    ],
+    "rom": "/gba_game/龙珠大冒险.gba",
+    "source_rom_bytes": 14357872,
+    "mapped_rom_buffer_bytes": 16777216,
+    "cpu_window_us": 10001659,
+    "busy_percent": 37.37,
+    "idle_percent": 62.63,
+    "accounted_percent": 100.0,
+    "task_count": 8,
+    "tasks": [
+      {
+        "name": "console",
+        "priority": 3,
+        "runtime_us": 617,
+        "cpu_pct": 0.0,
+        "stack_free_bytes": 11904
+      },
+      {
+        "name": "mGBA",
+        "priority": 3,
+        "runtime_us": 3726804,
+        "cpu_pct": 37.26,
+        "stack_free_bytes": 242248
+      },
+      {
+        "name": "IDLE",
+        "priority": 0,
+        "runtime_us": 6264947,
+        "cpu_pct": 62.63,
+        "stack_free_bytes": 1544
+      },
+      {
+        "name": "audio",
+        "priority": 6,
+        "runtime_us": 5352,
+        "cpu_pct": 0.05,
+        "stack_free_bytes": 3512
+      },
+      {
+        "name": "buttons",
+        "priority": 4,
+        "runtime_us": 3947,
+        "cpu_pct": 0.03,
+        "stack_free_bytes": 2504
+      },
+      {
+        "name": "battery_save",
+        "priority": 2,
+        "runtime_us": 0,
+        "cpu_pct": 0.0,
+        "stack_free_bytes": 5736
+      },
+      {
+        "name": "Tmr Svc",
+        "priority": 2,
+        "runtime_us": 0,
+        "cpu_pct": 0.0,
+        "stack_free_bytes": 2512
+      },
+      {
+        "name": "filesystem",
+        "priority": 3,
+        "runtime_us": 0,
+        "cpu_pct": 0.0,
+        "stack_free_bytes": 1896
+      }
+    ],
+    "accounting": "FreeRTOS 任务运行时间统计，ISR 时间计入被中断任务。",
+    "fps_observation_seconds": 10.278711,
+    "gba_frame_delta": 614,
+    "gba_fps": 59.735116591954,
+    "lcd_vblank_delta": 311,
+    "lcd_hz": 30.25671214999624,
+    "presented_frame_delta": 310,
+    "presented_fps": 30.15942368649143,
+    "loaded_heap_min_bytes": 33094288,
+    "loaded_heap_max_bytes": 33094288,
+    "pcm_nonzero_initial": 363837,
+    "pcm_nonzero_final": 812632,
+    "pcm_nonzero_delta": 448795,
+    "dma_completions_delta": 1028,
+    "muted_all_samples": true,
+    "zero_audio_lcd_save_errors": true,
+    "save_queued_after": 14,
+    "save_completed_after": 14,
+    "last_save_worker_crc32": "9895d2de",
+    "scope": "本段短测的 FPS 观察窗口与 CPU 采样窗口分别记录；停止时 ROM 尚载入，卸载另见后续证据。"
+  },
+  "real_pcm_audio_lifecycle": {
+    "status": "PASS",
+    "evidence": [
+      "audio_lifecycle_json",
+      "audio_lifecycle_log"
+    ],
+    "rom": "/gba_game/龙珠大冒险.gba",
+    "observations": 36,
+    "normal_off_resume_rounds": 5,
+    "back_to_back_off_silent_rounds": 5,
+    "startup_cancel_stop_and_run": "PASS",
+    "nonzero_pcm_observed": true,
+    "muted_all_samples": true,
+    "zero_audio_lcd_save_errors": true,
+    "loaded_heap_min_bytes": 33094288,
+    "loaded_heap_max_bytes": 33094288,
+    "max_ready_gap_us": 28930,
+    "max_dma_restart_us": 7,
+    "final_stream_nonzero_input_frames": 45865,
+    "final_stream_dma_completions": 98,
+    "final_core_running": 0,
+    "final_audio_running": 0,
+    "save_completed_after": 14,
+    "scope": "全程静音验证真实非零 PCM、DMA 和启停生命周期；不包含听感验收。"
+  },
+  "commercial_rom_normal_unload": {
+    "status": "PASS",
+    "evidence": [
+      "dragon_cleanup_json",
+      "dragon_cleanup_log"
+    ],
+    "rom": "/gba_game/龙珠大冒险.gba",
+    "warm_empty_heap_bytes": 49904352,
+    "loaded_heap_bytes": 33094288,
+    "final_empty_heap_bytes": 49904352,
+    "heap_delta_from_warm_bytes": 0,
+    "final": {
+      "heap_free_bytes": 49904352,
+      "ui_page": 0,
+      "ui_showing": 1,
+      "rom_loaded": 0,
+      "core_running": 0,
+      "audio_running": 0,
+      "audio_requested": 0,
+      "audio_muted": 1,
+      "volume": 100,
+      "frameskip": 0,
+      "speed": 1,
+      "save_queued": 14,
+      "save_completed": 14,
+      "save_errors": 0,
+      "save_busy": 0,
+      "backup_dirty": 0,
+      "backup_in_flight": 0,
+      "backup_requested": 0,
+      "lcd_underrun": 0
+    }
+  },
+  "gui_options": {
+    "status": "PASS",
+    "evidence": [
+      "gui_options_json",
+      "gui_options_log"
+    ],
+    "status_samples": 55,
+    "rom": "/gba_game/龙珠大冒险.gba",
+    "load_seconds": 12.993412900017574,
+    "volume_range": [
+      0,
+      100
+    ],
+    "frameskip_range": [
+      0,
+      3
+    ],
+    "normal_fps": 60.2,
+    "frameskip_1_running_fps": 59.8,
+    "selected_speed_2_fps": 119.3,
+    "selected_speed_4_fps": 153.0,
+    "selected_speed_4_cpu_percent": 100.0,
+    "four_x_target_met": false,
+    "restored_speed_1_fps": 59.7,
+    "save_bytes": 32768,
+    "save_crc32": "9895d2de",
+    "cached_reload_seconds": 0.20710720005445182,
+    "heap_before_bytes": 49904352,
+    "heap_after_bytes": 49904352,
+    "muted_all_samples": true,
+    "zero_audio_lcd_save_errors": true,
+    "final": {
+      "heap_free_bytes": 49904352,
+      "ui_page": 0,
+      "ui_showing": 1,
+      "rom_loaded": 0,
+      "core_running": 0,
+      "audio_running": 0,
+      "audio_requested": 0,
+      "audio_muted": 1,
+      "volume": 100,
+      "frameskip": 0,
+      "speed": 1,
+      "save_queued": 15,
+      "save_completed": 15,
+      "save_errors": 0,
+      "save_busy": 0,
+      "backup_dirty": 0,
+      "backup_in_flight": 0,
+      "backup_requested": 0,
+      "lcd_underrun": 0
+    },
+    "performance_limit": "菜单 4× 已选择，实际 153.0 FPS、CPU 100%，未达到 225～245 FPS 目标；功能通过不代表实际达到 4×。"
+  },
+  "pending_checks": {},
+  "manual_display_feedback_recorded": true,
+  "cross_engine_save_interchange_validated": false,
+  "scope_limits": [
+    "本文件仅记录本次阶段 5 门禁，不包含阶段 6 工作，也不延伸为所有 ROM、关卡或冷启动覆盖。",
+    "菜单 4× 选择功能通过，Dragon 实测 153.0 FPS、CPU 100%，four_x_target_met=false，未达到 225～245 FPS 目标。",
+    "堆最小和最大值仅表示状态采样结果，不是全时堆占用峰值。",
+    "真实商业游戏具体剧情保存点恢复、听感及跨引擎存档互换未验证。",
+    "阶段 5 联合时长为 660.237 秒；阶段 4 独立 1800 秒结果不作为本轮时长。",
+    "早期 TF 接触故障及首次 GUI 工具同步失败保留原始证据，后续成功不改写前次结果。",
+    "只发布本摘要和证据路径、长度、SHA256；不发布 ROM、存档或原始日志。"
+  ],
+  "large_32_mib_board": {
+    "status": "PASS",
+    "evidence": [
+      "large_profile_json",
+      "large_profile_log",
+      "large_save_cleanup_json",
+      "large_save_cleanup_log"
+    ],
+    "rom": "/gba_game/口袋妖怪究极绿宝石-v5.4.gba",
+    "source_rom_bytes": 33554432,
+    "mapped_rom_buffer_bytes": 33554432,
+    "cpu_window_us": 10001671,
+    "busy_percent": 34.64,
+    "idle_percent": 65.36,
+    "accounted_percent": 99.99,
+    "task_count": 8,
+    "tasks": [
+      {
+        "name": "console",
+        "priority": 3,
+        "runtime_us": 615,
+        "cpu_pct": 0.0,
+        "stack_free_bytes": 11904
+      },
+      {
+        "name": "mGBA",
+        "priority": 3,
+        "runtime_us": 3453760,
+        "cpu_pct": 34.53,
+        "stack_free_bytes": 242248
+      },
+      {
+        "name": "IDLE",
+        "priority": 0,
+        "runtime_us": 6537986,
+        "cpu_pct": 65.36,
+        "stack_free_bytes": 1544
+      },
+      {
+        "name": "audio",
+        "priority": 6,
+        "runtime_us": 5464,
+        "cpu_pct": 0.05,
+        "stack_free_bytes": 3512
+      },
+      {
+        "name": "buttons",
+        "priority": 4,
+        "runtime_us": 3842,
+        "cpu_pct": 0.03,
+        "stack_free_bytes": 2504
+      },
+      {
+        "name": "Tmr Svc",
+        "priority": 2,
+        "runtime_us": 0,
+        "cpu_pct": 0.0,
+        "stack_free_bytes": 2512
+      },
+      {
+        "name": "battery_save",
+        "priority": 2,
+        "runtime_us": 0,
+        "cpu_pct": 0.0,
+        "stack_free_bytes": 5736
+      },
+      {
+        "name": "filesystem",
+        "priority": 3,
+        "runtime_us": 0,
+        "cpu_pct": 0.0,
+        "stack_free_bytes": 1896
+      }
+    ],
+    "fps_observation_seconds": 10.281711,
+    "gba_frame_delta": 614,
+    "gba_fps": 59.717687065897884,
+    "lcd_vblank_delta": 311,
+    "lcd_hz": 30.24788383956717,
+    "presented_frame_delta": 311,
+    "presented_fps": 30.24788383956717,
+    "loaded_heap_min_bytes": 16218768,
+    "loaded_heap_max_bytes": 16218768,
+    "pcm_nonzero_initial": 344301,
+    "pcm_nonzero_final": 797649,
+    "pcm_nonzero_delta": 453348,
+    "dma_completions_delta": 1028,
+    "muted_all_samples": true,
+    "zero_audio_lcd_save_errors": true,
+    "native_save": {
+      "result": 0,
+      "path": "/GBA/SAVES/mGBA/口袋妖怪究极绿宝石-v5.4.sav",
+      "bytes": 131072,
+      "crc32": "154803cc",
+      "tf_crc_readback_verified": true,
+      "in_game_progress_restoration_verified": false
+    },
+    "normal_gui_unload": {
+      "status": "PASS",
+      "warm_empty_heap_bytes": 49904352,
+      "final_empty_heap_bytes": 49904352,
+      "heap_delta_from_warm_bytes": 0,
+      "final": {
+        "heap_free_bytes": 49904352,
+        "ui_page": 0,
+        "ui_showing": 1,
+        "rom_loaded": 0,
+        "core_running": 0,
+        "audio_running": 0,
+        "audio_requested": 0,
+        "audio_muted": 1,
+        "volume": 100,
+        "frameskip": 0,
+        "speed": 1,
+        "save_queued": 16,
+        "save_completed": 16,
+        "save_errors": 0,
+        "save_busy": 0,
+        "backup_dirty": 0,
+        "backup_in_flight": 0,
+        "backup_requested": 0,
+        "lcd_underrun": 0
+      }
+    },
+    "scope": "本段 32MiB 实际 ROM 短测、128KiB 原生存档落盘及 TF CRC 读回、正常 GUI 卸载；不声称具体剧情保存点恢复。"
+  },
+  "gui_switch_and_cached_large_reload": {
+    "status": "PASS",
+    "evidence": [
+      "gui_switch_json",
+      "gui_switch_log"
+    ],
+    "status_samples": 21,
+    "sequence": [
+      {
+        "name": "口袋妖怪 - 蓝宝石[Elite&口袋妖怪网](386)(简)(JP)(64.98Mb).gba",
+        "bytes": 8518208,
+        "load_seconds": 8.06268790003378
+      },
+      {
+        "name": "龙珠大冒险.gba",
+        "bytes": 14357872,
+        "load_seconds": 12.981549299962353
+      },
+      {
+        "name": "口袋妖怪究极绿宝石-v5.4.gba",
+        "bytes": 33554432,
+        "load_seconds": 28.68467830005102
+      },
+      {
+        "name": "口袋妖怪 - 蓝宝石[Elite&口袋妖怪网](386)(简)(JP)(64.98Mb).gba",
+        "bytes": 8518208,
+        "load_seconds": 8.051337499986403
+      }
+    ],
+    "large_rom": "/gba_game/口袋妖怪究极绿宝石-v5.4.gba",
+    "large_running_heap_bytes": 16218768,
+    "large_save_bytes": 131072,
+    "large_save_crc32": "154803cc",
+    "large_cached_reload_seconds": 0.21062290004920214,
+    "rom_reread_during_cached_reload": false,
+    "heap_retained_bytes_after_exit": 0,
+    "heap_before_bytes": 49904352,
+    "heap_after_bytes": 49904352,
+    "muted_all_samples": true,
+    "zero_audio_lcd_save_errors": true,
+    "save_queued_final": 16,
+    "save_completed_final": 16,
+    "final": {
+      "heap_free_bytes": 49904352,
+      "ui_page": 0,
+      "ui_showing": 1,
+      "rom_loaded": 0,
+      "core_running": 0,
+      "audio_running": 0,
+      "audio_requested": 0,
+      "audio_muted": 1,
+      "volume": 100,
+      "frameskip": 0,
+      "speed": 1,
+      "save_queued": 16,
+      "save_completed": 16,
+      "save_errors": 0,
+      "save_busy": 0,
+      "backup_dirty": 0,
+      "backup_in_flight": 0,
+      "backup_requested": 0,
+      "lcd_underrun": 0
+    },
+    "scope": "四次 GUI 启动、小 ROM 到 Dragon 到 32MiB 再回小 ROM、缓存 ROM 读档及正常退出；不验证剧情保存点。"
+  },
+  "joint_stability": {
+    "status": "PASS",
+    "evidence": [
+      "soak_log",
+      "soak_summary_json",
+      "soak_summary_parser"
+    ],
+    "completed": true,
+    "rom": "/gba_game/龙珠大冒险.gba",
+    "mode": "静音真实非零 PCM、LCD、TF 联合测试",
+    "requested_seconds": 660.0,
+    "actual_host_seconds": 660.237,
+    "actual_board_seconds": 660.22602,
+    "board_elapsed_us": 660226020,
+    "status_samples": 16,
+    "complete_status_samples": 16,
+    "running_status_samples": 12,
+    "issues": [],
+    "first_running_status_line": 79,
+    "first_running_status_time_us": 1337896246,
+    "formal_frame_initial": 291,
+    "formal_frame_final": 39725,
+    "formal_frame_delta": 39434,
+    "average_gba_fps": 59.72803071287618,
+    "lcd_vblank_delta": 19986,
+    "average_lcd_hz": 30.27145158562518,
+    "lcd_presented_delta": 19987,
+    "average_presented_fps": 30.272966218447436,
+    "sampled_loaded_heap_min_bytes": 32995984,
+    "sampled_loaded_heap_max_bytes": 32995984,
+    "core_stack_min_remaining_bytes": 242248,
+    "core_stack_allocated_bytes": 245760,
+    "audio_nonzero_delta": 28030874,
+    "audio_dma_completions_delta": 66023,
+    "muted_all_samples": true,
+    "zero_error_counter_ranges": {
+      "audio.queue_under": {
+        "min": 0,
+        "max": 0
+      },
+      "audio.FIFO_under": {
+        "min": 0,
+        "max": 0
+      },
+      "audio.errors": {
+        "min": 0,
+        "max": 0
+      },
+      "audio.timeouts": {
+        "min": 0,
+        "max": 0
+      },
+      "lcd.underrun": {
+        "min": 0,
+        "max": 0
+      },
+      "save.errors": {
+        "min": 0,
+        "max": 0
+      }
+    },
+    "save_queued_min": 16,
+    "save_queued_max": 16,
+    "save_completed_min": 16,
+    "save_completed_max": 16,
+    "native_save_submissions_during_formal_interval": 0,
+    "backup_ranges": {
+      "dirty": {
+        "min": 0,
+        "max": 0
+      },
+      "in_flight": {
+        "min": 0,
+        "max": 0
+      },
+      "requested": {
+        "min": 0,
+        "max": 0
+      }
+    },
+    "new_write_readbacks": [
+      {
+        "line": 174,
+        "path": "/GBA/TEST/SDTEST36.BIN",
+        "bytes": 131072,
+        "crc32": "29df376d"
+      },
+      {
+        "line": 273,
+        "path": "/GBA/TEST/SDTEST37.BIN",
+        "bytes": 131072,
+        "crc32": "29df376d"
+      }
+    ],
+    "persistent_crc_reads": [
+      {
+        "line": 277,
+        "path": "/GBA/TEST/SDTEST00.BIN",
+        "bytes": 131072,
+        "crc32": "29df376d"
+      }
+    ],
+    "final_label": [
+      "short-run PASS",
+      "660.237",
+      "660"
+    ],
+    "max_audio_ready_gap_us": 33244,
+    "max_dma_restart_us": 7,
+    "scope": "正式区间为首个到最后一个核心及音频运行的完整状态，排除准备和停止尾部；期间没有新原生保存提交，保存写入由独立短测证明。",
+    "duration_note": "阶段 5 独立完成 660 秒门禁；阶段 4 的 1800 秒结果保留在独立快照中，不作为本轮时长。",
+    "phase_4_snapshot": "docs/validation/engine-separation-stage4-20261018.json"
+  },
+  "manual_display_feedback": {
+    "pass": true,
+    "quote": "画面和动画正常，无明显异常",
+    "scope": "本轮 mGBA 联合测试期间，用户实际观察屏幕反馈；独立于阶段 4 的观察。"
+  },
+  "post_soak_verification": {
+    "status": "PASS",
+    "evidence": [
+      "post_soak_json",
+      "post_soak_log"
+    ],
+    "tf_files": [
+      {
+        "path": "/GBA/TEST/SDTEST36.BIN",
+        "bytes": 131072,
+        "crc32": "29df376d"
+      },
+      {
+        "path": "/GBA/TEST/SDTEST37.BIN",
+        "bytes": 131072,
+        "crc32": "29df376d"
+      }
+    ],
+    "dragon_save_path": "/GBA/SAVES/mGBA/龙珠大冒险.sav",
+    "dragon_save_bytes": 32768,
+    "dragon_save_crc32": "9895d2de",
+    "temporary_save_file_present": false,
+    "warm_empty_heap_bytes": 49904352,
+    "final_empty_heap_bytes": 49904352,
+    "heap_delta_from_warm_bytes": 0,
+    "final": {
+      "heap_free_bytes": 49904352,
+      "ui_page": 0,
+      "ui_showing": 1,
+      "rom_loaded": 0,
+      "core_running": 0,
+      "audio_running": 0,
+      "audio_requested": 0,
+      "audio_muted": 1,
+      "volume": 100,
+      "frameskip": 0,
+      "speed": 1,
+      "save_queued": 16,
+      "save_completed": 16,
+      "save_errors": 0,
+      "save_busy": 0,
+      "backup_dirty": 0,
+      "backup_in_flight": 0,
+      "backup_requested": 0,
+      "lcd_underrun": 0
+    },
+    "scope": "联合测试后复读两个新 TF 文件及 Dragon 原生存档，核实目录无临时文件，再经正常 GUI 卸载回游戏库。"
+  },
+  "phase_5_gate_complete": true,
+  "phase_6_included": false,
+  "software_snapshot_note": "软件快照保留提交时状态；本文件补充随后完成的实板门禁。",
+  "memory_measurement_scope": "堆剩余来自离散 status 采样；短 profile 的堆范围取前后状态，不代表全时堆占用峰值。",
+  "evidence": {
+    "ram_load_log": {
+      "path": "build/engine-stage5-mgba-ramload-20261019-r3.log",
+      "bytes": 6738,
+      "sha256": "c47dfa9b47c3a561450b25fd04c738a09855900b25bd1d4e5907184c9ecaa200"
+    },
+    "core_initial_json": {
+      "path": "build/engine-stage5-mgba-core-initial-20261019.json",
+      "bytes": 1065,
+      "sha256": "e9fab001e4b48f62b3d0f8c08ee948fc73434afa4cee0de9ba1f020fb359a36f"
+    },
+    "core_and_gpio_log": {
+      "path": "build/engine-stage5-mgba-core-tf-probe-20261019.log",
+      "bytes": 3422,
+      "sha256": "a9da961cb7b429bd18ab3fef4d623721dea975cf9d2945dbd29fc8acf9496d7b"
+    },
+    "initial_mount_retry_log": {
+      "path": "build/engine-stage5-mgba-mount-retry-20261019.log",
+      "bytes": 2373,
+      "sha256": "253bb9d019b61db7793c2091b49ab72ed34ab34204b83310abd53051adc592ca"
+    },
+    "tf_reconnected_log": {
+      "path": "build/engine-stage5-mgba-tf-reconnected-20261019.log",
+      "bytes": 2717,
+      "sha256": "a21afd98c0b9d3e357719853f5fe8d907bfd6c17b627a949b0a5d6ffd0341394"
+    },
+    "native_roundtrip_json": {
+      "path": "build/engine-stage5-mgba-save-roundtrip-20261019.json",
+      "bytes": 93365,
+      "sha256": "19c7b7831a8d74d612c0f90dfe7a5107b23c5a5d92023a39a8d96e4e6ab0ce0e"
+    },
+    "native_roundtrip_log": {
+      "path": "build/engine-stage5-mgba-save-roundtrip-20261019.log",
+      "bytes": 179807,
+      "sha256": "7f150c62728b4564ac445eefd5a5de3db631da31ee2e85be4b8fae4b18a25238"
+    },
+    "native_cleanup_json": {
+      "path": "build/engine-stage5-mgba-cleanup-20261019.json",
+      "bytes": 17645,
+      "sha256": "fe6a3454647f95a6b019bee35266a51ae5ad67fdf88e7f5e107beb33f4fa9902"
+    },
+    "native_cleanup_log": {
+      "path": "build/engine-stage5-mgba-cleanup-20261019.log",
+      "bytes": 9673,
+      "sha256": "7b24e4bf8b7d16d0be291f28e24cb12243f82fa79795a770304a7b51a8adbcda"
+    },
+    "gui_reload_first_json": {
+      "path": "build/engine-stage5-mgba-gui-reload-20261019.json",
+      "bytes": 96407,
+      "sha256": "6b0dbd5e5bfa22342295bad5681d71c0355f6e10955c7d19295312a38d4e6a13"
+    },
+    "gui_reload_first_log": {
+      "path": "build/engine-stage5-mgba-gui-reload-20261019.log",
+      "bytes": 41151,
+      "sha256": "335a448b8ccf1f2cb6ae103bd12e60f80ac761f30b889d1c7538f3097a2b5561"
+    },
+    "gui_reload_r2_json": {
+      "path": "build/engine-stage5-mgba-gui-reload-20261019-r2.json",
+      "bytes": 383346,
+      "sha256": "019cf1dbdcf1c5656e5750e574f655c1b455aa992d3fab218430f94da10d5f2b"
+    },
+    "gui_reload_r2_log": {
+      "path": "build/engine-stage5-mgba-gui-reload-20261019-r2.log",
+      "bytes": 168444,
+      "sha256": "68df37476042f0d3556cf6cf020f657f18612b55e95dd4c4b190fd72a9751b60"
+    },
+    "dragon_profile_json": {
+      "path": "build/engine-stage5-mgba-dragon-profile-20261019.json",
+      "bytes": 6857,
+      "sha256": "faf554ba8436494982a86b67963bfa8ba1a5e9c927d664fc68ad465065b9a8aa"
+    },
+    "dragon_profile_log": {
+      "path": "build/engine-stage5-mgba-dragon-profile-20261019.log",
+      "bytes": 12191,
+      "sha256": "ca0830b73ded641e73823731a9005012c94ee9f62ff7c49fb4f402929e52626b"
+    },
+    "audio_lifecycle_json": {
+      "path": "build/engine-stage5-mgba-audio-20261019.json",
+      "bytes": 85227,
+      "sha256": "6080410e205df7ff799fc590cf875d8662f0edc6d8ee78806e63c3b191e0b295"
+    },
+    "audio_lifecycle_log": {
+      "path": "build/engine-stage5-mgba-audio-20261019.log",
+      "bytes": 79840,
+      "sha256": "e6497391a34db87979a9e1802b8d33bb03cf86f40aebb76cee8c24928631eaa1"
+    },
+    "dragon_cleanup_json": {
+      "path": "build/engine-stage5-mgba-dragon-cleanup-20261019.json",
+      "bytes": 16804,
+      "sha256": "5f4309f11961ebd48b113cf501e5e1893ea1857f0c02a4a61d3e210a243dc77a"
+    },
+    "dragon_cleanup_log": {
+      "path": "build/engine-stage5-mgba-dragon-cleanup-20261019.log",
+      "bytes": 9240,
+      "sha256": "36cd42d218a8dbe24482ba0abe13de68105982e5616b964dea012bdd6e5edce4"
+    },
+    "gui_options_json": {
+      "path": "build/engine-stage5-mgba-options-20261019.json",
+      "bytes": 198590,
+      "sha256": "c39b8986ffd5388b2ddaf71a9e9ca02137b2b6534f427c55ef48561b6734bf64"
+    },
+    "gui_options_log": {
+      "path": "build/engine-stage5-mgba-options-20261019.log",
+      "bytes": 126328,
+      "sha256": "175bd6580df00019c6b1103e8964ac7ad95c737040c9dc4132509811fcb65e8b"
+    },
+    "large_profile_json": {
+      "path": "build/engine-stage5-mgba-32m-profile-20261019.json",
+      "bytes": 6880,
+      "sha256": "60a561c6d38f53a37a3e650476dbab1cf39f4e0370556861958f987fcfbf49bb"
+    },
+    "large_profile_log": {
+      "path": "build/engine-stage5-mgba-32m-profile-20261019.log",
+      "bytes": 12249,
+      "sha256": "934949eb03a9a1b5c1bbc605ddbcf5c1e448c9bfb23dddd74660a9622d528be9"
+    },
+    "large_save_cleanup_json": {
+      "path": "build/engine-stage5-mgba-32m-save-cleanup-20261019.json",
+      "bytes": 23624,
+      "sha256": "3dd908185487e3114d8e0bae47ba77736120a4f3bb5dadab20aca738c3942707"
+    },
+    "large_save_cleanup_log": {
+      "path": "build/engine-stage5-mgba-32m-save-cleanup-20261019.log",
+      "bytes": 11938,
+      "sha256": "c9078f15c03d6218580d371ad08bc1c1abf03332832e15af82015527c623d9d1"
+    },
+    "gui_switch_json": {
+      "path": "build/engine-stage5-mgba-switch-20261019.json",
+      "bytes": 81932,
+      "sha256": "d07b67bbb5eb5f05cb93da3641f3b700085fb5f624ecfe8e7d77418c99d9ed5e"
+    },
+    "gui_switch_log": {
+      "path": "build/engine-stage5-mgba-switch-20261019.log",
+      "bytes": 53314,
+      "sha256": "6f7df7a5b1d723074fb8b71930aafa6d02219f95b44f59e0f629648234e1bba6"
+    },
+    "soak_log": {
+      "path": "build/engine-stage5-mgba-soak-20261019.log",
+      "bytes": 35189,
+      "sha256": "518efb004f2365274599ca2d0e537edf0ef09dfe312768cc32be4ff3474f4ffe"
+    },
+    "soak_summary_json": {
+      "path": "build/engine-stage5-mgba-soak-summary-20261019.json",
+      "bytes": 9778,
+      "sha256": "140ecd47c90f1a04b2699df6d02180a0283f607185e2d1775017689996a13d98"
+    },
+    "soak_summary_parser": {
+      "path": "build/summarize-engine-stage5-soak.py",
+      "bytes": 10331,
+      "sha256": "1bcfd2e7f2575b971d5ec85dc7d7f89a56e5a006ee46999f67283e279ec3c8db"
+    },
+    "post_soak_json": {
+      "path": "build/engine-stage5-mgba-post-soak-20261019.json",
+      "bytes": 23536,
+      "sha256": "e8646c2798c36cc021acc40a5cf04a6322bd8d11426ef88c9e3a6790c96a515a"
+    },
+    "post_soak_log": {
+      "path": "build/engine-stage5-mgba-post-soak-20261019.log",
+      "bytes": 12404,
+      "sha256": "8a2764f812f907e14d9e8ed30726ff8e2e446cd78bfea98eaed3e8bd10c29a4d"
+    }
+  }
+}

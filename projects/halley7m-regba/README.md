@@ -22,6 +22,8 @@ git submodule update --init third_party/mGBA
 
 纯软件检查使用 `python scripts/test-mgba-sim.py --mode cpu --timeout 360`，还可分别选择 `sram`、`flash`、`eeprom`、`mirror`。脚本编译真实适配层，使用已有官方 Linux 工具链的 MIPS 模拟器；Windows 下通过 WSL 执行，不打开开发板串口。Flash 模式可用 `--timeout 900` 留出模拟器执行时间。mGBA 的 EEPROM 诊断采用 DMA3 事务，Flash 诊断等待编程完成，二者保持相同邮箱与完整原生存档校验；默认 ReGBA 诊断不变。模拟器耗时不用于推算开发板帧率。
 
+mGBA 独立 Release 已通过 RAM 实板的三类原生存档、GUI 旧档回退、音频启停、32MiB ROM / 缓存读档 / 切换、内存回收及 660 秒静音 PCM / LCD / TF 联合测试，见[阶段 5 实板摘要](../../docs/validation/engine-separation-stage5-board-20261019.json)。已测龙珠与 32MiB 游戏开场约 59.7fps；龙珠选择 4×时约 153fps，未达到完整 4 倍速。本轮未写 NOR，当前仍按构建参数选择单个引擎。
+
 本文保留阶段 0～7 及后续 GUI 各版记录。`build/` 中的原始日志、镜像、ROM / 存档及备份仅在开发机保留；在线摘要见 [docs/validation](../../docs/validation/)，其中的原始路径用于追溯。板级原理图 / BOM、工具链和 Cloner 需单独准备。
 
 当前 NOR 为 Release **2306352 字节 / CRC32 `178853ea`**，所有 GUI 页面（含游戏设置）继续使用 **GBA**。游戏中 Y 打开七项菜单：继续游戏、保存进度、读取存档、游戏设置、切换游戏、资源路径、退出游戏。“读取存档”确认后读取原生 `.sav` 并复用缓存 ROM 重启，再在游戏内选择继续游戏；读取失败保留当前 guest。进入菜单只等待在途保存，不新提交当前进度，显式保存 / 正常切换 / 退出仍完成同步。
