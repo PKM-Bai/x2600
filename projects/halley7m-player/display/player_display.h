@@ -4,6 +4,7 @@
 #include "player_video.h"
 #define PLAYER_DISPLAY_HAS_OVERLAY 1
 #define PLAYER_DISPLAY_HAS_VIDEO_PRIORITY 1
+#define PLAYER_DISPLAY_HAS_GEOMETRY 1
 #define PLAYER_DISPLAY_OVERLAY_BYTES (720u * 1280u * 4u)
 
 typedef struct {
@@ -31,6 +32,9 @@ typedef struct {
     uint64_t last_eod_us;
     uint32_t last_descriptor, last_physical_y, last_read_site;
     bool pending, scanout, overlay_scanout, video_active;
+    uint32_t width, height, route_generation, route_phase;
+    uint32_t writebacks, rotator_sof, rotator_eof, rotator_repeats, rotator_errors;
+    int route_error;
 } player_display_stats_t;
 
 /* Init/stop run before/after both GUI and media tasks use the driver. Init/start do not
@@ -42,6 +46,19 @@ typedef struct {
  * completion or retire a video hold. Both layers have unique mixer orders. */
 int player_display_init(void);
 int player_display_start(void);
+/* Media owner, after the previous video hold was retired, before first decode.
+ * 720x1280 keeps the native direct route. 1280x720 uses CUSTOM -> ROT -> DSI.
+ * Retry -EAGAIN from LOADING while the GUI owner drains/rebuilds its surfaces;
+ * 0 acknowledges both route and GUI layout. Failure keeps DMA buffers pinned.
+ * No LVGL call is made from this function. */
+int player_display_set_video_geometry(uint32_t width, uint32_t height);
+/* GUI adapter handshake: phase 0 running, 1 drain/pause, 2 old DMA is idle and
+ * both surfaces may be rebuilt. Acknowledge the returned generation/phase.
+ * Only phase2 permits changing the byte layout or overwriting old front. */
+void player_display_gui_attach(bool attached);
+int player_display_gui_mode(uint32_t *generation, bool *logical);
+int player_display_gui_ack(uint32_t generation, unsigned phase);
+uint32_t player_display_overlay_stride(void);
 /* Media worker sets true only during continuous PLAYING AVI output. GUI
  * requests then wait to merge into a video submission instead of consuming
  * their own 30Hz refresh. Set false for LOADING/PAUSED/ENDED/STOP/error so GUI
@@ -56,7 +73,8 @@ int player_display_submit_frame(const player_display_frame_t *frame);
  * emits has_latched=false/has_retired=true only after the new descriptor is
  * confirmed. Poll and retire that hold before freeing the video pool. */
 int player_display_clear_video(void);
-/* Native 720x1280, stride720 pixels, 64-byte aligned, straight ARGB8888.
+/* Straight ARGB8888, 64-byte aligned. Native route: 720x1280/stride720;
+ * rotated route: logical 1280x720/stride1280. Geometry handshake must complete.
  * Producer publishes dirty pixel data to DDR. Keep BOTH old and submitted
  * surfaces pinned until matching serial is returned; old surface is then
  * writable, current surface stays pinned. Serial must be nonzero. One queued

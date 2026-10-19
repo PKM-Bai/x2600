@@ -88,3 +88,38 @@ max_late6.666ms；29次GUI更新合入视频，video_busy0，EOD周期33.014..33
 页面往返已有用户人工确认，详见`../VALIDATION.md`；长时重复启停不从本次短片推定。
 用户已取消手机录像及实际声光偏差数值验证，相关工具仅作可选诊断，尚无实际偏差数值结论。
 主机测试不能代替真实面板时序。
+
+## 普通横屏视频的硬件旋转路线
+
+`player_display_set_video_geometry(width,height)` 由媒体 worker 在前一会话视频已
+撤层并退休、下一会话首帧解码前调用。`720x1280` 保留旧 native direct 路线；
+`1280x720` 使用 DPU CUSTOM 写回和独立 Rotator，TFT/DSI 仍为 native720x1280。
+GUI 已接入可选的 mode/ack/attach 后端握手：返回 `-EAGAIN` 时 worker 后续循环
+重试；GUI task先排空已提交表面并暂停刷新，驱动停稳旧DMA，再由GUI task清空
+两表面、切换布局并全屏重绘。返回0才允许提交新视频。1秒握手超时或100ms停止
+超时返回错误，保留可能被DMA持有的资源；不会从worker调用LVGL。
+
+宽幅路线的 NV12 源为1280x720、stride1280，GUI为逻辑1280x720直排ARGB，
+仍为straight alpha/PREMULT0。DPU将视频与GUI一起合成为CUSTOM格式，再由Rotator
+旋转90度送显示端。不能将线性ARGB或NV12直接交给Rotator，也没有NV12输出地址。
+3块512字节对齐的CUSTOM表面共11,059,200B，与解码帧池分开管理。
+媒体STOP撤掉NV12后，若GUI仍使用宽幅路线，这3块表面继续属于显示输出；
+切回native geometry或整体 `player_display_stop()` 后才释放，不能把该常驻量当作媒体泄漏。
+
+寄存器依据为本地SDK所附 `projects/x2660-halley/Demos/printer/tpc/tmp/X2600_PM_layout.txt`
+的第11、12章：DPU WB_Format=7、writeback启用/direct关闭、单次描述符；
+Rotator基址0x13070000、RDMA_FMT=3、ROT_ANGLE=1、手动BUFF_CFG_ADDR提交。
+SDK的 `HAL_COMP_Start` 会清除ROT_SEL，宽幅路线因此自行发布描述符并保持该位，
+不修改SDK。旧native路线继续使用既有HAL启动。
+
+EOW仅确认匹配描述符/地址的写回结束，FA仅表示取地址；观察目标CUSTOM的SOF及
+地址后，还必须收到实际DPU EOD才产生原有 `has_latched/retired` 完成通知。
+Rotator EOF独立结束读取持有；没有新帧时重投末表面，暂停/ENDED也能GUI-only更新，
+不会增加视频计数。停止先停DPU生产，再等待Rotator ACK/idle后释放CUSTOM池。
+`display`显式查询输出 `DISPLAY_ROUTE/ROT/WB`，运行中没有逐帧UART。
+
+`scripts/test-player-gui.py` 已覆盖生产driver宽幅EOW/SOF/EOD区分、三槽生命周期、
+重复扫描、GUI-only、旧路线回切与停止超时pin；真实LVGL覆盖异步暂停/布局ACK、
+重绘及native/logical脏区同步，另输出 `playback-wide.png`。显示与GUI静态库均已
+通过真实MIPS编译。**宽幅CUSTOM/Rotator尚未实板验收**，其SOF/EOD相位、方向、
+连续刷新、30fps与暂停/结束页面更新需在宽幅片源上核验，不能由主机模型推定。

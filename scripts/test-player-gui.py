@@ -15,14 +15,14 @@ import zlib
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def png(path, pixels):
+def png(path, pixels, logical=False):
     def chunk(kind, data):
         return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xffffffff)
     payload = bytearray()
     for y in range(720):
         payload.append(0)
         for x in range(1280):
-            color = pixels[x * 720 + 719 - y]
+            color = pixels[y * 1280 + x] if logical else pixels[x * 720 + 719 - y]
             alpha = color >> 24
             # A synthetic video background makes transparent playback UI visible.
             background = (35 + x * 90 // 1280, 55 + y * 90 // 720, 85)
@@ -55,6 +55,7 @@ def main():
                 # encoding. Always rebuild this regression's host tree.
                 f'"{cmake}" --build "{output}" --clean-first --parallel 4',
                 f'"{output / "player_display_test.exe"}"',
+                f'"{output / "player_rotator_test.exe"}"',
                 f'"{output / "player_buttons_test.exe"}"',
                 f'"{output / "player_buttons_callback_test.exe"}"',
                 f'"{output / "player_gui_test.exe"}" "{shots}"']
@@ -77,13 +78,13 @@ def main():
         if line.startswith("PASS ") or line.startswith("buttons regression PASS:"):
             print(line)
     artifacts = []
-    for name in ("library", "playback", "menu", "diagnostics"):
+    for name in ("library", "playback", "menu", "diagnostics", "audio-unknown", "playback-wide"):
         pixels = array.array("I")
         pixels.frombytes((shots / (name + ".argb")).read_bytes())
         if len(pixels) != 720 * 1280:
             raise ValueError("incomplete screenshot")
         destination = shots / (name + ".png")
-        png(destination, pixels)
+        png(destination, pixels, logical=name == "playback-wide")
         artifacts.append(str(destination))
     print(json.dumps(dict(screenshots=artifacts)))
 

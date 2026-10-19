@@ -250,15 +250,28 @@ static void update_view(void)
         text(heading, state_name());
         text(path_label, basename_utf8(view.media_path));
         uint32_t elapsed = view.elapsed_samples / 48000u, total = view.total_samples / 48000u;
-        snprintf(line, sizeof(line), "%s   %02lu:%02lu / %02lu:%02lu    音量 %lu%%",
+        char duration[24];
+        if (view.total_samples) snprintf(duration,sizeof(duration),"%02lu:%02lu",
+            (unsigned long)(total/60u),(unsigned long)(total%60u));
+        else snprintf(duration,sizeof(duration),"--:--");
+        snprintf(line, sizeof(line), "%s   %02lu:%02lu / %s    音量 %lu%%",
                  state_name(), (unsigned long)(elapsed / 60u), (unsigned long)(elapsed % 60u),
-                 (unsigned long)(total / 60u), (unsigned long)(total % 60u), (unsigned long)view.volume_percent);
+                 duration, (unsigned long)view.volume_percent);
         text(rows[0], line);
         unsigned width = view.total_samples ? (unsigned)((uint64_t)view.elapsed_samples * 1192u / view.total_samples) : 1u;
         if (width > 1192) width = 1192;
         if (!width) width = 1;
         if (lv_obj_get_width(progress_fill) != (lv_coord_t)width) lv_obj_set_width(progress_fill, (lv_coord_t)width);
-        text(rows[1], view.error_code ? view.error : view.media_kind == 1 ? "音频播放" : "");
+        const char *media_label=view.media_kind==1 ? "WAV音频" : view.media_kind==3 ? "MP3音频" :
+                                view.media_kind==4 ? "AAC音频" : "";
+        if (view.media_kind==5) {
+            const char *extension=strrchr(view.media_path,'.');
+            bool m4a=extension && strlen(extension)==4 &&
+                (extension[1]=='m'||extension[1]=='M') && extension[2]=='4' &&
+                (extension[3]=='a'||extension[3]=='A');
+            media_label=m4a ? "M4A音频" : "MP4视频";
+        }
+        text(rows[1], view.error_code ? view.error : media_label);
         text(footer, "A/B 音量 -/+  Start 暂停/继续  长按 Start 快捷菜单");
         text(notice, view.resources_pinned ? "停止尚未完成，请重试停止" : "");
     } else {
@@ -327,6 +340,7 @@ int player_gui_init(const player_gui_output_t *backend)
     screen = lv_scr_act();
     lv_obj_remove_style_all(screen);
     initialized = true;
+    if (output.attach) output.attach(output.context, true);
     stats.generation = 1;
     request_id = media_session = last_ms = next_refresh = 0;
     library_generation = volume_request = requested_volume = 0;
@@ -364,6 +378,26 @@ int player_gui_step(uint32_t now_ms)
         else if (result) {
             if (!player_gui_surface_complete(&surface, serial)) stats.output_error = -ESTALE;
             else { ++stats.presented; lv_timer_resume(_lv_disp_get_refr_timer(display)); }
+        }
+    }
+    if (output.mode) {
+        uint32_t generation=0;
+        bool logical=false;
+        int phase=output.mode(output.context,&generation,&logical);
+        if (phase<0) { stats.output_error=phase; return phase; }
+        if (phase==1) {
+            lv_timer_pause(_lv_disp_get_refr_timer(display));
+            if (!surface.submitted && output.ack)
+                (void)output.ack(output.context,generation,1);
+            return stats.output_error;
+        }
+        if (phase==2 && stats.output_generation!=generation) {
+            if (!player_gui_surface_reconfigure(&surface,logical)) return -EBUSY;
+            stats.output_generation=generation;
+            stats.logical_output=logical;
+            lv_obj_invalidate(screen);
+            lv_timer_resume(_lv_disp_get_refr_timer(display));
+            if (output.ack) (void)output.ack(output.context,generation,2);
         }
     }
     if (command_deferred) {
@@ -427,6 +461,7 @@ void player_gui_get_stats(player_gui_stats_t *out)
 int player_gui_deinit(int quiescent)
 {
     if (!quiescent) return -EBUSY;
+    if (initialized && output.attach) output.attach(output.context, false);
     if (display) lv_disp_remove(display);
     display = NULL;
     screen = menu = NULL;

@@ -75,3 +75,13 @@ headless 测试，覆盖三键、上下文释放门控、命令背压、全局�
 完成独立、撤层退休和 stop 超时保留。主机驱动测试不证明真实 DPU/DSI 时序。
 该脚本同时运行原 `tests/buttons_test.c` 和新增回调测试，验证默认无回调时既有
 轮询行为、去抖时间/独立按键、稳定电平、时间戳与注销回调。
+
+普通1280x720横屏视频使用DPU整帧旋转时，GUI两表面改为逻辑1280x720直排，
+LVGL坐标与表面字节数不变。后端 `mode/ack/attach` 回调在原GUI task内完成切换：
+phase1排空提交并暂停绘制，phase2只在旧DMA停稳后清空表面、全屏重绘并ACK。
+媒体worker重试 `player_display_set_video_geometry` 直到返回0；没有跨任务LVGL调用。
+旧720x1280视频回到native表面CPU旋转方式。主机已覆盖两向切换及旧front持有，
+宽幅 `playback-wide.png` 已检查中文/透明区域和布局；真实宽幅硬件显示仍待板测。
+
+流式MP3/AAC播放时，未知的 `total_samples=0` 显示为 `--:--`，EOF发布有效总样本后
+恢复显示时长。播放页按media kind标识MP3/AAC；kind5仅在.m4a扩展名时标为M4A音频。

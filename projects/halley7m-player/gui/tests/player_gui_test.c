@@ -16,6 +16,9 @@ static const uint32_t *front, *pending;
 static uint32_t front_hash, pending_hash, pending_serial, due;
 static unsigned submissions;
 static const char *directory;
+static unsigned mode_phase, mode_ack;
+static uint32_t mode_generation;
+static bool target_logical, memory_logical;
 
 static uint32_t hash(const uint32_t *pixels)
 {
@@ -50,7 +53,8 @@ static int submit(void *context, const uint32_t *argb, uint32_t bytes, uint32_t 
 {
     (void)context;
     assert(!pending && argb != front && bytes == PLAYER_GUI_SURFACE_BYTES && serial);
-    assert(x1 <= x2 && y1 <= y2 && x2 < 720 && y2 < 1280);
+    assert(x1 <= x2 && y1 <= y2 && x2 < (memory_logical ? 1280u : 720u) &&
+           y2 < (memory_logical ? 720u : 1280u));
     if (front) assert(front_hash == hash(front));
     pending = argb;
     pending_hash = hash(argb);
@@ -71,6 +75,17 @@ static int poll(void *context, uint32_t *serial)
     pending = NULL;
     *serial = pending_serial;
     return 1;
+}
+
+static int output_mode(void *context, uint32_t *generation, bool *logical)
+{ (void)context; *generation=mode_generation; *logical=target_logical; return (int)mode_phase; }
+static int output_ack(void *context, uint32_t generation, unsigned phase)
+{
+    (void)context;
+    assert(generation==mode_generation && phase==mode_phase && !pending);
+    mode_ack=phase;
+    if (phase==2) { memory_logical=target_logical; mode_phase=0; }
+    return 0;
 }
 
 static void tick(unsigned duration, unsigned keys)
@@ -102,6 +117,14 @@ static void capture(const char *name)
     assert(fclose(file) == 0);
 }
 
+static bool contains_label(lv_obj_t *object, const char *value)
+{
+    if (lv_obj_check_type(object,&lv_label_class) && strstr(lv_label_get_text(object),value)) return true;
+    for (uint32_t i=0;i<lv_obj_get_child_cnt(object);++i)
+        if (contains_label(lv_obj_get_child(object,(int32_t)i),value)) return true;
+    return false;
+}
+
 static void surface_test(void)
 {
     uint32_t *a = malloc(PLAYER_GUI_SURFACE_BYTES + 8u);
@@ -119,6 +142,7 @@ static void surface_test(void)
     assert(player_gui_surface_seal(&s));
     assert(!player_gui_surface_write(&s, 0, 0, 0, 0, pixels));
     assert(player_gui_surface_submitted(&s));
+    assert(!player_gui_surface_reconfigure(&s,true));
     assert(!player_gui_surface_complete(&s, s.serial + 1));
     assert(player_gui_surface_complete(&s, s.serial));
     assert(s.front == 0 && s.back == 1);
@@ -132,6 +156,13 @@ static void surface_test(void)
     assert(a[0] == 0x12345678 && b[0] == 0x12345678);
     assert(a[PLAYER_GUI_SURFACE_BYTES / 4u + 1] == 0x87654321);
     assert(b[PLAYER_GUI_SURFACE_BYTES / 4u + 1] == 0x87654321);
+    assert(player_gui_surface_reconfigure(&s,true) && s.logical);
+    assert(player_gui_surface_write(&s,9,19,10,20,pixels));
+    assert(s.pixels[0][19*1280+9]==pixels[0] && s.pixels[0][20*1280+10]==pixels[3]);
+    assert(player_gui_surface_seal(&s) && player_gui_surface_submitted(&s));
+    assert(player_gui_surface_complete(&s,s.serial));
+    assert(memcmp(s.pixels[0],s.pixels[1],PLAYER_GUI_SURFACE_BYTES)==0);
+    assert(a[0]==0x12345678 && b[PLAYER_GUI_SURFACE_BYTES/4u+1]==0x87654321);
     free(a); free(b);
 }
 
@@ -177,7 +208,7 @@ int main(int argc, char **argv)
         snprintf(snapshot.entries[i].label, sizeof(snapshot.entries[i].label),
                  i == 0 ? ".." : "%02u - 清晨的城市与海边漫步.avi", i);
     }
-    player_gui_output_t backend = {NULL, submit, poll};
+    player_gui_output_t backend = {NULL, submit, poll, output_mode, output_ack, NULL};
     assert(player_gui_init(&backend) == 0);
     font_test();
     assert(last_command.kind == PLAYER_SESSION_LIBRARY_OPEN);
@@ -237,8 +268,40 @@ int main(int argc, char **argv)
     player_gui_get_stats(&gui);
     assert(gui.page == PLAYER_GUI_PLAYBACK);
     assert(gui.presented > 4 && gui.output_error == 0 && submissions >= gui.presented);
+    snapshot.media_kind=3; snapshot.total_samples=0; ++snapshot.revision;
+    capture("audio-unknown");
+    assert(contains_label(lv_scr_act(),"--:--") && contains_label(lv_scr_act(),"MP3音频"));
+    snapshot.media_kind=4; ++snapshot.revision; tick(150,0);
+    assert(contains_label(lv_scr_act(),"AAC音频"));
+    snapshot.media_kind=5; strcpy(snapshot.media_path,"0:/音乐/短曲.M4A");
+    ++snapshot.revision; tick(150,0);
+    assert(contains_label(lv_scr_act(),"M4A音频"));
+    snapshot.total_samples=snapshot.elapsed_samples=96017;
+    snapshot.state=PLAYER_SESSION_ENDED; ++snapshot.revision; tick(150,0);
+    assert(!contains_label(lv_scr_act(),"--:--") && contains_label(lv_scr_act(),"00:02 / 00:02"));
+    snapshot.media_kind=2; snapshot.state=PLAYER_SESSION_PLAYING;
+    snapshot.elapsed_samples=48000*37; snapshot.total_samples=48000*180;
+    strcpy(snapshot.media_path,"0:/本地媒体/清晨的城市与海边漫步.avi"); ++snapshot.revision;
+    tick(150,0);
+    mode_phase=1; mode_ack=0; ++mode_generation; target_logical=true;
+    unsigned before_mode=submissions;
+    tick(100,0);
+    assert(mode_ack==1 && !pending && submissions==before_mode);
+    assert(front_hash==hash(front)); /* Pause must not overwrite the scanned old layout. */
+    front=NULL; /* Driver reports phase2 only after the old DMA has stopped. */
+    mode_phase=2;
+    capture("playback-wide");
+    player_gui_get_stats(&gui);
+    assert(mode_ack==2 && gui.logical_output && gui.output_generation==mode_generation);
+    assert(front[250*1280+500]==0 && front[0]==0xbe101820);
+    mode_phase=1; mode_ack=0; ++mode_generation; target_logical=false;
+    tick(100,0);
+    assert(mode_ack==1 && !pending);
+    front=NULL; mode_phase=2; tick(150,0);
+    player_gui_get_stats(&gui);
+    assert(!gui.logical_output && gui.output_generation==mode_generation && front[719]==0xbe101820);
     assert(player_gui_deinit(0) == -EBUSY);
     assert(player_gui_deinit(1) == 0);
-    printf("PASS production LVGL GUI: rotation/guards, async pin/sync, font, 3 keys, backpressure, three pages/menu (%u submissions)\n", submissions);
+    printf("PASS production LVGL GUI: native/logical rotation/guards, async pin/sync, GUI route drain/rebuild ACK, font, 3 keys, backpressure, three pages/menu (%u submissions)\n", submissions);
     return 0;
 }

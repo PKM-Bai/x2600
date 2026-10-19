@@ -63,7 +63,16 @@ if(PLAYER_GUI_HOST_TESTS)
     target_link_libraries(player_gui_test PRIVATE player_gui)
     add_executable(player_display_test tests/player_display_test.c
         "${CMAKE_CURRENT_SOURCE_DIR}/../display/player_display.c"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../display/player_rotator.c"
         "${CMAKE_CURRENT_SOURCE_DIR}/../common/player_video.c")
+    add_executable(player_rotator_test "${CMAKE_CURRENT_SOURCE_DIR}/../display/tests/player_rotator_test.c"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../display/player_rotator.c")
+    target_include_directories(player_rotator_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../display")
+    if(MSVC)
+        target_compile_options(player_rotator_test PRIVATE /W4 /WX /UNDEBUG)
+    else()
+        target_compile_options(player_rotator_test PRIVATE -Wall -Wextra -Werror -UNDEBUG)
+    endif()
     target_include_directories(player_display_test PRIVATE tests/display-stubs
         "${CMAKE_CURRENT_SOURCE_DIR}/../display" "${CMAKE_CURRENT_SOURCE_DIR}/../common")
     set(PLAYER_BUTTONS_PLATFORM "${PLAYER_GUI_WORKSPACE}/projects/halley7m-regba/platform")

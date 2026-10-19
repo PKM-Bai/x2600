@@ -16,11 +16,16 @@ typedef struct {
     unsigned x1, y1, x2, y2;
     unsigned publish_x1, publish_y1, publish_x2, publish_y2;
     bool dirty, sealed, submitted, publish_dirty;
+    bool logical;
 } player_gui_surface_t;
 
 void player_gui_surface_init(player_gui_surface_t *surface, uint32_t *a, uint32_t *b);
+/* Hardware is idle, GUI task only. Preserve serial monotonicity, discard old
+ * invalidation and rebuild both surfaces in the requested memory layout. */
+bool player_gui_surface_reconfigure(player_gui_surface_t *surface, bool logical);
 /* Source is a tightly packed logical LVGL rectangle, straight ARGB8888.
- * Clockwise mapping matches the PC video transpose: (x,y)->(719-y,x).
+ * Native mode maps clockwise (x,y)->(719-y,x). Logical mode copies rows;
+ * the DPU/Rotator then rotates the whole composition in hardware.
  * No current/pending scanout surface may be written. */
 bool player_gui_surface_write(player_gui_surface_t *surface, int x1, int y1,
                               int x2, int y2, const uint32_t *argb);

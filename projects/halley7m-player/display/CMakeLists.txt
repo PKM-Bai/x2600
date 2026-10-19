@@ -18,7 +18,7 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${PLAYER_DISPLAY_SDK}/drivers/drivers-x2600/src/x2600_hal_lcd.c"
     "${PLAYER_DISPLAY_SDK}/drivers/drivers-x2600/src/x2600_hal_mipi_dsi.c"
     "${PLAYER_DISPLAY_SDK}/drivers/drivers-x2600/src/x2600_ll_mipi_dsi.c")
-add_library(player_display STATIC player_display.c
+add_library(player_display STATIC player_display.c player_rotator.c
     "${PLAYER_DISPLAY_WORKSPACE}/projects/halley7m-regba/platform/panel_zc502.c"
     "${PLAYER_DISPLAY_DERIVED}/x2600_hal_lcd.c"
     "${PLAYER_DISPLAY_DERIVED}/x2600_hal_mipi_dsi.c"
@@ -36,4 +36,4 @@ target_compile_definitions(player_display PRIVATE USE_NEWLIB=1 __SDE_MIPS_=1)
 target_compile_options(player_display PRIVATE -mips32r2 -mabi=32 -mfp32 -mhard-float -EL
     -mno-abicalls -fno-pic -G0 -O2 -ffunction-sections -fdata-sections -fno-common
     -Wall -Wextra -Wno-unused-parameter)
-set_source_files_properties(player_display.c PROPERTIES COMPILE_OPTIONS "-Werror")
+set_source_files_properties(player_display.c player_rotator.c PROPERTIES COMPILE_OPTIONS "-Werror")

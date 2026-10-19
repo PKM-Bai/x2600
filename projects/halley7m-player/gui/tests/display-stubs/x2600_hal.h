@@ -10,9 +10,9 @@
 typedef enum { HAL_OK, HAL_ERROR } HAL_StatusTypeDef;
 typedef struct { unsigned long DC_INT_FLAG, DC_INTC, DC_CTRL, FRM_DES_READ;
     unsigned long LAY0_DES_READ, LAY1_DES_READ, LAY0_SITE, LAY1_SITE, DC_CLR_ST;
-    unsigned long DC_FRM_CFG_ADDR; } DPU_TypeDef;
+    unsigned long DC_FRM_CFG_ADDR, DC_FRM_CFG_CTRL, DC_COM_CONFIG, WDMA_SITE; } DPU_TypeDef;
 typedef struct { unsigned long LPCLK_CTRL, PWR_UP, PHY_RSTZ, VID_MODE_CFG; } DSI_TypeDef;
-typedef struct { unsigned long CLKGR0, CLKGR1, PWMCDR, LPCDR; } CPM_TypeDef;
+typedef struct { unsigned long CLKGR0, CLKGR1, PWMCDR, LPCDR, SRBC; } CPM_TypeDef;
 typedef struct { unsigned long PxPINL, PxINT, PxMSK, PxPAT1, PxPAT0; } GPIO_TypeDef;
 typedef struct { unsigned long PWMEN, PWMMS, PWMINL, PWMIDL, PWMCCn[16], PWMWCn[16]; } PWM_TypeDef;
 extern DPU_TypeDef fake_dpu;
@@ -20,6 +20,8 @@ extern DSI_TypeDef fake_dsi;
 extern CPM_TypeDef fake_cpm;
 extern GPIO_TypeDef fake_gpio;
 extern PWM_TypeDef fake_pwm;
+extern volatile unsigned long fake_rotator_regs[17];
+#define PLAYER_ROTATOR_MMIO fake_rotator_regs
 #define DPU_Instance (&fake_dpu)
 #define MIPI_DSI_Instance (&fake_dsi)
 #define CPM_Instance (&fake_cpm)
@@ -54,15 +56,20 @@ typedef struct { unsigned PLLMux, Div, Config; } LL_CPM_CGU_ConfigTypeDef;
 #define COLOR_RGB 0
 #define CPM_CLKID_MIPI_DSI 0
 #define CPM_CLKID_LCD 1
+#define CPM_CLKID_ROTATE 48
 #define QCK_STOP 0
 #define IRQ_INTC0_LCD 7
+#define IRQ_INTC0_ROTATE 29
 #define DC_INTC_INT_UOT_0 (1u << 8)
 #define DC_INTC_INT_EOD_0 (1u << 17)
+#define DC_INTC_INT_EOW_0 (1u << 15)
+#define DC_INTC_INT_OOW_0 (1u << 16)
 #define DC_DPU_INTC_EOD_MSK_0 DC_INTC_INT_EOD_0
 #define DC_DPU_INTC_UOT_MSK_0 DC_INTC_INT_UOT_0
 #define DC_CTRL_DES_CNT_RST_0 (1u << 15)
 #define VID_MODE_CFG_VPG_EN (1u << 16)
-#define CPHYSADDR(p) ((uint32_t)((uintptr_t)(p) & 0x03ffffffu))
+uint32_t fake_physical(uintptr_t pointer);
+#define CPHYSADDR(p) fake_physical((uintptr_t)(p))
 unsigned long fake_read(const volatile unsigned long *reg);
 void fake_write(volatile unsigned long *reg, unsigned long value);
 #define READ_REG(r) fake_read(&(r))

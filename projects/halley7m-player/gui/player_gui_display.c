@@ -10,10 +10,17 @@ static int submit(void *context, const uint32_t *argb, uint32_t bytes, uint32_t 
     /* Only the GUI owns this back surface. Publish the changed native rows;
      * it cannot contain FELIX DMA output, unlike the NV12 video buffer. */
     for (unsigned y = y1; y <= y2; ++y)
-        CleanDCache_by_Addr((unsigned long *)(argb + y * PLAYER_GUI_NATIVE_WIDTH + x1),
+        CleanDCache_by_Addr((unsigned long *)(argb + y * player_display_overlay_stride() + x1),
                            (x2 - x1 + 1u) * sizeof(uint32_t));
     return player_display_submit_overlay(argb, bytes, serial);
 }
+
+static int mode(void *context, uint32_t *generation, bool *logical)
+{ (void)context; return player_display_gui_mode(generation,logical); }
+static int ack(void *context, uint32_t generation, unsigned phase)
+{ (void)context; return player_display_gui_ack(generation,phase); }
+static void attach(void *context, bool attached)
+{ (void)context; player_display_gui_attach(attached); }
 
 static int poll(void *context, uint32_t *serial)
 {
@@ -23,6 +30,6 @@ static int poll(void *context, uint32_t *serial)
 
 const player_gui_output_t *player_gui_display_output(void)
 {
-    static const player_gui_output_t backend = {NULL, submit, poll};
+    static const player_gui_output_t backend = {NULL, submit, poll, mode, ack, attach};
     return &backend;
 }

@@ -1,4 +1,5 @@
 #include "player_display.h"
+#include "player_rotator.h"
 #include "x2600_hal.h"
 #include <assert.h>
 #include <errno.h>
@@ -10,6 +11,7 @@ DSI_TypeDef fake_dsi;
 CPM_TypeDef fake_cpm;
 GPIO_TypeDef fake_gpio;
 PWM_TypeDef fake_pwm;
+volatile unsigned long fake_rotator_regs[17];
 struct lcd_data panel_zc502_data;
 int fake_working;
 static struct lay_cfg submitted_layers[4];
@@ -17,6 +19,24 @@ static uint32_t next_descriptor, loaded_descriptor, loaded_y, loaded_ui;
 static unsigned word, starts, backlights;
 static uint64_t clock_us;
 static void (*lcd_irq)(int, void *);
+static void (*rot_irq)(int,void *);
+static bool rot_hang;
+static uintptr_t cached_writebacks[3];
+static uint32_t queued_rotation;
+static LCD_HandleTypeDef *last_lcd;
+
+void fake_cache_publish(unsigned long *pointer, long bytes)
+{
+    if (bytes!=3686400) return;
+    for (unsigned i=0;i<3;++i) if (cached_writebacks[i]==(uintptr_t)pointer) return;
+    for (unsigned i=0;i<3;++i) if (!cached_writebacks[i]) { cached_writebacks[i]=(uintptr_t)pointer; return; }
+    assert(!"unexpected fourth writeback allocation");
+}
+uint32_t fake_physical(uintptr_t p)
+{
+    for (unsigned i=0;i<3;++i) if (cached_writebacks[i] && p==cached_writebacks[i]) return 0x03000000u+i*0x00400000u;
+    return (uint32_t)(p&0x03ffffffu);
+}
 
 unsigned long fake_read(const volatile unsigned long *reg)
 {
@@ -30,12 +50,20 @@ void fake_write(volatile unsigned long *reg, unsigned long value)
     *reg = value;
     if (reg == &fake_dpu.DC_CTRL) word = 0;
     if (reg == &fake_dpu.DC_CLR_ST) fake_dpu.DC_INT_FLAG &= ~value;
+    if (reg == &fake_dpu.DC_FRM_CFG_CTRL && value==1) {
+        next_descriptor=(uint32_t)fake_dpu.DC_FRM_CFG_ADDR; ++starts;
+    }
+    if (reg==&fake_rotator_regs[PLAYER_ROTATOR_CLEAR/4])
+        fake_rotator_regs[PLAYER_ROTATOR_STATUS/4]&=~value;
+    if (reg==&fake_rotator_regs[PLAYER_ROTATOR_BUFFER/4]) queued_rotation=(uint32_t)value&~1u;
+    if (reg==&fake_rotator_regs[PLAYER_ROTATOR_CONTROL/4] && (value&PLAYER_ROTATOR_STOP) && !rot_hang)
+        fake_rotator_regs[PLAYER_ROTATOR_STATUS/4]=PLAYER_ROTATOR_ACK;
 }
 uint64_t platform_time_us(void) { return clock_us; }
 void vTaskDelay(unsigned ticks) { clock_us += ticks * 1000u; }
 void ll_request_irq(int irq, void (*handler)(int, void *), void *argument)
-{ (void)irq; (void)argument; lcd_irq = handler; }
-void ll_release_irq(int irq) { (void)irq; lcd_irq = NULL; }
+{ (void)argument; if (irq==IRQ_INTC0_ROTATE) rot_irq=handler; else lcd_irq=handler; }
+void ll_release_irq(int irq) { if (irq==IRQ_INTC0_ROTATE) rot_irq=NULL; else lcd_irq=NULL; }
 int panel_zc502_result(void) { return 0; }
 void panel_zc502_backlight_on(void) { ++backlights; }
 void panel_zc502_power_off(void) { }
@@ -47,9 +75,12 @@ HAL_StatusTypeDef HAL_SRDMA_Stop(LCD_HandleTypeDef *lcd, int mode)
 { (void)lcd; (void)mode; return HAL_OK; }
 HAL_StatusTypeDef HAL_COMP_Init(LCD_HandleTypeDef *lcd, struct lay_cfg *layers)
 {
+    last_lcd=lcd;
     if (lcd->CompData.comp_stopped) lcd->CompData.comp_next_frame = 0;
     else lcd->CompData.comp_next_frame = (lcd->CompData.comp_next_frame + 1) % 3u;
     memcpy(submitted_layers, layers, sizeof(submitted_layers));
+    lcd->CompData.FrameDesc[lcd->CompData.comp_next_frame].words[0]=
+        CPHYSADDR(&lcd->CompData.FrameDesc[lcd->CompData.comp_next_frame]);
     return HAL_OK;
 }
 HAL_StatusTypeDef HAL_COMP_Start(LCD_HandleTypeDef *lcd)
@@ -140,6 +171,116 @@ static void continuous_video_priority(void)
     assert(player_display_stop() == 0);
 }
 
+static void writeback(void)
+{
+    loaded_descriptor=next_descriptor;
+    loaded_y=submitted_layers[0].lay_en ? submitted_layers[0].addr : 0;
+    loaded_ui=submitted_layers[1].lay_en ? submitted_layers[1].addr : 0;
+    fake_dpu.LAY0_SITE=loaded_y+64u;
+    fake_dpu.LAY1_SITE=loaded_ui+64u;
+    uint32_t *words=last_lcd->CompData.FrameDesc[last_lcd->CompData.comp_next_frame].words;
+    assert(words[1]==0x02d00500 && words[2]==0x00070003 && words[4]==1280);
+    fake_dpu.WDMA_SITE=words[3]+64u;
+    fake_dpu.DC_INT_FLAG=DC_INTC_INT_EOW_0;
+    lcd_irq(IRQ_INTC0_LCD,NULL);
+}
+
+static void rotation_event(uint32_t flags)
+{
+    assert(rot_irq);
+    if (flags&PLAYER_ROTATOR_SOF) fake_rotator_regs[PLAYER_ROTATOR_READ_SITE/4]=queued_rotation+64u;
+    fake_rotator_regs[PLAYER_ROTATOR_STATUS/4]=flags;
+    rot_irq(IRQ_INTC0_ROTATE,NULL);
+}
+
+static void wide_route(void)
+{
+    assert(player_display_init()==0 && player_display_start()==0);
+    player_display_gui_attach(true);
+    assert(player_display_set_video_geometry(1279,720)==-EINVAL);
+    assert(player_display_set_video_geometry(1280,720)==-EAGAIN);
+    uint32_t generation=0,serial=0;
+    bool logical=false;
+    assert(player_display_gui_mode(&generation,&logical)==1 && logical);
+    assert(player_display_gui_ack(generation+1u,1)==-EINVAL);
+    assert(player_display_gui_ack(generation,1)==0);
+    assert(player_display_set_video_geometry(1280,720)==-EAGAIN);
+    assert(player_display_gui_mode(&generation,&logical)==2 && logical);
+    assert(fake_rotator_regs[PLAYER_ROTATOR_GLOBAL/4]==0x03000010);
+    assert(fake_rotator_regs[PLAYER_ROTATOR_FRAME_SIZE/4]==0x02d00500);
+    assert(player_display_gui_ack(generation,2)==0);
+    assert(player_display_set_video_geometry(1280,720)==0);
+    assert(player_display_overlay_stride()==1280);
+    player_display_frame_t a=frame(0),b=frame(1);
+    a.capacity=b.capacity=1382400;
+    player_display_completion_t c;
+    assert(player_display_submit_frame(&a)==0);
+    assert(submitted_layers[0].source_w==1280 && submitted_layers[0].source_h==720);
+    assert(submitted_layers[0].stride==1280 && fake_dpu.DC_COM_CONFIG==1);
+    interrupt_only();
+    assert(player_display_poll_completion(&c)==0); /* EOD before EOW/SOF is old scanout. */
+    writeback();
+    assert(player_display_poll_completion(&c)==0); /* EOW cannot claim a displayed video. */
+    rotation_event(1u<<4);
+    interrupt_only();
+    assert(player_display_poll_completion(&c)==0); /* FETCH_ADDR cannot claim it either. */
+    rotation_event(PLAYER_ROTATOR_SOF|PLAYER_ROTATOR_WORKING);
+    assert(player_display_poll_completion(&c)==0);
+    clock_us+=33033; interrupt_only();
+    assert(player_display_poll_completion(&c)==1 && c.has_latched && c.latched.slot==0);
+    assert(player_display_set_video_geometry(720,1280)==-EBUSY);
+    assert(player_display_submit_frame(&b)==0);
+    writeback();
+    rotation_event(PLAYER_ROTATOR_EOF);
+    interrupt_only();
+    assert(player_display_poll_completion(&c)==0); /* EOF still names frame a. */
+    rotation_event(PLAYER_ROTATOR_SOF|PLAYER_ROTATOR_WORKING);
+    clock_us+=33033; interrupt_only();
+    assert(player_display_poll_completion(&c)==1 && c.has_latched && c.latched.slot==1);
+    assert(c.has_retired && c.retired.slot==0);
+    assert(player_display_submit_overlay((const uint32_t *)(uintptr_t)0x82000000u,
+           PLAYER_DISPLAY_OVERLAY_BYTES,99)==0);
+    writeback();
+    rotation_event(PLAYER_ROTATOR_EOF|PLAYER_ROTATOR_SOF|PLAYER_ROTATOR_WORKING);
+    clock_us+=33033; interrupt_only();
+    assert(player_display_poll_overlay_completion(&serial)==1 && serial==99);
+    assert(player_display_poll_completion(&c)==0); /* GUI-only is not another video. */
+    rotation_event(PLAYER_ROTATOR_EOF); /* END/PAUSE repeats the held CUSTOM frame. */
+    player_display_stats_t stats;
+    player_display_get_stats(&stats);
+    assert(stats.confirmed==2 && stats.writebacks==3 && stats.rotator_repeats==1);
+    assert(player_display_clear_video()==0);
+    writeback();
+    rotation_event(PLAYER_ROTATOR_SOF|PLAYER_ROTATOR_WORKING); /* Repeat drains first. */
+    rotation_event(PLAYER_ROTATOR_EOF);
+    rotation_event(PLAYER_ROTATOR_SOF|PLAYER_ROTATOR_WORKING);
+    clock_us+=33033; interrupt_only();
+    assert(player_display_poll_completion(&c)==1 && !c.has_latched && c.has_retired && c.retired.slot==1);
+    assert(player_display_set_video_geometry(720,1280)==-EAGAIN);
+    assert(player_display_gui_mode(&generation,&logical)==1 && !logical);
+    assert(player_display_gui_ack(generation,1)==0);
+    assert(player_display_set_video_geometry(720,1280)==-EAGAIN);
+    assert(player_display_gui_mode(&generation,&logical)==2 && !logical);
+    assert(player_display_gui_ack(generation,2)==0);
+    assert(player_display_set_video_geometry(720,1280)==0 && !rot_irq);
+    assert(player_display_overlay_stride()==720);
+    a=frame(0);
+    assert(player_display_submit_frame(&a)==0); latch();
+    assert(player_display_poll_completion(&c)==1 && c.has_latched);
+    player_display_gui_attach(false);
+    assert(player_display_stop()==0);
+    memset(cached_writebacks,0,sizeof(cached_writebacks));
+    assert(player_display_init()==0 && player_display_start()==0);
+    assert(player_display_set_video_geometry(1280,720)==0);
+    a.capacity=1382400;
+    assert(player_display_submit_frame(&a)==0); writeback();
+    rotation_event(PLAYER_ROTATOR_SOF|PLAYER_ROTATOR_WORKING);
+    rot_hang=true;
+    assert(player_display_stop()==-ETIMEDOUT && rot_irq); /* All CUSTOM allocations stay pinned. */
+    rot_hang=false;
+    assert(player_display_stop()==0 && !rot_irq);
+}
+
 int main(void)
 {
     assert(player_display_init() == 0 && player_display_start() == 0);
@@ -202,6 +343,7 @@ int main(void)
     assert(player_display_stop() == 0);
     assert(player_display_poll_overlay_completion(&serial) == 0);
     continuous_video_priority();
-    puts("PASS production display: descriptor guard, overlay queue/merge, continuous-video priority, paused GUI-only, separate video retirement, stop pin");
+    wide_route();
+    puts("PASS production display: legacy guards/priority, CUSTOM EOW/SOF/EOD ownership, paused GUI-only/repeat, GUI route ACK, native compatibility, stop pin");
     return 0;
 }
