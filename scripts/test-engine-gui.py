@@ -532,6 +532,8 @@ def test_reload_kind(console, kind, args, report):
         report["reload_event"] = event[0]
     finally:
         console.send("keys 000")
+    # 重启事件先于核心的一次性启动日志；等日志输出完再请求完整状态。
+    console.idle(0.5)
     report["stage"] = "boot-A-after-reload"
     reloaded = wait_guest(console, kind, "A", baseline_count + 1, 0, args.operation_timeout)
     report["reloaded_A"] = reloaded
