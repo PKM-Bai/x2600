@@ -1,0 +1,38 @@
+{
+  "sdk": {
+    "path": "libbare-cpu",
+    "commit": "9500d2ec917a44d0d9657940e865e70f1a885849",
+    "source": "https://gitee.com/ingenic-dev/libbare-cpu.git",
+    "freertos": "10.5.1",
+    "lvgl": "8.3.10",
+    "h264_port_source": "drivers/drivers-x2000/src/felix/libh264"
+  },
+  "font": {
+    "source_project": "third_party/ReGBA",
+    "commit": "7f379052dc14366e622a96c7cf7fb6b5a7e918a3",
+    "family": "GNU Unifont"
+  },
+  "mips": {
+    "toolchain": "XBurst2 ELF R5.1.6",
+    "compiler": "GCC 7.2.0",
+    "target": "mips-sde-elf",
+    "options": ["-mips32r2", "-mabi=32", "-mfp32", "-EL"]
+  },
+  "riscv": {
+    "archive": "riscv-ingenic-victory0-rv32emc-elf-tools-r1.1.1.tar.bz2",
+    "source": "用户提供的官方Victory0归档",
+    "archive_sha256": "4c0e37045fab661438753cb2b5bacc1b80c3077f21742da5f93cc6a69cf8c694",
+    "compiler": "GCC 11.1.0",
+    "target": "riscv32-ingenicv0-elf",
+    "host": "Linux x86_64 via WSL Ubuntu-22.04",
+    "options": ["-march=rv32imc", "-mabi=ilp32"],
+    "runtime_note": "归档libgcc为RV32E，工程自身以ILP32编译所需helper；不能混用E ABI"
+  },
+  "ffmpeg": {
+    "version": "9.0.2-essentials_build-www.gyan.dev",
+    "source": "https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-9.0.2-essentials_build.7z",
+    "archive_sha256": "4705843ccaaf54257c16ad90f3e952ece33c17df964ecf7bfdbb0f49c7171077",
+    "required_programs": ["ffmpeg", "ffprobe"],
+    "local_report": "build/player-tools/dependencies.json"
+  }
+}
