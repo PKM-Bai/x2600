@@ -33,6 +33,9 @@ struct player_mp4_track_info {
     int64_t edit_media_time;     /* Track ticks, >= 0 for the supported edit. */
     uint64_t empty_edit_duration;/* Movie ticks, before the media edit. */
     uint64_t edit_duration;      /* Movie ticks; meaningful when has_edit. */
+    int64_t presentation_start_us, presentation_end_us; /* Edited window. */
+    int64_t presentation_last_pts_us; /* Last picture intersecting the window. */
+    uint32_t presentation_samples;   /* Visible pictures; video only. */
     const uint8_t *config;       /* avcC or AudioSpecificConfig; owned by demux. */
     uint32_t config_bytes;
 };

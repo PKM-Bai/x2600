@@ -310,6 +310,8 @@ static int present_ready(uint64_t *clock_start)
             /* Read the DMA result through KSEG1. Do not clean stale CPU lines
              * over FELIX output; checksum only visible pixels, not padding. */
             uint32_t crc[2] = { UINT32_MAX, UINT32_MAX };
+            uint32_t chroma_sum[2] = {0, 0}, chroma_zero[2] = {0, 0}, chroma_full[2] = {0, 0};
+            uint32_t chroma_min[2] = {255, 255}, chroma_max[2] = {0, 0};
             const uint8_t *planes[2] = {
                 (const uint8_t *)(uintptr_t)(frame.physical_y | 0xa0000000u),
                 (const uint8_t *)(uintptr_t)(frame.physical_uv | 0xa0000000u)
@@ -317,15 +319,31 @@ static int present_ready(uint64_t *clock_start)
             for (unsigned p = 0; p < 2; ++p)
                 for (uint32_t row = 0; row < frame.height / (p ? 2u : 1u); ++row)
                     for (uint32_t x = 0; x < frame.width; ++x) {
-                        crc[p] ^= planes[p][row * frame.stride + x];
+                        uint32_t sample = planes[p][row * frame.stride + x];
+                        if (p) {
+                            unsigned channel = x & 1u;
+                            chroma_sum[channel] += sample;
+                            if (sample < chroma_min[channel]) chroma_min[channel] = sample;
+                            if (sample > chroma_max[channel]) chroma_max[channel] = sample;
+                            chroma_zero[channel] += sample == 0;
+                            chroma_full[channel] += sample == 255;
+                        }
+                        crc[p] ^= sample;
                         for (unsigned bit = 0; bit < 8; ++bit)
                             crc[p] = (crc[p] >> 1) ^ (0xedb88320u & (0u - (crc[p] & 1u)));
                     }
-            printf("%s index=%llu y_crc32=%08lx uv_crc32=%08lx pts_us=%lld duration_us=%lu\n",
+            printf("%s index=%llu y_crc32=%08lx uv_crc32=%08lx pts_us=%lld duration_us=%lu output_index=%llu"
+                   " u_min=%lu u_max=%lu u_sum=%lu u_zero=%lu u_full=%lu"
+                   " v_min=%lu v_max=%lu v_sum=%lu v_zero=%lu v_full=%lu\n",
                    verify_frames ? "VIDEO_FRAME_CRC" : "VIDEO_FIRST_FRAME",
                    (unsigned long long)frame.frame_index,
                    (unsigned long)~crc[0], (unsigned long)~crc[1],
-                   (long long)frame.pts_us, (unsigned long)frame.duration_us);
+                   (long long)frame.pts_us, (unsigned long)frame.duration_us,
+                   (unsigned long long)frame.output_index,
+                   (unsigned long)chroma_min[0], (unsigned long)chroma_max[0], (unsigned long)chroma_sum[0],
+                   (unsigned long)chroma_zero[0], (unsigned long)chroma_full[0],
+                   (unsigned long)chroma_min[1], (unsigned long)chroma_max[1], (unsigned long)chroma_sum[1],
+                   (unsigned long)chroma_zero[1], (unsigned long)chroma_full[1]);
         }
         if (verify_frames) {
             ++verified_frames;

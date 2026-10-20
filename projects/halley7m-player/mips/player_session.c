@@ -44,6 +44,8 @@ static unsigned decoded_active, pcm_finished, geometry_ready;
 static struct player_media_packet pending_packet;
 static unsigned packet_pending, file_eof, codec_drained, audio_eof;
 static unsigned audio_started, first_video_latched, video_pending, has_ready;
+static unsigned ready_is_last;
+static int64_t last_output_pts_us;
 static uint64_t pending_at;
 static uint32_t pending_frame_index;
 static int64_t pending_pts_us, pending_duration_us;
@@ -334,6 +336,8 @@ static int stop_resources(void)
     }
     memset(&audio_status, 0, sizeof(audio_status));
     packet_pending = file_eof = codec_drained = audio_eof = has_ready = 0;
+    ready_is_last = 0;
+    last_output_pts_us = -1;
     queued_pcm_samples = 0;
     pcm_read = pcm_count = decoded_active = pcm_finished = 0;
     decoded_axis = 0;
@@ -384,6 +388,8 @@ static int begin_media_impl(const char *path)
     view.error[0] = 0;
     view.elapsed_samples = view.total_samples = 0;
     view.decoded_frames = view.displayed_frames = view.dropped_frames = view.audio_underruns = 0;
+    view.trimmed_frames = view.audio_padding_samples = 0;
+    view.weight_approximated_frames = 0;
     view.late_frames = view.max_late_us = 0;
     if (++view.session_id == 0) ++view.session_id;
     player_session_trace_reset();
@@ -420,6 +426,8 @@ static int begin_media_impl(const char *path)
         if (result) return result;
     }
     if ((!media.audio_codec && !media.audio_samples) || media.audio_samples > UINT32_MAX / 2u ||
+        (media.video_frames && (media.video_end_us <= 0 ||
+         (uint64_t)media.video_end_us > (uint64_t)(UINT32_MAX / 2u) * 1000000u / 48000u)) ||
         (media.kind == PLAYER_MEDIA_AVI && media.audio_samples != media.video_frames * 1600u))
     {
         (void)snprintf(failure_detail, sizeof(failure_detail), "empty/long PCM or unequal AVI audio/video duration");
@@ -588,17 +596,55 @@ static int feed_audio(void)
     }
     result = player_audio_client_service();
     if (result) return result;
+    player_audio_client_get_status(&audio_status);
     if (file_eof && !audio_queue.count && !audio_eof &&
         (!audio_decoder || (pcm_finished && !pcm_count && !decoded_active))) {
-        result = player_audio_client_mark_eof();
-        if (result) return result;
-        audio_eof = 1;
+        /* Keep the consumed-sample master clock alive until the video edit
+         * ends. This silence is distinct from a DMA period's uncounted pad. */
+        static const int16_t silence[480] = { 0 };
+        uint32_t target = media.video_end_us > 0 ?
+            (uint32_t)(((uint64_t)media.video_end_us * 48000u + 999999u) / 1000000u) : 0;
+        for (unsigned work = 0; work < 8 && audio_status.written_samples < target; ++work) {
+            uint32_t count = target - audio_status.written_samples;
+            if (count > 480u) count = 480u;
+            unsigned copied = player_audio_client_write_pcm(silence, count);
+            if (copied > count) return -EPROTO;
+            audio_status.written_samples += copied;
+            view.audio_padding_samples += copied;
+            if (copied != count) break;
+        }
+        if (audio_status.written_samples >= target) {
+            result = player_audio_client_mark_eof();
+            if (result) return result;
+            audio_eof = 1;
+        }
     }
     player_audio_client_get_status(&audio_status);
     if (audio_eof) view.total_samples = audio_status.total_samples;
     view.elapsed_samples = audio_status.completed_samples;
     view.audio_underruns = audio_status.underruns;
     return audio_status.last_error;
+}
+
+static int accept_ready(void)
+{
+    int64_t original_pts = ready_frame.pts_us;
+    int visible = player_source_clip_video(&media, &ready_frame.pts_us, &ready_frame.duration_us);
+    if (visible < 0) return visible;
+    if (!visible) {
+        int result = player_codec_return_frame(codec, ready_frame.token);
+        if (!result) ++view.trimmed_frames;
+        return result;
+    }
+    if (last_output_pts_us >= 0 && ready_frame.pts_us <= last_output_pts_us) {
+        (void)snprintf(failure_detail, sizeof(failure_detail), "non-increasing decoded presentation PTS");
+        return -ENOTSUP;
+    }
+    last_output_pts_us = ready_frame.pts_us;
+    ready_is_last = original_pts == media.video_last_pts_us;
+    has_ready = 1;
+    ready_wait_traced = ready_busy_traced = 0;
+    return 0;
 }
 
 static int decode_one(void)
@@ -609,7 +655,7 @@ static int decode_one(void)
      * into a free slot now, rather than adding VPU time after every EOD. */
     if (!codec || has_ready) return 0;
     result = player_codec_get_ready(codec, video_pool.session, &ready_frame);
-    if (!result) { has_ready = 1; ready_wait_traced = ready_busy_traced = 0; return 0; }
+    if (!result) return accept_ready();
     if (result != -EAGAIN) return result;
     packet = player_packet_queue_front(&video_queue);
     if (packet) {
@@ -631,6 +677,7 @@ static int decode_one(void)
         codec_busy_traced = 0;
         if (result) return result;
         ++view.decoded_frames;
+        view.weight_approximated_frames = player_codec_weight_approximation_count(codec);
         result = player_packet_pool_release(&packet_pool, packet->allocation.ticket);
         if (result) return result;
         player_packet_queue_pop(&video_queue);
@@ -641,7 +688,7 @@ static int decode_one(void)
         if (!result) codec_drained = 1;
     }
     result = player_codec_get_ready(codec, video_pool.session, &ready_frame);
-    if (!result) { has_ready = 1; ready_wait_traced = ready_busy_traced = 0; }
+    if (!result) return accept_ready();
     return result == -EAGAIN ? 0 : result;
 }
 
@@ -651,12 +698,12 @@ static int present_ready(void)
     enum player_video_timing timing;
     int result;
     if (!has_ready || video_pending) return 0;
-    if (view.state == PLAYER_SESSION_LOADING) {
+    if (view.state == PLAYER_SESSION_LOADING && !audio_started) {
         if (first_video_latched) return 0;
-        timing = PLAYER_VIDEO_PRESENT;
+        timing = ready_frame.pts_us > 0 ? PLAYER_VIDEO_WAIT : PLAYER_VIDEO_PRESENT;
     } else {
         timing = player_video_timing_decide(ready_frame.pts_us, ready_frame.duration_us,
-                                            ready_frame.output_index + 1u == media.video_frames,
+                                            ready_is_last,
                                             audio_status.completed_samples);
     }
     if (timing == PLAYER_VIDEO_WAIT) {
@@ -730,7 +777,7 @@ static int playback_step(void)
         if ((result = decode_one()) != 0) return result;
         if ((result = present_ready()) != 0) return result;
     }
-    if (!audio_started && (!codec || first_video_latched) &&
+    if (!audio_started && (!codec || first_video_latched || (has_ready && ready_frame.pts_us > 0)) &&
         (queued_pcm_samples >= INITIAL_PCM_SAMPLES || file_eof)) {
         /* First NV12 + backlight and at least 100ms PCM are ready before the
          * first DMA can consume five periods. Send the saved PCM as a batch. */

@@ -48,8 +48,11 @@ typedef struct player_session_snapshot {
     uint32_t decoded_frames;
     uint32_t displayed_frames;
     uint32_t dropped_frames;
+    uint32_t trimmed_frames; /* Decoded pictures outside the video edit window. */
+    uint32_t audio_padding_samples; /* Timeline silence after the actual audio tail. */
+    uint32_t weight_approximated_frames; /* AUs using the approved +128 -> +127 hardware fallback. */
     /* At actual presentation/drop decision, measured against the audio DMA
-     * sample clock. Late means >=one 30fps frame; not calibrated optical IRQ
+     * sample clock. Late means >=the source frame interval; not optical IRQ
      * latency. max_late_us saturates at UINT32_MAX. */
     uint32_t late_frames;
     uint32_t max_late_us;

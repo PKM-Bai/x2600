@@ -14,6 +14,8 @@ typedef struct player_source {
     enum player_media_kind kind;
     uint32_t width, height, source_rate, channels, audio_codec;
     uint64_t video_frames, audio_samples; /* 48k output; zero = unknown. */
+    uint64_t video_display_frames; /* Visible outputs; decode all video_frames AUs. */
+    int64_t video_start_us, video_end_us, video_last_pts_us;
     uint64_t clip_start, clip_end;        /* Source PCM frame axis. */
     const uint8_t *audio_config;
     uint32_t audio_config_bytes;
@@ -30,5 +32,10 @@ int player_source_next(player_source *source, struct player_media_packet *packet
 int player_source_read(player_source *source, const struct player_media_packet *packet,
                        void *buffer, uint32_t capacity);
 void player_source_close(player_source *source);
+/* Intersect a decoded picture with the edited presentation window. Returns
+ * 1 if visible (and clips PTS/duration), 0 if wholly outside, negative on an
+ * invalid interval. Keep the original PTS for comparison with last_pts_us. */
+int player_source_clip_video(const player_source *source, int64_t *pts_us,
+                             int64_t *duration_us);
 
 #endif

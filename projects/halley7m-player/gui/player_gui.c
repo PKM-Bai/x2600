@@ -279,7 +279,8 @@ static void update_view(void)
         char values[13][256];
         snprintf(values[0], sizeof(values[0]), "状态：%s   会话：%lu", state_name(), (unsigned long)view.session_id);
         snprintf(values[1], sizeof(values[1]), "已解码：%lu 帧   已显示：%lu 帧", (unsigned long)view.decoded_frames, (unsigned long)view.displayed_frames);
-        snprintf(values[2], sizeof(values[2]), "丢帧：%lu   音频欠载：%lu", (unsigned long)view.dropped_frames, (unsigned long)view.audio_underruns);
+        snprintf(values[2], sizeof(values[2]), "丢帧：%lu   音频欠载：%lu   权重近似：%lu帧", (unsigned long)view.dropped_frames,
+                 (unsigned long)view.audio_underruns, (unsigned long)view.weight_approximated_frames);
         snprintf(values[3], sizeof(values[3]), "音频时钟：%lu / %lu 样本", (unsigned long)view.elapsed_samples, (unsigned long)view.total_samples);
         snprintf(values[4], sizeof(values[4]), "音量：%lu%%   资源持有：%lu", (unsigned long)view.volume_percent, (unsigned long)view.resources_pinned);
         snprintf(values[5], sizeof(values[5]), "目录代次：%lu   条目数：%lu", (unsigned long)view.library_generation, (unsigned long)view.library_total);

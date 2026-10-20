@@ -96,24 +96,16 @@ static int mp4_info(player_source *s)
         a->empty_edit_duration || a->aac_frame_samples != 1024 ||
         (i->has_video && ((v->h264_profile != 66 && v->h264_profile != 77 && v->h264_profile != 100) ||
           v->h264_level > 40 ||
-          v->empty_edit_duration || v->has_ctts || (v->has_edit && v->edit_media_time) ||
+          v->empty_edit_duration || !v->presentation_samples ||
           !((v->width == 1280 && v->height == 720) || (v->width == 720 && v->height == 1280)))))
         return PLAYER_MEDIA_UNSUPPORTED;
-    if (i->has_video && v->has_edit) {
-        /* This stage supports an origin-preserving video edit only. The
-         * decoder still sees the complete GOP sequence; clipping preroll
-         * or an edited tail requires the later presentation-trim path. */
-        if (!i->movie_timescale || v->edit_duration > UINT64_MAX / v->timescale)
-            return PLAYER_MEDIA_UNSUPPORTED;
-        uint64_t end = v->edit_duration * v->timescale / i->movie_timescale;
-        uint64_t tick = ((uint64_t)v->timescale + i->movie_timescale - 1u) / i->movie_timescale;
-        if ((end < v->duration && v->duration - end > tick) ||
-            (end > v->duration && end - v->duration > tick))
-            return PLAYER_MEDIA_UNSUPPORTED;
-    }
     s->kind = PLAYER_MEDIA_MP4;
     s->width = v->width; s->height = v->height;
     s->video_frames = i->has_video ? v->sample_count : 0;
+    s->video_display_frames = v->presentation_samples;
+    s->video_start_us = v->presentation_start_us;
+    s->video_end_us = v->presentation_end_us;
+    s->video_last_pts_us = v->presentation_last_pts_us;
     s->source_rate = a->sample_rate; s->channels = a->channels; s->audio_codec = 3;
     s->audio_config = a->config; s->audio_config_bytes = a->config_bytes;
     s->clip_start = a->has_edit ? (uint64_t)a->edit_media_time : 0;
@@ -151,6 +143,11 @@ int player_source_open(player_source *s, const struct player_media_io *io)
         if (r) return r;
         s->kind = s->legacy.kind; s->width = s->legacy.width; s->height = s->legacy.height;
         s->video_frames = s->legacy.video_frames; s->audio_samples = s->legacy.audio_samples;
+        s->video_display_frames = s->video_frames;
+        if (s->video_frames) {
+            s->video_end_us = (int64_t)(s->video_frames * 1000000u * s->legacy.fps_den / s->legacy.fps_num);
+            s->video_last_pts_us = (int64_t)((s->video_frames - 1u) * 1000000u * s->legacy.fps_den / s->legacy.fps_num);
+        }
         s->source_rate = 48000; s->channels = 1;
         return 0;
     }
@@ -205,8 +202,7 @@ int player_source_next(player_source *s, struct player_media_packet *p)
         p->index = m->sample_index; p->pts_us = m->pts_us;
         p->dts_us = m->dts_us; p->duration_us = (int64_t)m->duration_us;
         p->audio_frames = m->kind == PLAYER_PACKET_AUDIO ? 1024 : 0;
-        if (m->kind == PLAYER_PACKET_VIDEO &&
-            (m->pts != m->dts || m->pts_us < 0 || !m->duration_us))
+        if (m->kind == PLAYER_PACKET_VIDEO && !m->duration_us)
             return PLAYER_MEDIA_UNSUPPORTED;
         return 0;
     }
@@ -245,4 +241,16 @@ void player_source_close(player_source *s)
 {
     if (s->mp4) player_mp4_close(s->mp4);
     s->mp4 = NULL;
+}
+
+int player_source_clip_video(const player_source *s, int64_t *pts, int64_t *duration)
+{
+    if (!s || !pts || !duration || *duration <= 0 || *pts > INT64_MAX - *duration)
+        return PLAYER_MEDIA_BAD_FORMAT;
+    int64_t end = *pts + *duration;
+    if (end <= s->video_start_us || *pts >= s->video_end_us) return 0;
+    if (*pts < s->video_start_us) *pts = s->video_start_us;
+    if (end > s->video_end_us) end = s->video_end_us;
+    *duration = end - *pts;
+    return 1;
 }

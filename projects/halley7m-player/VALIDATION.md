@@ -267,3 +267,22 @@ MIPS本轮固件为2,035,536B、CRC32 `2c877f19`、SHA256 `975f1d0ee256d7182d7a2
 - 同一包随后以正常GUI、AMP、7%音量完整播放21秒suite：ENDED decode/display=630/630，drop/late=0/0，max_late=13334us；audio total/written/completed=1008000，欠载/DMA错误/超时/队列/FIFO错误均0，GUI44次render/present、error0。六参考尾段空闲堆4,546,760B；STOP后IDLE/inactive/pinned0、空闲34,535,744B（wide GUI仍持有三张CUSTOM表面）。这是结束时观测值，不宣称分配器瞬时最小值。日志`build/player-cabac-signed-gui-play-board-20261020.log`。
 
 原始`test.mp4`仍需第3步的CTTS、非零video edit和B帧重排才能直接打开；上述无B片源通过不等于原文件已验收。不沿用旧AVI30分钟结果作为新功能长跑，也不宣称测得实际声光偏差。
+
+## 2026-10-20：兼容性第3步——B帧、编辑窗口和固定DPB工作区
+
+- MP4接通CTTS、有符号DTS/PTS和非零video edit；按实际呈现窗口裁剪，不丢弃参考链需要的preroll。SDK恢复POC重排等待，明确限制重排深度4、DPB6，EOF排空。最后呈现帧按最大有效PTS判定，不按最后输入AU判定。音频早结束时补齐视频时间轴的静音，补齐数与DMA尾填充分别记录。
+- 主机MP4为21个真实案例、7个拒绝案例；统一source为36个真实文件，含原始test.mp4。生产会话对Main/B2、High/B4、signed CTTS、preroll、尾裁、正首PTS和短音频各做三轮暂停/恢复/EOF/STOP；GUI、显示持有、按键与诊断行实测通过。真实派生codec的5项CTest覆盖RBSP、CABAC、POC/EOF、权重及固定工作区；实际参考表函数另验证I/P/B只访问启用条目，活动参考缺失明确失败。
+- R1候选SHA `54ceeab1f2cc40474058997c25018a94ba7237d87d3e6102d68e192fc450a35f`对受控High/ref6/B4量化片99帧的198个Y/UV CRC和真实PTS全部正确，正常有声播放99/99、158400样本、音频错误0。原始文件994帧全部输出且Y/顺序/PTS正确，但呈现888–899的12个UV CRC不同；普通GUI播放另在AU215申请921600B的内部Y缓冲失败。原始失败日志保留，不算完整原片像素或播放通过。
+- 内部CTRL/MV/Tile Y/UV改为九槽固定工作区，一次分配16,853,760B、关闭释放，避免逐帧大块分配碎片。R3 SHA `9cb8292c6c89baabd471eaedc3cff6b2f7bec68862139592133ac3e47588f74e`首次接入后在`ff_h264_execute_decode_slices`异常，EPC `80640a5c`、badva4；反汇编确认读取了未启用list1条目的已清空指针。修复按list_count/ref_count填写MC与collocated表，禁用项置零，有效项缺失明确报错，未恢复悬空指针。
+- R4 Release 2,212,592B、CRC `c00d4fa7`、SHA `28fd79528ee921f24bf76765152d824acb238c1ab4f25a3ba7d88ebda9dbd83c`，Debug 2,341,264B，两核构建和地址核验通过；RAM日志`build/player-bframes-active-ref-ramload-20261020.log`。正常GUI/AMP/7%完整播放原始TF test.mp4：994解码、989呈现、drop/late5/5、max_late67000us；有效音频1592520个样本全部完成，所有音频错误0。ENDED空闲426264B，STOP后34388288B、IDLE/inactive/pinned0；工作区peak8、active0。此内存是状态查询观测值，不称瞬时峰值。
+- 同一R4另做暂停/恢复与菜单诊断回归：两次PAUSED查询都为275040样本、176解码/169呈现，时钟与队列持有未推进；恢复到ENDED为994解码/992呈现、drop/late2/2、max_late57000us，音频1592520且错误0。自动三键菜单/诊断周期1/1完成、aborted0、GUI error0。最后LATCH的输入AU是987、PTS33099333us，最后输入为993，B尾段正确排空；STOP后堆再次34388288B。日志`build/player-bframes-active-ref-pause-ui-board-20261020.log`。这些实测不是零掉帧结论，也不代替新版本30分钟长跑。
+
+### 已确认的MCE权重精度与用户选择
+
+标准默认权重`1<<7`为+128，MCE的显式权重接口只有有符号8位。直接写0x80的R2/R4在同一12帧产生负权重/饱和错误：首次受影响P帧每个UV分量约少4096、各出现32个零值，PC对应无零值。R4的150帧GOP探针重复了这个问题；它未被记成像素验收通过。
+
+PC隔离分析把5个P slice（原AU886/890/894/895/899）的默认128改成显式127/偏移0，CABAC图像载荷逐字节不变、重新对齐并去/加防竞争字节，FFmpeg trace确认实际se(v)=127。全部150帧Y/UV CRC精确复现R1板端结果。相对规范原片，仅呈现888–899有变化，累计4139个UV字节、最大差3；理想RGB换算最大差601full为5、709limited为7。分析JSON绑定GOP SHA `c354440fb3aebf4b67950d1d6de1ef26a7109727c676c661f6db3c683875e576`与R1串口日志SHA `f8a0c9eae0163027b0c93cb31d645ebbcc197fe0186e9d644f4afa3861166347`。这不是实屏RGB测量或其他文件的误差上限。
+
+用户明确选择“兼容优先：允许这一小段色度近似，并在诊断页标明”。最终解析器保留规范128，在硬件边界仅对启用的显式加权通道/参考把+128映射为127，负128不改；成功提交的同一AU只计一次，GUI显示“权重近似”，串口导出`weight_approx`。实际parser/VDMA/hook回归覆盖活动边界、负权重、多slice和失败AU不累计；真实GUI断言诊断行显示5帧。
+
+本阶段最终R5 Release 2,212,960B、CRC `5d560034`、SHA `37f9e27c8bf30bb81ae0fec0e0490952dc183cd461db450cdd5356b9f17a6132`；Debug 2,341,632B、CRC `47684d76`、SHA `6334a6972baa5bfde46d201567abc3522318e43c6dadf4fc1f80471e0effe8b9`。两核Debug/Release、主机会话和GUI已通过；R5新的硬件边界近似与计数板测将在本轮RAM加载后补录，不能把R4结果写成R5通过。全部新版本仅RAM运行，Flash保持此前版本。

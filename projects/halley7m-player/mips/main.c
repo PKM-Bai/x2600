@@ -86,10 +86,12 @@ static void print_session(void)
            (unsigned long)console_view.resources_pinned, (long)console_view.error_code,
            (unsigned long)console_view.last_request_id, (long)console_view.last_request_result,
            console_view.media_path, console_view.error);
-    printf("SESSION_QUEUES late=%lu max_late_us=%lu video_packets=%lu audio_packets=%lu pcm_queued=%lu\n",
+    printf("SESSION_QUEUES late=%lu max_late_us=%lu video_packets=%lu audio_packets=%lu pcm_queued=%lu trimmed=%lu audio_padding=%lu weight_approx=%lu\n",
            (unsigned long)console_view.late_frames, (unsigned long)console_view.max_late_us,
            (unsigned long)console_view.video_queue_packets, (unsigned long)console_view.audio_queue_packets,
-           (unsigned long)console_view.queued_pcm_samples);
+           (unsigned long)console_view.queued_pcm_samples,
+           (unsigned long)console_view.trimmed_frames, (unsigned long)console_view.audio_padding_samples,
+           (unsigned long)console_view.weight_approximated_frames);
 }
 
 static int session_command(enum player_session_command_kind kind, const char *path, int value)

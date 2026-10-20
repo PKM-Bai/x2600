@@ -25,6 +25,7 @@ def load(name):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--ffmpeg', type=Path)
+    parser.add_argument('--probe-media', type=Path, help='Also verify a user MP4 through the production source')
     parser.add_argument('--mips-prefix', help="Also compile production source.c using the real compiler prefix ending in '-'")
     args = parser.parse_args()
     helper = load('test-player-audio-decode')
@@ -67,7 +68,7 @@ def main():
     ffprobe = ffmpeg.with_name('ffprobe' + ffmpeg.suffix)
     reports = []
 
-    def check(path, expected_frames=None):
+    def check(path, expected_frames=None, video_trim=False):
         prefix = output / ('out-' + path.stem)
         def artifact(suffix):
             return Path(str(prefix) + suffix)
@@ -103,10 +104,40 @@ def main():
                                  if packet['stream_index'] == stream['index']]
             for kind in (1, 2):
                 actual = [row['packet'] for row in rows if 'packet' in row and row['packet']['kind'] == kind]
-                assert len(actual) == len(by_kind[kind])
-                for packet, (reference, scale) in zip(actual, by_kind[kind]):
-                    for key in ('pts', 'dts', 'duration'):
+                if kind == 1 and video_trim:
+                    # FFmpeg stops demux at an edited tail; this player still
+                    # decodes those coded pictures to preserve references.
+                    # All packets FFmpeg exposes must still match exactly.
+                    actual_by_offset = {packet['offset']: packet for packet in actual}
+                    assert len(actual) >= len(by_kind[kind])
+                    paired = [(actual_by_offset[int(reference['pos'])], (reference, scale))
+                              for reference, scale in by_kind[kind]]
+                else:
+                    assert len(actual) == len(by_kind[kind])
+                    paired = zip(actual, by_kind[kind])
+                dts_bias = None
+                for packet, (reference, scale) in paired:
+                    for key in ('pts', 'duration'):
                         assert abs(Fraction(packet[key + '_us'], 1000000) - int(reference[key]) * scale) < Fraction(2, 1000000), (path, packet, reference)
+                    # Signed CTTS remuxes can shift FFmpeg's decode timeline;
+                    # presentation stays exact and the DTS bias stays fixed.
+                    bias = Fraction(packet['dts_us'], 1000000) - int(reference['dts']) * scale
+                    if dts_bias is None:
+                        dts_bias = bias
+                    assert abs(bias - dts_bias) < Fraction(2, 1000000), (path, packet, reference)
+            clips = [row['video_clip'] for row in rows if 'video_clip' in row]
+            video_packets = [row['packet'] for row in rows if 'packet' in row and row['packet']['kind'] == 1]
+            visible = []
+            for packet, clip in zip(video_packets, clips):
+                start = max(packet['pts_us'], info['video_start_us'])
+                end = min(packet['pts_us'] + packet['duration_us'], info['video_end_us'])
+                assert clip['visible'] == int(end > start)
+                if clip['visible']:
+                    assert clip['pts_us'] == start and clip['duration_us'] == end - start
+                    visible.append(packet)
+            assert len(visible) == info['video_display_frames']
+            if visible:
+                assert max(packet['pts_us'] for packet in visible) == info['video_last_pts_us']
         skipped = int(next((item['skip_samples'] for item in reference_packets[0].get('side_data_list', [])
                             if 'skip_samples' in item), 0))
         reference = helper.run([ffmpeg, '-v', 'error', '-i', path, '-map', '0:a:0', '-f', 's16le', '-acodec', 'pcm_s16le', '-'])
@@ -216,14 +247,12 @@ def main():
                     '-f', 'lavfi', '-i', 'sine=f=997:r=48000:d=1.2', '-ac', '2',
                     '-c:v', 'libx264', '-profile:v', 'baseline', '-level:v', '3.1',
                     '-refs', '1', '-bf', '0', '-pix_fmt', 'yuv420p',
-                    '-video_track_timescale', '90000', '-c:a', 'aac', path])
+                    '-video_track_timescale', '90000', '-movie_timescale', '1000', '-c:a', 'aac', path])
         check(path)
     quantized = output / 'video-timestamps-33-34ms.mp4'
     quantized.write_bytes(mp4_helper.quantized_frame_times(path.read_bytes()))
     check(quantized)
-    # Until presentation trimming is connected, video preroll and a genuine
-    # shortened edit are rejected explicitly instead of playing discarded
-    # source pictures or treating their negative mapped PTS as corruption.
+    # Decode every AU, while displaying only the edited presentation window.
     def edited_video(data, *, start=0, duration=0):
         def track(tag, payload):
             if tag == b'trak' and b'vide' in payload:
@@ -237,11 +266,30 @@ def main():
             return tag, payload
         return mp4_helper.rewrite(data, track)
     for name, changed in (
-            ('video-preroll.mp4', edited_video(path.read_bytes(), start=3000)),
+            ('video-preroll.mp4', edited_video(path.read_bytes(), start=3000, duration=1000)),
             ('video-trimmed-tail.mp4', edited_video(path.read_bytes(), duration=500))):
         invalid = output / name
         invalid.write_bytes(changed)
-        reject(invalid)
+        check(invalid, video_trim=True)
+    bframes = output / 'video-bframes.mp4'
+    helper.run([ffmpeg, '-v', 'error', '-y', '-f', 'lavfi', '-i',
+                'testsrc2=s=1280x720:r=30:d=1.2', '-f', 'lavfi', '-i',
+                'sine=f=997:r=48000:d=1.2', '-c:v', 'libx264', '-profile:v', 'main',
+                '-level:v', '3.1', '-refs', '3', '-bf', '2', '-pix_fmt', 'yuv420p',
+                '-video_track_timescale', '90000', '-movie_timescale', '1000', '-c:a', 'aac', bframes])
+    check(bframes)
+    signed = output / 'video-bframes-signed.mp4'
+    helper.run([ffmpeg, '-v', 'error', '-y', '-i', bframes, '-c', 'copy',
+                '-movflags', '+negative_cts_offsets', signed])
+    check(signed)
+    for name, changed in (
+            ('video-bframes-preroll.mp4', edited_video(bframes.read_bytes(), start=12000, duration=1000)),
+            ('video-bframes-trimmed-tail.mp4', edited_video(bframes.read_bytes(), duration=500))):
+        path = output / name
+        path.write_bytes(changed)
+        check(path, video_trim=True)
+    if args.probe_media:
+        check(args.probe_media)
     (output / 'comparison.json').write_text(json.dumps(reports, indent=2) + '\n', encoding='utf-8')
     print(f'PASS unified source: {len(reports)} real files, AU equality, trim/PCM/backpressure/EOF and failure boundaries; no board test', flush=True)
 

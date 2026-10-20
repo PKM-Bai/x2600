@@ -241,6 +241,7 @@ int main(int argc, char **argv)
     snapshot.total_samples = 48000 * 180;
     snapshot.decoded_frames = 1110;
     snapshot.displayed_frames = 1108;
+    snapshot.weight_approximated_frames = 5;
     strcpy(snapshot.media_path, "0:/本地媒体/清晨的城市与海边漫步.avi");
     ++snapshot.revision;
     capture("playback");
@@ -264,6 +265,7 @@ int main(int argc, char **argv)
     player_gui_get_stats(&gui);
     assert(gui.page == PLAYER_GUI_DIAGNOSTICS && !gui.menu_open);
     capture("diagnostics");
+    assert(contains_label(lv_scr_act(), "权重近似：5帧"));
     press(PLAYER_INPUT_KEY_START);
     player_gui_get_stats(&gui);
     assert(gui.page == PLAYER_GUI_PLAYBACK);

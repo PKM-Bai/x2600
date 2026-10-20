@@ -117,7 +117,10 @@ static int rescale_us(int64_t value, uint32_t scale, int64_t *out)
     if(!scale) return PLAYER_MEDIA_BAD_FORMAT;
     whole=value/(int64_t)scale; fraction=value%(int64_t)scale;
     if(whole>INT64_MAX/1000000 || whole<INT64_MIN/1000000) return PLAYER_MEDIA_UNSUPPORTED;
-    *out=whole*1000000+(fraction*1000000)/(int64_t)scale; return 0;
+    whole*=1000000; fraction=(fraction*1000000)/(int64_t)scale;
+    if((fraction>0 && whole>INT64_MAX-fraction) ||
+       (fraction<0 && whole<INT64_MIN-fraction)) return PLAYER_MEDIA_UNSUPPORTED;
+    *out=whole+fraction; return 0;
 }
 static int map_us(struct player_mp4 *m, struct track *t, int64_t source, int64_t *out)
 {
@@ -331,6 +334,81 @@ static int parse_stbl(struct player_mp4 *m, struct track *t, const struct box *s
     if(!seen_stsd || !t->info.sample_count || !t->tables[T_SIZE].stride || !t->tables[T_CHUNK].count || !t->tables[T_MAP].count || !t->tables[T_TIME].count) return PLAYER_MEDIA_BAD_FORMAT;
     return 0;
 }
+/* Merge runs, rather than visit every frame. This validates presentation
+ * clipping without consuming the playback cursor or reading coded samples. */
+static int presentation_window(struct player_mp4 *m, struct track *t)
+{
+    uint32_t ti=0,ci=0,tl=0,cl=0,delta=0,count,first,after;
+    uint64_t decoded=0,span,clip_end=UINT64_MAX;
+    int64_t offset=0,clip_start=t->info.has_edit?t->info.edit_media_time:0;
+    int64_t requested_end=0,natural_end=INT64_MIN,start=0,last=INT64_MIN;
+    const uint8_t *p; int r;
+    if(t->info.codec!=PLAYER_MP4_H264) return 0;
+    if(t->info.has_edit) {
+        uint64_t whole=t->info.edit_duration/m->info.movie_timescale;
+        uint64_t fraction=t->info.edit_duration%m->info.movie_timescale;
+        if(whole>((uint64_t)INT64_MAX-(uint64_t)clip_start)/t->info.timescale)
+            return PLAYER_MEDIA_UNSUPPORTED;
+        clip_end=(uint64_t)clip_start+whole*t->info.timescale;
+        fraction*=t->info.timescale;
+        uint64_t tail=fraction/m->info.movie_timescale+(fraction%m->info.movie_timescale!=0);
+        if(tail>(uint64_t)INT64_MAX-clip_end) return PLAYER_MEDIA_UNSUPPORTED;
+        clip_end+=tail; /* Ceil: a PTS immediately before a fractional end stays visible. */
+        if(t->info.empty_edit_duration>INT64_MAX || t->info.edit_duration>INT64_MAX)
+            return PLAYER_MEDIA_UNSUPPORTED;
+        r=rescale_us((int64_t)t->info.empty_edit_duration,m->info.movie_timescale,&start); if(r) return r;
+        r=rescale_us((int64_t)t->info.edit_duration,m->info.movie_timescale,&requested_end); if(r) return r;
+        if(requested_end>INT64_MAX-start) return PLAYER_MEDIA_UNSUPPORTED;
+        requested_end+=start;
+    }
+    while(decoded<t->info.duration) {
+        if(!tl) {
+            r=entry(m,&t->tables[T_TIME],ti++,&p); if(r) return r;
+            tl=be32(p); delta=be32(p+4);
+        }
+        if(t->info.has_ctts && !cl) {
+            r=entry(m,&t->tables[T_CTIME],ci++,&p); if(r) return r;
+            cl=be32(p); offset=t->ctts_signed?(int64_t)(int32_t)be32(p+4):(int64_t)be32(p+4);
+        }
+        count=tl; if(t->info.has_ctts && count>cl) count=cl;
+        span=(uint64_t)count*delta;
+        if(offset>0 && decoded+span>(uint64_t)(INT64_MAX-offset)) return PLAYER_MEDIA_UNSUPPORTED;
+        int64_t run=(int64_t)decoded+offset;
+        int64_t end=run+(int64_t)span,mapped;
+        r=map_us(m,t,end,&mapped); if(r) return r;
+        if(mapped>natural_end) natural_end=mapped;
+        first=0; after=count;
+        if(run<clip_start) {
+            uint64_t skip=((uint64_t)clip_start-(uint64_t)run)/delta;
+            first=skip<count?(uint32_t)skip:count;
+        }
+        if(t->info.has_edit) {
+            if(run>=(int64_t)clip_end) after=0;
+            else {
+                uint64_t room=clip_end-(uint64_t)run;
+                uint64_t keep=room/delta+(room%delta!=0);
+                if(keep<after) after=(uint32_t)keep;
+            }
+        }
+        if(after>first) {
+            int64_t pts=run+(int64_t)((uint64_t)(after-1u)*delta);
+            r=map_us(m,t,pts,&mapped); if(r) return r;
+            if(mapped>last) last=mapped;
+            t->info.presentation_samples+=after-first;
+        }
+        decoded+=span; tl-=count; if(t->info.has_ctts) cl-=count;
+    }
+    t->info.presentation_start_us=start;
+    t->info.presentation_end_us=natural_end;
+    if(t->info.has_edit) {
+        if(requested_end>natural_end) {
+            uint64_t tick=(1000000u+(uint64_t)m->info.movie_timescale-1u)/m->info.movie_timescale;
+            if((uint64_t)requested_end-(uint64_t)natural_end>tick) return PLAYER_MEDIA_BAD_FORMAT;
+        } else t->info.presentation_end_us=requested_end;
+    }
+    t->info.presentation_last_pts_us=last;
+    return 0;
+}
 static int validate_tables(struct player_mp4 *m, struct track *t)
 {
     uint32_t i,count,delta,first,next,per,previous=0; uint64_t samples=0,duration=0,capacity=0; const uint8_t *p; int r;
@@ -366,7 +444,7 @@ static int validate_tables(struct player_mp4 *m, struct track *t)
         if(count<=previous || count>t->info.sample_count) return PLAYER_MEDIA_BAD_FORMAT;
         previous=count;
     }
-    return 0;
+    return presentation_window(m,t);
 }
 static int parse_trak(struct player_mp4 *m, const struct box *trak)
 {

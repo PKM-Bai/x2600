@@ -13,6 +13,11 @@
 - Slice header 直接解析完整、有界 RBSP，取消 SDK 的 32 字节临时头和第二次去转义。
 - CAVLC 保持精确 bit offset；CABAC 将 header 末端向上对齐到字节。两者都从已去转义 RBSP 解码，硬件 `bs_rbsp_en=0`。
 - CABAC 初始化表明确使用 `signed char`。固定 MIPS GCC 的 plain `char` 默认为 unsigned，SDK 原声明会把负的 m/n 系数解释为正数，导致错误的 CABAC 上下文。
+- 恢复 SDK 的 `pics > has_b_frames` 输出条件，先按 POC 缓存足够图片再发布，避免同一张延迟图片被过早、重复发布；EOF 逐帧排空。
+- 保存 SPS 的 `max_dec_frame_buffering`，复用同一 SPS id 时清除旧重排限制，避免把旧 VUI 属性带入新码流。
+- 保留加权预测分母 7 时的隐式权重 128，移除 SDK 把它压成 127 的非标准处理；显式有符号权重仍按标准校验。
+- 内部 tile 参考图和宏块信息使用一次分配的固定工作区，随 CODEC 持有获取和释放槽位，避免逐帧大块分配造成堆碎片。
+- 只为当前 slice 的有效 list/ref_count 填写硬件参考表，清零未使用条目；对真实活动参考缺失返回错误。SDK 遍历全部 16 项的写法会读取上个 B 帧留下的失效引用，不能靠保留悬空 AVBuffer 指针掩盖。
 - 修正 newlib `memalign/realloc/free` 的分配语义、AVBuffer 失败清理和日志输出边界。
 - 保留底层解码错误码；FELIX 失败时在任务上下文输出 IRQ/SDE 状态和 AU/bitstream 参数，超时结束当前会话。
 
@@ -22,9 +27,11 @@
 
 输入为一个完整 Annex B access unit，有效长度最多 512KiB，调用者另提供至少 64 字节可写填充。一个 AU 可包含多个 NAL；首个 IDR 必须能够取得 SPS/PPS。
 
-当前步骤 2 接受 Baseline/Main/High（profile 66/77/100）、Level 不高于 4.0、8bit YUV420、逐行帧、最多 6 个参考帧，支持 CAVLC/CABAC。FMO、MBAFF、其他位深/色度格式明确拒绝。SPS coded 尺寸仍限定为 720×1280 或 1280×720。
+当前接受 Baseline/Main/High（profile 66/77/100）、Level 不高于 4.0、8bit YUV420、逐行帧、最多 6 个参考帧，支持 CAVLC/CABAC 和 B 帧。明确声明的重排深度最多 4、DPB 最多 6，实际每个参考列表最多 16 项。FMO、MBAFF、其他位深/色度格式明确拒绝。SPS coded 尺寸仍限定为 720×1280 或 1280×720。
 
-播放器已使用容器真实 PTS 和 duration 调度，不再要求每帧必须精确等于 1/30 秒。步骤 2 仍拒绝 CTTS/B 帧；SDK 的 B 帧输出重排修正、呈现裁剪和尾段验收由下一步骤接入。颜色矩阵/范围和其他输入尺寸也由后续步骤扩展。完整播放器支持范围以 `../FORMATS.md` 为准。
+播放器使用容器真实 PTS 和 duration 调度，支持 CTTS，解码顺序与呈现顺序分别计数，不再要求每帧必须精确等于 1/30 秒。负 PTS 的 preroll 仍送解码以保留参考链，由会话层裁剪呈现窗口。没有 VUI 重排限制的 Main/High 使用保守的 4 帧解码预填充，不把 SDK 基于 Level 推测的值直接当成拒绝理由；Baseline 无 B 帧预填充。若帧池只剩 CODEC/SCANOUT 持有且没有可退休的 READY/PENDING，返回 `-ENOBUFS` 结束会话，避免无限等待。
+
+颜色矩阵/范围和其他输入尺寸由下一步骤扩展。完整播放器支持范围以 `../FORMATS.md` 为准。
 
 ## 输出与帧池
 
@@ -35,7 +42,7 @@
 | 720×1280 | 768 | 983040 | 491520 | 1474560 |
 | 1280×720 | 1280 | 921600 | 460800 | 1382400 |
 
-帧池有 `PLAYER_VIDEO_MAX_REFS + 3 = 9` 槽，为 6 个参考帧、当前解码和两个显示持有预留空间。九个线性 NV12 面分别占 13,271,040 或 12,441,600 字节。内部参考图使用独立 tile 平面与运动信息，不能只按线性 NV12 预算内存：720p 每个内部 DPB 约 1,872,512 字节，包括 tile 1,382,400、控制 29,056 和运动信息 461,056 字节。最终以包含 GUI/旋转器/音频的实板内存记录为准。
+帧池有 `PLAYER_VIDEO_MAX_REFS + 3 = 9` 槽，为 6 个参考帧、当前解码和两个显示持有预留空间。九个线性 NV12 面分别占 13,271,040 或 12,441,600 字节。内部参考图使用独立 tile 平面与运动信息，不能只按线性 NV12 预算内存：720p 每个内部 DPB 的有效数据为 1,872,512 字节，包括 tile 1,382,400、控制 29,056 和运动信息 461,056 字节。四个内部区域分别按 256 字节对齐后，每个工作区槽为 1,872,640 字节，九槽总计 16,853,760 字节；该区域在 `open_geometry()` 一次分配，在 `close()` 释放，不进行逐帧大块分配。`CODEC_WORKSPACE` 记录峰值和停止后的活动槽数。最终以包含 GUI/旋转器/音频的实板内存记录为准。
 
 `AVFrame` 为 SDK 私有结构。每次获取空槽建立 CODEC 持有；发布后增加 READY，仍保留参考图所需的 CODEC。提交显示把 READY 变成 PENDING；只有实际硬件完成后才变成 SCANOUT，并退休旧扫描帧。SDK 释放 DPB 仅撤销 CODEC，所有持有均消失后才可复用该槽。
 
@@ -66,9 +73,11 @@ cmake --build build/player-codec-host
 ctest --test-dir build/player-codec-host --output-on-failure
 ```
 
-两个测试直接使用派生代码：RBSP 测试覆盖完整边界、一次去转义、literal `00 00 03`、64 字节填充和释放；CABAC 测试以 `/J` 模拟 MIPS unsigned-char 默认值，运行实际 VDMA 描述符构建器，核对 I/P/B、三种 PB 模型、QP 0/26/51 的 45 个固定上下文值和 21 个 termination 值。
+五个测试覆盖派生代码与固定工作区：RBSP 测试覆盖完整边界、一次去转义、literal `00 00 03`、64 字节填充和释放；CABAC 测试以 `/J` 模拟 MIPS unsigned-char 默认值，运行实际 VDMA 描述符构建器，核对 I/P/B、三种 PB 模型、QP 0/26/51 的 45 个固定上下文值和 21 个 termination 值；重排测试提取实际 SDK POC/输出/排空函数，检查重排深度 1/2/4、跨 IDR、一次发布、真实 PTS 与 EOF 尾帧，并验证未修复的 SDK 条件会触发回归失败。同一提取测试也覆盖实际参考表辅助函数：I/P/B、未使用条目保留已释放图片、零填充和活动引用缺失错误。MSVC 的空 SEI 结构和 container_of 兼容调整只发生在隔离主机副本。加权预测测试调用实际 parser 和 VDMA 构建器，覆盖分母 7 的隐式 128、U/V 不同权重与偏移、三参考帧和有符号偏移；未修复的 SDK 会在该测试失败。工作区测试检查六种 coded 几何、九槽边界与对齐、200 次非 FIFO 复用、邻槽内容及无效布局。
 
 `scripts/make-player-compat-fixtures.py` 生成七组 Baseline/Main/High、CAVLC/CABAC、ref1/3/6 短片，逐组核验真实 SPS/PPS 并完整软件解码，输出每帧 Y/UV CRC。它也生成 21 秒 suite，在封闭 IDR 处依次切换七组 SPS/PPS；软件解码必须与七个独立参考片逐帧一致。
+
+`scripts/make-player-bframe-fixtures.py` 生成 Main ref3+B2、High ref6+B4 及 1kHz 时间基量化的 33/34ms 版本；每片 99 帧、158400 个媒体样本，尾段最后呈现 AU 早于最后解码 AU。参考 CRC 同时记录 `index`（AU）、`output_index`（呈现顺序）、PTS 和 duration，避免只按解码序号比对画面。
 
 板上 `video verify @embedded` 通过统一 source 解复用，仅解码视频并从 uncached NV12 读取每帧 Y/UV CRC。它不启用音频、不提交/停止 DPU；普通 GUI 使用自身表面继续运行。只能在会话资源已停止时调用。CRC 验证与正常有声播放分开记录：前者证明像素解码，后者证明显示、时钟、音频、GUI 与内存预算。suite 的 SPS/PPS 切换验证不等于七个独立文件均已完成打开/停止验收。
 
@@ -82,5 +91,11 @@ ctest --test-dir build/player-codec-host --output-on-failure
 - 实际 CABAC 硬解在 signed-char 修复后与 PC 逐像素一致；错误声明的旧候选在第 90 帧进入 Main/CABAC 时失败，未写入 Flash。
 
 有声日志为 `build/player-cabac-signed-gui-play-board-20261020.log`。这些证据覆盖短片功能与一次完整生命周期，不等于新格式已完成 30 分钟长跑或七个独立文件的打开/停止回归。阶段证据入口为 `../VALIDATION.md`，Flash 仍保留此前的可用版本。
+
+步骤 3 接通真实 PTS、B 重排和内部工作区后，原始 `test.mp4` 已完整解码 994 帧、输出 1,592,520 个有效音频样本，并通过暂停时钟冻结、恢复、菜单/诊断和 STOP 回收。每个候选的像素、迟到和内存结果独立记录在 `../VALIDATION.md`；不把完整解码等同于零掉帧或严格的原始像素一致。
+
+MCE 的显式预测权重接口使用有符号 8 位系数，不能直接表示分母 7 时的默认 `+128`。规范 parser 保留该值；用户已选择兼容优先，在硬件交界处只将当前启用通道和参考项的 `+128` 映射为 `+127`，明确的 `-128` 不变。多 slice 的同一 AU 只计一次，诊断页与 `SESSION_QUEUES weight_approx` 报告使用近似的帧数。该计数表示直接使用近似的输入帧，参考链可能使更多输出帧受影响。
+
+对这份原文件，5 个 P 帧的近似影响后续 12 个呈现帧；通过改写有效 H.264 预测表并保持 CABAC 图像载荷一致，PC 150 帧结果全部复现旧板端 CRC。相对规范解码，累计 4139 个 UV 字节不同、最大色度差 3/255；PC 理想矩阵换算的 RGB 最大差为 5/255（601full）或 7/255（709limited）。这不是其他片源的通用误差上限，也不是物理屏幕测量。直接把 `128` 写成 `0x80` 会产生负权重和饱和错误，未作为最终兼容路径。当前原片 994 帧 PTS、AU 身份与 Y 平面已核对，输出 888–899 的 UV 平面仍与 PC 参考不同；这些帧使用分母 7 的显式 chroma 加权预测，默认 128 在硬件 8 位权重字段中的处理仍在定位。不得将这次结果记为原片完整逐像素通过。CRC 探针同时输出 U/V 最小值、最大值、总和及 0/255 数量，供与 PC 逐帧统计比较。
 
 FELIX 使用 X2600 `IRQ_INTC0_FELIX`（INTC0 bit27）、CLKGR1 bit17、CPM SRBC bit28 复位，寄存器基址为物理 `0x13300000`（MIPS uncached `0xb3300000`）。每 slice 内部复位和 EArb 等待上限 10ms，解码 IRQ 等待上限 100ms；提交前清理 RBSP、描述符和 DPB 的缓存。

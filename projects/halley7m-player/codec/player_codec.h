@@ -44,6 +44,9 @@ int player_codec_return_frame(player_codec_t *codec, player_video_token_t token)
  * Caller stops DPU and calls player_video_pool_stop before a new session. */
 int player_codec_stop(player_codec_t *codec, uint32_t session);
 void player_codec_close(player_codec_t *codec);
+/* Successful input AUs using the selected +128 -> +127 hardware policy.
+ * Multiple affected slices count once; NULL returns zero. */
+uint32_t player_codec_weight_approximation_count(const player_codec_t *codec);
 /* SDK HAL exposes NV12 as 8; the private decoder exposes it as 2. */
 int player_codec_format_from_hal(uint32_t hal_format);
 

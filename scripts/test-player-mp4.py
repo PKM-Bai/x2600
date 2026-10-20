@@ -184,6 +184,14 @@ def check_media(executable, ffmpeg, ffprobe, path, output, decode=True):
     assert all(a['dts_us'] <= b['dts_us'] for a, b in zip(packets, packets[1:]))
     assert records[-1]['done']['video'] == len(expected_by_kind[1])
     assert records[-1]['done']['audio'] == len(expected_by_kind[2])
+    if info['has_video']:
+        video = info['video']
+        visible = [packet for packet in packets if packet['kind'] == 1 and
+                   packet['pts_us'] + packet['duration_us'] > video['presentation_start_us'] and
+                   packet['pts_us'] < video['presentation_end_us']]
+        assert len(visible) == video['presentation_samples']
+        if visible:
+            assert max(packet['pts_us'] for packet in visible) == video['presentation_last_pts_us']
     assert prefix.with_suffix('.aacraw').read_bytes() == source_audio
     if info['has_video'] and decode:
         assert framemd5(ffmpeg, path) == framemd5(ffmpeg, prefix.with_suffix('.h264'))

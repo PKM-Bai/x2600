@@ -75,6 +75,17 @@ static void self_test(void)
     bytes[3] = 3; assert(player_source_open(&s, &io) == PLAYER_MEDIA_BAD_FORMAT); bytes[3] = 4;
     bytes[6] = 128; assert(player_source_open(&s, &io) == PLAYER_MEDIA_BAD_FORMAT); bytes[6] = 0;
     bytes[9] = 127; f.length = 40; assert(player_source_open(&s, &io) == PLAYER_MEDIA_BAD_FORMAT);
+    memset(&s,0,sizeof(s)); s.video_end_us=1000000;
+    int64_t pts=-33333,duration=33333;
+    assert(!player_source_clip_video(&s,&pts,&duration));
+    pts=-10000; duration=33333;
+    assert(player_source_clip_video(&s,&pts,&duration)==1 && !pts && duration==23333);
+    pts=999999; duration=33333;
+    assert(player_source_clip_video(&s,&pts,&duration)==1 && pts==999999 && duration==1);
+    pts=1000000; duration=33333; assert(!player_source_clip_video(&s,&pts,&duration));
+    duration=0; assert(player_source_clip_video(&s,&pts,&duration)==PLAYER_MEDIA_BAD_FORMAT);
+    pts=INT64_MAX; duration=1;
+    assert(player_source_clip_video(&s,&pts,&duration)==PLAYER_MEDIA_BAD_FORMAT);
     puts("{\"self_test\":\"short read, IO error, truncated frame, format change, ID3v1 scope, ID3v2.4 footer/reserved flags/bounds passed\"}");
 }
 static FILE *output_file(const char *prefix, const char *suffix)
@@ -100,9 +111,10 @@ int main(int argc, char **argv)
     struct player_media_io io = memory_io(&f); player_source source;
     int r = player_source_open(&source, &io);
     if (r) { printf("{\"error\":%d,\"stage\":\"open\"}\n", r); free(bytes); return 3; }
-    printf("{\"info\":{\"kind\":%u,\"codec\":%u,\"rate\":%u,\"channels\":%u,\"video_frames\":%" PRIu64 ",\"clip_start\":%" PRIu64 ",\"clip_end\":%" PRIu64 "}}\n",
+    printf("{\"info\":{\"kind\":%u,\"codec\":%u,\"rate\":%u,\"channels\":%u,\"video_frames\":%" PRIu64 ",\"clip_start\":%" PRIu64 ",\"clip_end\":%" PRIu64 ",\"video_start_us\":%" PRId64 ",\"video_end_us\":%" PRId64 ",\"video_last_pts_us\":%" PRId64 ",\"video_display_frames\":%" PRIu64 "}}\n",
            (unsigned)source.kind, source.audio_codec, source.source_rate, source.channels,
-           source.video_frames, source.clip_start, source.clip_end);
+           source.video_frames, source.clip_start, source.clip_end, source.video_start_us,
+           source.video_end_us, source.video_last_pts_us, source.video_display_frames);
     assert(source.audio_codec);
     player_audio_decode_config config = {(enum player_audio_codec)source.audio_codec,
                                         source.audio_config, source.audio_config_bytes};
@@ -127,6 +139,10 @@ int main(int argc, char **argv)
                (unsigned)p.kind, p.offset, p.length, p.index, p.audio_frames,
                p.pts_us, p.dts_us, p.duration_us);
         if (p.kind == PLAYER_PACKET_VIDEO) {
+            int64_t pts=p.pts_us, duration=p.duration_us;
+            int visible=player_source_clip_video(&source,&pts,&duration); assert(visible>=0);
+            printf("{\"video_clip\":{\"index\":%" PRIu64 ",\"visible\":%d,\"pts_us\":%" PRId64 ",\"duration_us\":%" PRId64 "}}\n",
+                   p.index,visible,pts,duration);
             assert(fwrite(packet, 1, p.length, video) == p.length); ++video_count; continue;
         }
         le32(bundle, p.length); assert(fwrite(packet, 1, p.length, bundle) == p.length); ++count;

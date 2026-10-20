@@ -26,12 +26,17 @@ def check(log, reference):
     previous_pts = None
     for order, (actual, wanted) in enumerate(zip(rows, expected)):
         index = int(actual.get('output_index', actual['index']))
-        if index != order or wanted['index'] != order:
+        if index != order or wanted.get('output_index', wanted['index']) != order:
             raise ValueError(f'Output order/duplicate mismatch at frame {order}')
+        if 'output_index' in wanted and int(actual['index']) != wanted['index']:
+            raise ValueError(f'Decode identity lost during reorder at output {order}')
         for plane in ('y_crc32', 'uv_crc32'):
             if int(actual[plane], 16) != int(wanted[plane], 16):
                 raise ValueError(f'Pixel mismatch frame {order} {plane}: {actual[plane]} != {wanted[plane]}')
         pts = int(actual['pts_us'])
+        for timestamp in ('pts_us', 'duration_us'):
+            if timestamp in wanted and abs(int(actual[timestamp]) - wanted[timestamp]) > 1:
+                raise ValueError(f'Timestamp mismatch frame {order}: {timestamp}')
         if previous_pts is not None and pts <= previous_pts:
             raise ValueError(f'Non-increasing presentation PTS at frame {order}')
         previous_pts = pts

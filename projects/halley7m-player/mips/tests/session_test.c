@@ -17,6 +17,7 @@ static unsigned allocations, audio_starts, stop_fail, codec_stop_fail;
 static unsigned request_id;
 static uint32_t last_displayed;
 static unsigned expected_video_frames = 12u;
+static unsigned reorder_depth;
 static uint8_t wav[44u + 19201u * 2u];
 static uint8_t *avi;
 static size_t avi_size;
@@ -193,10 +194,29 @@ struct player_codec {
     player_video_pool_t *pool;
     player_codec_buffer_t buffers[PLAYER_VIDEO_SLOTS];
     player_codec_frame_t ready;
+    player_codec_frame_t delayed[PLAYER_VIDEO_SLOTS], by_slot[PLAYER_VIDEO_SLOTS];
     player_video_token_t reference;
-    unsigned running, has_ready, has_reference;
+    unsigned running, has_ready, has_reference, delayed_count, draining;
+    uint64_t output_index;
 };
 static struct player_codec decoder;
+static int publish_delayed(player_codec_t *codec)
+{
+    if (codec->has_ready || !codec->delayed_count ||
+        (!codec->draining && codec->delayed_count <= reorder_depth)) return 0;
+    unsigned first = 0;
+    for (unsigned i = 1; i < codec->delayed_count; ++i)
+        if (codec->delayed[i].pts_us < codec->delayed[first].pts_us) first = i;
+    if (codec->has_reference) assert(player_video_codec_release(codec->pool, codec->reference));
+    codec->ready = codec->delayed[first];
+    codec->delayed[first] = codec->delayed[--codec->delayed_count];
+    codec->ready.output_index = codec->output_index++;
+    codec->reference = codec->ready.token; codec->has_reference = 1;
+    assert(player_video_codec_publish(codec->pool, codec->ready.token));
+    codec->by_slot[codec->ready.token.slot] = codec->ready;
+    codec->has_ready = 1;
+    return 1;
+}
 int player_codec_open(player_codec_t **output, player_video_pool_t *pool, uint32_t session,
                        const player_codec_buffer_t buffers[PLAYER_VIDEO_SLOTS])
 {
@@ -218,33 +238,39 @@ int player_codec_submit(player_codec_t *codec, uint32_t session, uint8_t *data,
     assert(codec->running && session == codec->pool->session && data && length && capacity >= length + 64u);
     if (!player_video_codec_acquire(codec->pool, &token)) return -EAGAIN;
     assert(!codec->has_ready);
-    if (codec->has_reference) assert(player_video_codec_release(codec->pool, codec->reference));
-    codec->has_reference = 1; codec->reference = token;
-    assert(player_video_codec_publish(codec->pool, token));
-    memset(&codec->ready, 0, sizeof(codec->ready));
-    codec->ready.token = token; codec->ready.frame_index = frame;
-    codec->ready.output_index = frame;
-    codec->ready.pts_us = pts_us; codec->ready.duration_us = duration_us;
-    codec->ready.y = codec->buffers[token.slot].base;
-    codec->has_ready = 1;
+    assert(codec->delayed_count < PLAYER_VIDEO_SLOTS && !codec->draining);
+    player_codec_frame_t *delayed = &codec->delayed[codec->delayed_count++];
+    memset(delayed, 0, sizeof(*delayed));
+    delayed->token = token; delayed->frame_index = frame;
+    delayed->pts_us = pts_us; delayed->duration_us = duration_us;
+    delayed->y = codec->buffers[token.slot].base;
+    codec->by_slot[token.slot] = *delayed;
+    (void)publish_delayed(codec);
     now_us += 5600u;
     return 0;
 }
 int player_codec_get_ready(player_codec_t *codec, uint32_t session, player_codec_frame_t *frame)
-{ assert(session == codec->pool->session); if (!codec->has_ready) return -EAGAIN; *frame = codec->ready; codec->has_ready = 0; return 0; }
+{ assert(session == codec->pool->session); (void)publish_delayed(codec);
+  if (!codec->has_ready) return -EAGAIN; *frame = codec->ready; codec->has_ready = 0; return 0; }
 int player_codec_return_frame(player_codec_t *codec, player_video_token_t token)
 { return player_video_discard_ready(codec->pool, token) ? 0 : -EINVAL; }
 int player_codec_drain(player_codec_t *codec, uint32_t session)
-{ (void)codec; (void)session; return 0; }
+{ assert(session == codec->pool->session); codec->draining = 1;
+  (void)publish_delayed(codec); return codec->has_ready ? 1 : 0; }
 int player_codec_stop(player_codec_t *codec, uint32_t session)
 {
     assert(!audio.session_active && codec->running && session == codec->pool->session);
     if (codec_stop_fail) return -ETIMEDOUT;
     if (codec->has_reference) assert(player_video_codec_release(codec->pool, codec->reference));
+    for (unsigned i = 0; i < codec->delayed_count; ++i)
+        assert(player_video_codec_release(codec->pool, codec->delayed[i].token));
+    codec->delayed_count = codec->has_ready = codec->has_reference = 0;
     for (unsigned i = 0; i < PLAYER_VIDEO_SLOTS; ++i) codec->pool->slots[i].holds &= ~PLAYER_VIDEO_READY;
     codec->running = 0; return 0;
 }
 void player_codec_close(player_codec_t *codec) { assert(!codec->running); }
+uint32_t player_codec_weight_approximation_count(const player_codec_t *codec)
+{ (void)codec; return 0; }
 
 static player_display_completion_t completion;
 static player_video_token_t scanout;
@@ -253,6 +279,7 @@ static unsigned gui_pending_without_video;
 static unsigned video_active;
 static uint32_t refresh_us = 1000u;
 static uint64_t latch_at;
+static uint32_t latched_decode_index;
 static unsigned geometry_busy_calls, geometry_in_progress;
 int player_display_start(void) { return 0; }
 int player_display_set_video_geometry(uint32_t w, uint32_t h)
@@ -270,6 +297,7 @@ int player_display_submit_frame(const player_display_frame_t *frame)
     completion.latched = frame->token;
     completion.has_retired = display_scanout != 0;
     completion.retired = scanout;
+    latched_decode_index = (uint32_t)decoder.by_slot[frame->token.slot].frame_index;
     display_pending = 1; latch_at = (now_us / refresh_us + 1u) * refresh_us;
     return 0;
 }
@@ -298,7 +326,7 @@ int player_display_poll_completion(player_display_completion_t *output)
     display_advance();
     if (!completion_valid) return 0;
     *output = completion; completion_valid = 0;
-    if (completion.has_latched) last_displayed = (uint32_t)decoder.ready.frame_index;
+    if (completion.has_latched) last_displayed = latched_decode_index;
     return 1;
 }
 void player_display_get_stats(player_display_stats_t *output)
@@ -343,8 +371,9 @@ static void wait_state(enum player_session_state state)
 }
 int main(int argc, char **argv)
 {
-    assert(argc >= 2 && argc <= 4);
+    assert(argc >= 2 && argc <= 8);
     if (argc >= 3) { expected_video_frames = (unsigned)atoi(argv[2]); refresh_us = 33033u; }
+    if (argc >= 5) { reorder_depth = (unsigned)atoi(argv[4]); assert(reorder_depth <= 4u); }
     FILE *input = fopen(argv[1], "rb");
     assert(input && !fseek(input, 0, SEEK_END));
     long length = ftell(input); assert(length > 0);
@@ -352,8 +381,19 @@ int main(int argc, char **argv)
     rewind(input); assert(fread(avi, 1, avi_size, input) == avi_size); fclose(input);
     make_wav();
     assert(player_session_init() == 0);
-    if (argc == 4) {
+    if (argc >= 4) {
         uint32_t expected_samples = (uint32_t)strtoul(argv[3], NULL, 10);
+        unsigned expected_last = argc >= 6 ? (unsigned)atoi(argv[5]) : expected_video_frames - 1u;
+        unsigned expected_visible = argc >= 7 ? (unsigned)atoi(argv[6]) : expected_video_frames;
+        unsigned expected_padding = argc >= 8 ? (unsigned)atoi(argv[7]) : 0u;
+        if (reorder_depth) {
+            post(PLAYER_SESSION_PLAY_PATH, 0, "@embedded");
+            wait_state(PLAYER_SESSION_PLAYING);
+            assert(decoder.delayed_count);
+            post(PLAYER_SESSION_STOP, 0, NULL);
+            assert(snapshot.state == PLAYER_SESSION_IDLE && !allocations && !decoder.delayed_count &&
+                   !file.open && !audio.session_active);
+        }
         for (unsigned run = 0; run < 3; ++run) {
             post(PLAYER_SESSION_PLAY_PATH, 0, "@embedded");
             wait_state(PLAYER_SESSION_PLAYING);
@@ -368,6 +408,8 @@ int main(int argc, char **argv)
             fflush(stdout);
             assert(snapshot.elapsed_samples == expected_samples && snapshot.total_samples == expected_samples);
             assert(snapshot.decoded_frames == expected_video_frames && !snapshot.audio_underruns);
+            if (argc >= 8) assert(snapshot.audio_padding_samples == expected_padding);
+            assert(snapshot.trimmed_frames == expected_video_frames - expected_visible);
             if (expected_video_frames) {
                 player_session_trace_t records[PLAYER_SESSION_TRACE_CAPACITY];
                 unsigned count = player_session_trace_read(0, records, PLAYER_SESSION_TRACE_CAPACITY, NULL);
@@ -376,13 +418,16 @@ int main(int argc, char **argv)
                 for (unsigned i = 0; i < count; ++i) {
                     if (records[i].event != PLAYER_SESSION_TRACE_LATCH) continue;
                     assert(records[i].video_pts_us > previous_pts && records[i].video_duration_us > 0);
+                    if (records[i].video_pts_us > 0)
+                        assert((uint64_t)records[i].audio_samples * 1000000u >=
+                               (uint64_t)records[i].video_pts_us * 48000u);
                     previous_pts = records[i].video_pts_us;
                     ++latches;
                 }
-                assert(latches == snapshot.displayed_frames && last_displayed == expected_video_frames - 1u);
+                assert(latches == snapshot.displayed_frames && last_displayed == expected_last);
                 /* Under the 30.27Hz peer, lower-rate material must retain its
                  * source cadence. No systematic tail-drop at frames/30. */
-                assert(snapshot.displayed_frames == expected_video_frames && !snapshot.dropped_frames);
+                assert(snapshot.displayed_frames == expected_visible && !snapshot.dropped_frames);
             }
             post(PLAYER_SESSION_STOP, 0, NULL);
             assert(snapshot.state == PLAYER_SESSION_IDLE && !allocations && !file.open && !audio.session_active);
