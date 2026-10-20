@@ -4,7 +4,9 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define PLAYER_VIDEO_SLOTS     4u
+#define PLAYER_VIDEO_MAX_REFS  6u
+/* Six retained references, the current decode and two display holds. */
+#define PLAYER_VIDEO_SLOTS     (PLAYER_VIDEO_MAX_REFS + 3u)
 #define PLAYER_VIDEO_ALIGNMENT 128u
 
 typedef struct {

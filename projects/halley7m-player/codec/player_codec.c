@@ -5,6 +5,7 @@
 #include "h264dec.h"
 #include <x2600_hal.h>
 #include <errno.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -51,9 +52,11 @@ AVFrame *player_codec_frame_acquire(H264Context *h)
     const SPS *sps = h->ps.sps;
     if (!codec || !codec->running || !sps || h->width != (int)codec->layout.width ||
         h->height != (int)codec->layout.height ||
-        sps->profile_idc != 66 || sps->level_idc > 31 || sps->ref_frame_count > 1 ||
-        sps->bit_depth_luma != 8 || sps->bit_depth_chroma != 8 || !sps->frame_mbs_only_flag ||
-        !h->ps.pps || h->ps.pps->cabac || !player_video_codec_acquire(codec->pool, &token))
+        (sps->profile_idc != 66 && sps->profile_idc != 77 && sps->profile_idc != 100) ||
+        sps->level_idc > 40 || sps->ref_frame_count > 6 || sps->num_reorder_frames > 0 ||
+        sps->chroma_format_idc != 1 || sps->bit_depth_luma != 8 || sps->bit_depth_chroma != 8 ||
+        !sps->frame_mbs_only_flag || sps->mb_aff || !h->ps.pps ||
+        h->ps.pps->slice_group_count != 1 || !player_video_codec_acquire(codec->pool, &token))
         return NULL;
     slot = &codec->slots[token.slot];
     slot->token = token;
@@ -166,7 +169,26 @@ int player_codec_submit(player_codec_t *codec, uint32_t session,
     codec->submitting_pts_us = pts_us;
     codec->submitting_duration_us = duration_us;
     result = h264_decode_frame(&codec->avctx, NULL, &got, &packet);
-    if (result < 0) return result;
+    if (result < 0) {
+        const SPS *sps = codec->h264.ps.sps;
+        const jzm_h264 *hardware = codec->h264.st_h264;
+        printf("CODEC_ERROR index=%llu pts_us=%lld result=%d profile=%d level=%d refs=%d cabac=%u qp=%u mb=%ux%u bs_addr=%08lx bs_index=%lu bs_bits=%lu rbsp=%lu sch=%08lx sde=%08lx\n",
+               (unsigned long long)frame_index, (long long)pts_us, result,
+               sps ? sps->profile_idc : -1, sps ? sps->level_idc : -1,
+               sps ? sps->ref_frame_count : -1, (unsigned)hardware->cabac,
+               (unsigned)hardware->qscale, (unsigned)hardware->mb_width, (unsigned)hardware->mb_height,
+               (unsigned long)hardware->bs_buffer, (unsigned long)hardware->bs_index,
+               (unsigned long)hardware->bs_size_in_bits, (unsigned long)hardware->bs_rbsp_en,
+               (unsigned long)codec->h264.vpu_ctx.sch_stat, (unsigned long)codec->h264.vpu_ctx.sde_stat);
+        if (hardware->bs_buffer && hardware->cabac) {
+            const volatile uint8_t *bytes = (const volatile uint8_t *)(uintptr_t)
+                                           (hardware->bs_buffer | 0xa0000000u);
+            printf("CODEC_ERROR_BS first32=");
+            for (unsigned index = 0; index < 32; ++index) printf("%02x", bytes[index]);
+            printf("\n");
+        }
+        return result;
+    }
     return result == (int)length ? 0 : -EIO;
 }
 

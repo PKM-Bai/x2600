@@ -74,13 +74,13 @@ static void check_layout_and_guards(void)
 static void check_exhaustion_and_shared_holds(void)
 {
     player_video_pool_t pool;
-    player_video_token_t frames[4], extra;
+    player_video_token_t frames[PLAYER_VIDEO_SLOTS], extra;
     player_video_pool_init(&pool);
-    for (unsigned index = 0; index < 4; ++index) {
-        expect(player_video_codec_acquire(&pool, frames + index), "acquire four slots");
+    for (unsigned index = 0; index < PLAYER_VIDEO_SLOTS; ++index) {
+        expect(player_video_codec_acquire(&pool, frames + index), "acquire bounded multi-reference slots");
         expect(frames[index].slot == index, "unique slot");
     }
-    expect(!player_video_codec_acquire(&pool, &extra), "four-slot exhaustion");
+    expect(!player_video_codec_acquire(&pool, &extra), "multi-reference slot exhaustion");
     expect(!player_video_display_submit(&pool, frames[0]), "unpublished frame rejected");
     expect(player_video_codec_publish(&pool, frames[0]), "codec publishes ready frame");
     expect(!player_video_codec_publish(&pool, frames[0]), "duplicate publish rejected");
@@ -156,6 +156,6 @@ int main(void)
     check_stop_and_pending_cancel();
     if (failures) return 1;
     puts("player_video PASS: NV12 stride/planes/guards/alignment/overflow, "
-         "four slots, codec+DPU holds, stale tokens, stopped sessions");
+         "multi-reference slots, codec+DPU holds, stale tokens, stopped sessions");
     return 0;
 }

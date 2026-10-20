@@ -254,3 +254,16 @@ MIPS本轮固件为2,035,536B、CRC32 `2c877f19`、SHA256 `975f1d0ee256d7182d7a2
 - `build/player-pts-quantized-trace-20261020.log`保留113条trace，DECODE/SUBMIT/LATCH各30条完整覆盖0..29，PTS依次0/33000/66000/100000…966000us，末帧duration34000us。首次在ENDED请求同步trace被`PROBE_BUSY`拒绝，未影响播放计数；随后按接口要求STOP再导出。初次预备RAM包未用于本节验收，正式证据只对应上述SHA。
 - 真实TF既有横屏MP4另做暂停/恢复前缀回归：两次PAUSED状态均为100320样本、63解码/62显示，暂停期间无时钟推进；恢复后STOP回IDLE，7%音量不变。原始日志`build/player-pts-pause-board-20261020.log`。本节短测不替代旧版本30分钟结果；不更新Flash，也不宣称已验证手机录像中的实际音画偏差。
 - 上述TF前缀回归在恢复后的集中UART查询/STOP阶段另记录drop1、late1、max_late33334us，音频错误仍0；不能将其描述成全程视频零掉帧。33/34ms完整短片的30/30零丢帧结论独立成立。用户交互/诊断集中输出的时序影响在后续B帧联合验证中继续检查。
+
+## 2026-10-20：兼容性第2步——CABAC、Main/High及六参考帧
+
+- 解码门槛扩展为Baseline/Main/High、Level<=4.0、8bit420逐行、最多六参考；仍拒绝CTTS/B重排及超出首版两种尺寸。线性帧池扩大到九槽（六参考+当前解码+两显示持有），trace holds扩为64bit，保持CODEC/READY/PENDING/SCANOUT所有权。
+- 派生路径统一使用完整、一次去转义的RBSP，去掉32字节slice header副本与非VCL第二次去转义；CABAC按字节对齐后进行物理字对齐。真实MIPS编译器定义`__CHAR_UNSIGNED__=1`，SDK CABAC m/n表中的负参数必须显式signed char；只修正这两张表，不全局改变char语义。
+- 初始未修signed char的RAM包SHA `ecc086a33d0a1e0a559eb429f6a63ee5798639715f2676c1f042dc4f9c47e33d`在Baseline90帧像素正确后、首个Main/CABAC处失败；原始日志`build/player-cabac-suite-crc-board-20261020.log`与包保留于`build/player-evidence-cabac-r1`。新校验器正确拒绝此失败记录。初次采集工具未识别CRLF结束标志而等待，已修正；不将该失败计为CABAC通过。
+- 主机使用真实派生硬件API生成VDMA，强制unsigned plain-char，核对I/P/B三种slice、三种PB模型、QP0/26/51的45个固定context golden words及21个termination context；与RBSP字节/释放测试合计CTest2/2。源29真实文件、七个profile/ref文件独立打开/规范化/音频解码、九槽边界、真实会话、GUI/显示回归及两核Debug/Release均通过。
+- `make-player-compat-fixtures.py`生成七份3秒片源和一份21秒630帧诊断suite：Baseline/CAVLC/ref1，Main/CABAC/ref1/3/6，High/CABAC/ref1/3/6（8x8变换）。suite在关闭GOP的IDR处保留in-band SPS/PPS切换，PC完整NV12输出逐帧等于七段独立解码结果；这是同一文件的七段特性验证，不冒充七次独立板端打开。
+- 修正后正式RAM包2,068,880B、CRC32 `680aa515`、SHA256 `1b0c96198c05e179448e42cd78228e69885a3e3a0a16f6d4368c956fc2a26e9f`。`build/player-cabac-signed-ramload-20261020.log`确认上传长度和板端CRC；不更新Flash。RISC-V音频镜像维持35880B/CRC `003d092f`。
+- `run-player-codec-board.py`只在IDLE/inactive运行纯硬解CRC probe；GUI的DPU/旋转/ARGB缓冲继续独立持有。板端630帧、1260个Y/UV平面CRC与PC全部相同，PTS递增、EOF排空和STOP均成功；诊断解码累计3,210,043us，采样最小空闲堆19,305,496B，回收后45,596,504B。该CRC慢速同步探针不作实时30fps结论。日志`build/player-cabac-signed-suite-crc-board-20261020.log`，SHA `be5ed60516cd181bcc2a7fb0da21eb086659532297328a5f06e2b5e49b816b94`；JSON报告保留PC参考SHA和逐项判定。
+- 同一包随后以正常GUI、AMP、7%音量完整播放21秒suite：ENDED decode/display=630/630，drop/late=0/0，max_late=13334us；audio total/written/completed=1008000，欠载/DMA错误/超时/队列/FIFO错误均0，GUI44次render/present、error0。六参考尾段空闲堆4,546,760B；STOP后IDLE/inactive/pinned0、空闲34,535,744B（wide GUI仍持有三张CUSTOM表面）。这是结束时观测值，不宣称分配器瞬时最小值。日志`build/player-cabac-signed-gui-play-board-20261020.log`。
+
+原始`test.mp4`仍需第3步的CTTS、非零video edit和B帧重排才能直接打开；上述无B片源通过不等于原文件已验收。不沿用旧AVI30分钟结果作为新功能长跑，也不宣称测得实际声光偏差。

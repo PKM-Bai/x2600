@@ -76,6 +76,20 @@ def prepare(destination: Path) -> None:
     return consumed;
 }
 ''' + text[end:]
+            begin = text.index("static int h264_parse_nal_header(")
+            end = text.index("\nstatic int find_next_start_code", begin)
+            text = text[:begin] + '''static int h264_parse_nal_header(H2645NAL *nal, void *logctx)
+{
+    GetBitContext *gb = &nal->gb;
+    (void)logctx;
+    if (get_bits1(gb) != 0)
+        return AVERROR_INVALIDDATA;
+    nal->ref_idc = get_bits(gb, 2);
+    nal->type = get_bits(gb, 5);
+    /* Extraction already produced RBSP for every NAL, including SPS/PPS/SEI. */
+    return 1;
+}
+''' + text[end:]
             text = replace_once(text, "    av_freep(&pkt->nals);", "    for (i = 0; i < pkt->nals_allocated; ++i)\n        av_freep(&pkt->nals[i].player_rbsp);\n    av_freep(&pkt->nals);", relative)
         elif relative == "src/h264_slice.c":
             text = '#include "player_codec_hooks.h"\n' + text
@@ -92,6 +106,17 @@ def prepare(destination: Path) -> None:
             text = replace_once(text, "f->linesize[0] = f->buf[0]->size;\n    f->linesize[1] = f->buf[1]->size;",
                                 "/* The pool hook supplies byte strides for the configured geometry. */", relative)
             text = replace_once(text, "    list_del(&f->queued_entry);", "    /* Pool acquisition replaces the vendor's unowned queue. */", relative)
+            begin = text.index("    unsigned char slice_header[MAX_SLICE_HEADER_SIZE];")
+            end = text.index("    //dump_slice_header(sl);", begin)
+            text = text[:begin] + '''    /* The NAL parser owns a complete de-escaped RBSP. Parse its bounded
+     * bitstream directly: re-copying 32 bytes truncates long reference-list
+     * headers and a second unescape pass can remove real RBSP payload. */
+    sl->gb = nal->gb;
+    ret = h264_slice_header_parse(h, sl, nal);
+    if (ret < 0)
+        return ret;
+
+''' + text[end:]
             text = replace_once(text, "fail:\n    ff_h264_unref_picture(h, pic);", "fail:\n    player_codec_frame_release(h, f);\n    ff_h264_unref_picture(h, pic);", relative)
             text = replace_once(text, "st_h264->frm_y_stride = ROUND_UP(h->width, 128);",
                                 "st_h264->frm_y_stride = cur_pic->f->linesize[0];", relative)
@@ -99,9 +124,12 @@ def prepare(destination: Path) -> None:
             text = replace_once(text, "    vpu_hw_wait(&h->vpu_ctx);", "    ret = vpu_hw_wait(&h->vpu_ctx);\n    if (ret < 0) return ret;", relative)
             begin = text.index("#if 1   /* 在M200上需要处理以下bs_addr")
             end = text.index("\n#endif", begin) + len("\n#endif")
-            text = text[:begin] + '''    /* The packet parser already removed emulation prevention bytes.
-     * The fixed Baseline profile uses CAVLC, so VPU RBSP removal stays off. */
-    if (st_h264->cabac) return AVERROR(EINVAL);
+            text = text[:begin] + '''    /* ff_h2645_extract_rbsp already removed emulation prevention bytes.
+     * CABAC starts after cabac_alignment_one_bit up to the next byte; CAVLC
+     * starts at the exact slice-header bit. Both use the same owned RBSP and
+     * must leave the VPU's second emulation-prevention pass disabled. */
+    if (st_h264->cabac)
+        st_h264->bs_index = (st_h264->bs_index + 7u) & ~7u;
     unsigned int bs_addr = (st_h264->bs_buffer + (st_h264->bs_index >> 3)) & ~3u;
     unsigned int bs_ofst = (((st_h264->bs_buffer & 3u) << 3) + st_h264->bs_index) & 31u;
     st_h264->bs_size_in_bits = st_h264->bs_size_in_bits - st_h264->bs_index + bs_ofst;
@@ -111,10 +139,19 @@ def prepare(destination: Path) -> None:
 ''' + text[end:]
         elif relative == "src/h264dec.c":
             text = '#include "player_codec_hooks.h"\n' + text
+            text = replace_once(text, "    if (buf_index < 0) {\n        return AVERROR_INVALIDDATA;\n    }",
+                                "    if (buf_index < 0) {\n        return buf_index;\n    }", relative)
             text = replace_once(text, "    f->queued = 0;\n    INIT_LIST_HEAD(&f->done_entry);", """    if (player_codec_frame_publish(h, f) < 0)
         return AVERROR(EINVAL);
     f->queued = 0;
     INIT_LIST_HEAD(&f->done_entry);""", relative)
+        elif relative == "api/jzm_h264_dec.c":
+            # The MIPS compiler defaults plain char to unsigned. CABAC m/n
+            # coefficients participate in signed arithmetic before clipping.
+            text = replace_once(text, "__place_k0_data__ char cabac_context_init_I[460][2]",
+                                "__place_k0_data__ signed char cabac_context_init_I[460][2]", relative)
+            text = replace_once(text, "__place_k0_data__ char cabac_context_init_PB[3][460][2]",
+                                "__place_k0_data__ signed char cabac_context_init_PB[3][460][2]", relative)
         elif relative == "src/mem.c":
             expression = r"void \*av_malloc_aligned\(size_t alignment, size_t size\)\n\{.*?\n\}\n\nvoid av_free_aligned\(void \*ptr\)\n\{.*?\n\}"
             text, count = re.subn(expression, """void *av_malloc_aligned(size_t alignment, size_t size)

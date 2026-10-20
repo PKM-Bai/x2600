@@ -16,7 +16,7 @@ PCM。默认音量仍为7%。真实TF十二个压缩音频组合和两份横屏M
 | MP3 | MPEG Layer III，有界帧长；ID3v2.2/2.3/2.4、ID3v1；CBR/VBR，Xing/Info 与 LAME 延迟/尾填充 |
 | AAC | ADTS AAC-LC，1024 源样本帧，单个 raw_data_block；无精确尾时长时保留实际解码尾填充 |
 | M4A | 非分片 MP4 中的 AAC-LC，使用 ASC 和简单 edit list 在源样本轴裁剪 |
-| MP4 | 一个 H.264 Baseline ≤Level 3.1 视频轨＋一个 AAC-LC 音轨；使用真实 PTS，无 B 帧/CABAC，参考帧≤1；1280×720 或既有 720×1280 |
+| MP4 | 一个 H.264 Baseline/Main/High ≤Level 4.0 视频轨＋一个 AAC-LC 音轨；8bit420逐行，真实 PTS，CAVLC/CABAC，参考帧≤6；暂不含 B 帧；1280×720 或既有 720×1280 |
 | AVI/WAV | 原固定 H.264＋PCM AVI/AVIX 与 48kHz 单声道 S16LE WAV |
 
 压缩音频接受 8–48kHz、单/双声道；真实片源主机矩阵覆盖 44.1/48kHz。
@@ -28,7 +28,11 @@ PCM。默认音量仍为7%。真实TF十二个压缩音频组合和两份横屏M
 MP4 时间戳已贯通 `demux → source → codec 帧 → 显示调度`，不再以帧号除以30
 重建。PTS/DTS/包时长使用有符号微秒；旧 AVI/WAV 按绝对有理数边界计算。
 24、25、30000/1001fps 及33/34ms量化时间轴通过逐包 FFprobe 和真实会话
-主机回归。此阶段保留无重排输入限制，不能据此认为 Main/High 或 B 帧已放行。
+主机回归。第二步已验证 CABAC、Main/High 和1/3/6参考帧：630帧硬解Y/UV
+逐帧与PC一致，正常GUI/7%有声播放630帧全呈现、音频1008000样本完整且错误0。
+此阶段保留无CTTS/无重排输入限制，B帧在下一步接入；不支持10bit、422/444、
+隔行/MBAFF/FMO。九张线性NV12和内部Tile DPB均计入预算，六参考尾段实测
+空闲堆约4.55MB；不据此承诺1080p或更多参考帧。
 
 `source.next → source.read → 字节入队` 在唯一媒体任务中同步完成，不能延后
 读取未入队的源描述符。MP4 在分配前计算规范化包长，音视频压缩包均保留

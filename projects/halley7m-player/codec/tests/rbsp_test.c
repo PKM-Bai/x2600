@@ -55,7 +55,9 @@ int main(void)
         0,0,0,1,0x09,0xf0,
         0,0,1,0x67,0x42,0,0x1f,0,0,3,1,0x80,
         0,0,0,1,0x68,0x80,
-        0,0,1,0x65,0x80
+        0,0,1,0x65,0x80,
+        /* The first 03 escapes the second, literal RBSP 03. */
+        0,0,1,0x06,0,0,3,3,0x80
     };
     H2645NAL nal = { 0 };
     H2645Packet split = { 0 };
@@ -70,9 +72,11 @@ int main(void)
     av_freep(&nal.player_rbsp);
     memcpy(padded, packet, sizeof(packet));
     if (!require(!ff_h2645_packet_split(&split, padded, sizeof(packet), NULL, 0, 0, 0), "packet split") ||
-        !require(split.nb_nals == 4, "AUD/SPS/PPS/IDR remain four NALs") ||
+        !require(split.nb_nals == 5, "AUD/SPS/PPS/IDR/SEI remain five NALs") ||
         !require(split.nals[0].type == 9 && split.nals[1].type == 7 &&
-                 split.nals[2].type == 8 && split.nals[3].type == 5, "NAL order") ||
+                 split.nals[2].type == 8 && split.nals[3].type == 5 && split.nals[4].type == 6, "NAL order") ||
+        !require(split.nals[4].size == 5 && split.nals[4].data[3] == 3 &&
+                 split.nals[4].data[4] == 0x80, "literal RBSP 00 00 03 survives exactly one unescape") ||
         !require(split.nals[1].raw_size == 9 && split.nals[1].size == 8, "SPS not truncated at escape")) return 1;
     if (!require(!ff_h2645_packet_split(&split, padded, sizeof(packet), NULL, 0, 0, 0), "buffer reuse")) return 1;
     ff_h2645_packet_uninit(&split);

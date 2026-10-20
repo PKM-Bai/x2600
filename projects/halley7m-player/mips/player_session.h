@@ -28,7 +28,7 @@ typedef struct player_session_trace {
     uint32_t irq_sequence;
     uint32_t queues; /* video packet count low16, audio packet count high16. */
     uint32_t flags; /* bit0 video_pending, bit1 has_ready, bit2 audio_started, state<<8. */
-    uint32_t holds; /* Four pool-slot hold nibbles, lowest nibble slot0. */
+    uint64_t holds; /* One nibble per pool slot, lowest nibble slot0. */
     int32_t result;
 } player_session_trace_t;
 /* Fixed RAM circular trace: no allocation or per-frame UART. New media clears

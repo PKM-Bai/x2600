@@ -61,13 +61,13 @@ static void dump_session_trace(void)
     if (!probes_allowed()) return;
     while (player_session_trace_read(cursor, &record, 1, &latest)) {
         player_amp_service();
-        printf("SESSION_TRACE seq=%lu session=%lu event=%lu frame=%lu us=%lu samples=%lu duration_us=%lu irq=%lu queues=%08lx flags=%08lx holds=%04lx result=%ld pts_us=%lld frame_duration_us=%lu\n",
+        printf("SESSION_TRACE seq=%lu session=%lu event=%lu frame=%lu us=%lu samples=%lu duration_us=%lu irq=%lu queues=%08lx flags=%08lx holds=%09llx result=%ld pts_us=%lld frame_duration_us=%lu\n",
                (unsigned long)record.sequence, (unsigned long)record.session,
                (unsigned long)record.event, (unsigned long)record.frame,
                (unsigned long)record.time_us_low, (unsigned long)record.audio_samples,
                (unsigned long)record.duration_us, (unsigned long)record.irq_sequence,
                (unsigned long)record.queues, (unsigned long)record.flags,
-               (unsigned long)record.holds, (long)record.result,
+               (unsigned long long)record.holds, (long)record.result,
                (long long)record.video_pts_us, (unsigned long)record.video_duration_us);
         cursor = record.sequence;
     }
@@ -270,10 +270,14 @@ static void console_task(void *unused)
                 else if (!strncmp(line, "media ", 6)) {
                     if (probes_allowed()) player_probe_media(line + 6);
                 }
+                else if (!strncmp(line, "video verify ", 13)) {
+                    /* This probe only reads private decoder buffers. It never
+                     * takes ownership of the GUI's DPU/rotator route. */
+                    if (probes_allowed()) player_probe_video_verify(line + 13);
+                }
 #ifdef PLAYER_DIAGNOSTICS_ONLY
                 else if (!strcmp(line, "video stop")) player_probe_stop();
                 else if (!strncmp(line, "video hold ", 11)) player_probe_video_hold(line + 11);
-                else if (!strncmp(line, "video verify ", 13)) player_probe_video_verify(line + 13);
                 else if (!strncmp(line, "video ", 6)) {
                     char *path;
                     unsigned long count = strtoul(line + 6, &path, 10);
@@ -286,7 +290,7 @@ static void console_task(void *unused)
                     printf("HEAP free=%lu isr_unused=%lu media_stack_free_words=%lu\n",
                            (unsigned long)platform_free_heap(), (unsigned long)platform_isr_stack_unused(),
                            (unsigned long)uxTaskGetStackHighWaterMark(NULL));
-                else printf("Commands: play <path>, pause, resume, stop, session, volume <0..100>, library, gui, buttons, metrics, audio, tone, status, heap, reboot, ls [path], media <path>; video probes require -DiagnosticsOnly\n");
+                else printf("Commands: play <path>, pause, resume, stop, session, volume <0..100>, library, gui, buttons, metrics, audio, tone, status, heap, reboot, ls [path], media <path>, video verify <path>; display probes require -DiagnosticsOnly\n");
                 length = 0;
                 printf("player> ");
             } else if ((c == 8 || c == 127) && length) {

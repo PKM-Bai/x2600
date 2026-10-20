@@ -5,6 +5,7 @@
 #include "semphr.h"
 #include <x2600_hal.h>
 #include <errno.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -98,9 +99,20 @@ static int felix_wait(void *opaque)
     if (!timeout) timeout = 1;
     if (xSemaphoreTake(state->completion, timeout) != pdTRUE) {
         state->context->error = 1;
+        printf("FELIX_ERROR reason=timeout sch=%08lx sde=%08lx desc=%08lx earb=%08lx\n",
+               (unsigned long)*felix_register(REG_SCH_STAT),
+               (unsigned long)*felix_register(REG_SDE_STAT),
+               (unsigned long)state->context->desc_pa,
+               (unsigned long)*felix_register(FELIX_EARB_STATUS));
         (void)player_felix_stop(state->context);
         return -ETIMEDOUT;
     }
+    if (state->context->error)
+        printf("FELIX_ERROR reason=irq sch=%08lx sde=%08lx desc=%08lx earb=%08lx\n",
+               (unsigned long)state->context->sch_stat,
+               (unsigned long)state->context->sde_stat,
+               (unsigned long)state->context->desc_pa,
+               (unsigned long)*felix_register(FELIX_EARB_STATUS));
     return state->context->error ? -EIO : 0;
 }
 

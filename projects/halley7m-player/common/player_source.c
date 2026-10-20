@@ -94,7 +94,8 @@ static int mp4_info(player_source *s)
     if (!i->has_audio || a->sample_rate < 8000 || a->sample_rate > 48000 ||
         a->channels < 1 || a->channels > 2 || a->timescale != a->sample_rate ||
         a->empty_edit_duration || a->aac_frame_samples != 1024 ||
-        (i->has_video && (v->h264_profile != 66 || v->h264_level > 31 ||
+        (i->has_video && ((v->h264_profile != 66 && v->h264_profile != 77 && v->h264_profile != 100) ||
+          v->h264_level > 40 ||
           v->empty_edit_duration || v->has_ctts || (v->has_edit && v->edit_media_time) ||
           !((v->width == 1280 && v->height == 720) || (v->width == 720 && v->height == 1280)))))
         return PLAYER_MEDIA_UNSUPPORTED;

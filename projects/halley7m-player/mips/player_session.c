@@ -129,7 +129,7 @@ static void trace_event(enum player_session_trace_event event, uint64_t frame,
     record.flags = (video_pending ? 1u : 0u) | (has_ready ? 2u : 0u) |
                    (audio_started ? 4u : 0u) | ((uint32_t)view.state << 8);
     for (unsigned i = 0; i < PLAYER_VIDEO_SLOTS; ++i)
-        record.holds |= video_pool.slots[i].holds << (i * 4u);
+        record.holds |= (uint64_t)video_pool.slots[i].holds << (i * 4u);
     record.result = result;
     taskENTER_CRITICAL();
     record.sequence = ++trace_sequence;
