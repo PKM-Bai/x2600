@@ -244,3 +244,13 @@ MIPS本轮固件为2,035,536B、CRC32 `2c877f19`、SHA256 `975f1d0ee256d7182d7a2
 用户按人工步骤检查媒体库中A/B连续短按、按住连发及释放停止，Start进入目录/媒体、播放暂停/继续、长按菜单、诊断浏览/返回及停止返回，明确回复“全部正常”。这轮确认覆盖实体输入、页面及暂停/菜单显示；手机录像及实际声光偏差数值验证已由用户取消。
 
 人工操作后的只读查询为会话IDLE、音频inactive、pinned0、GUI error0、输入丢弃0，AMP error/rejected0。当前会话设置曾为10%，已在停止状态恢复为7%，未再启动播放；下一次START采用该值，源码和manifest默认同为7%。inactive音频状态保留上一已停止会话的音量10与96017样本统计，不作为当前播放参数。最后GUI位于诊断页、菜单关闭。证据为本地`build/player-final-manual-status-board.log`与`build/player-final-volume7-confirmed-board.log`。
+
+## 2026-10-20：兼容性第1步——真实呈现时间戳
+
+- MP4源保留有符号PTS/DTS及包时长；删除固定30fps、帧号/30一致性检查。解码器在分配图片时绑定时间戳，输出携带独立呈现序号；显示以PTS对比48kHz已消费样本。旧AVI/WAV从绝对有理数边界生成时间戳。此次仍保留Baseline/单参考/无CTTS门槛，Main/High/CABAC/B帧属于后续阶段。
+- 源与demux主机回归分别覆盖29和21个真实文件，包括24、25、30000/1001fps及90kHz下2970/2970/3060 tick量化。逐包与FFprobe核对PTS/DTS/duration；真实会话对新增五种时间轴各执行三轮暂停/恢复/EOF/STOP，末帧完整且无持续掉帧；旧AVI/WAV/压缩音频生命周期通过。GUI/显示回归和17项真实ELF边界核验通过。
+- 构建派生脚本修正NV12行步长硬编码，保留帧池按实际几何提供的stride，保证clean rebuild可重现。两核Debug/Release均通过。正式Release合包2,293,648B、CRC32 `18543de5`、SHA256 `24d3a4aec616ef2cce186cdf0b84284244bb778868689341099c55845a855e45`；Debug 2,418,736B、SHA256 `c43b620ec857c942a08d8d3cecd775c60d1858b04f8095b08b52200c9bf61b18`。
+- 正式RAM上传长度和板端CRC验证通过，日志`build/player-pts-final-ramload-20261020.log`。嵌入33/34ms MP4以7%播放到ENDED：decode/display=30/30，drop/late=0/0，max_late=7000us；音频total/written/completed=48000，所有音频错误0。STOP后IDLE、inactive、pinned0。宽幅GUI继续持有CUSTOM表面，heap free34,314,560B不视为视频泄漏。
+- `build/player-pts-quantized-trace-20261020.log`保留113条trace，DECODE/SUBMIT/LATCH各30条完整覆盖0..29，PTS依次0/33000/66000/100000…966000us，末帧duration34000us。首次在ENDED请求同步trace被`PROBE_BUSY`拒绝，未影响播放计数；随后按接口要求STOP再导出。初次预备RAM包未用于本节验收，正式证据只对应上述SHA。
+- 真实TF既有横屏MP4另做暂停/恢复前缀回归：两次PAUSED状态均为100320样本、63解码/62显示，暂停期间无时钟推进；恢复后STOP回IDLE，7%音量不变。原始日志`build/player-pts-pause-board-20261020.log`。本节短测不替代旧版本30分钟结果；不更新Flash，也不宣称已验证手机录像中的实际音画偏差。
+- 上述TF前缀回归在恢复后的集中UART查询/STOP阶段另记录drop1、late1、max_late33334us，音频错误仍0；不能将其描述成全程视频零掉帧。33/34ms完整短片的30/30零丢帧结论独立成立。用户交互/诊断集中输出的时序影响在后续B帧联合验证中继续检查。

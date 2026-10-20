@@ -79,6 +79,39 @@ def rewrite(data, change):
     return bytes(result)
 
 
+def quantized_frame_times(data):
+    """Replace a CFR30 video STTS with repeating 33/33/34 ms intervals.
+
+    The 90 kHz track and full-duration edit stay unchanged. Only the timing
+    table changes; coded samples and their offsets are preserved because
+    these fixtures keep moov after mdat.
+    """
+    video = False
+
+    def change(tag, payload):
+        nonlocal video
+        if tag == b'hdlr':
+            video = payload[8:12] == b'vide'
+        elif tag == b'stts' and video:
+            entries, = struct.unpack_from('>I', payload, 4)
+            rows = [struct.unpack_from('>II', payload, 8 + 8 * i) for i in range(entries)]
+            assert all(delta == 3000 for _, delta in rows)
+            count = sum(n for n, _ in rows)
+            assert count % 3 == 0
+            durations = [2970, 2970, 3060] * (count // 3)
+            runs = []
+            for duration in durations:
+                if runs and runs[-1][1] == duration:
+                    runs[-1] = (runs[-1][0] + 1, duration)
+                else:
+                    runs.append((1, duration))
+            payload = payload[:4] + struct.pack('>I', len(runs))
+            payload += b''.join(struct.pack('>II', *row) for row in runs)
+        return tag, payload
+
+    return rewrite(data, change)
+
+
 def sparse_file(path, prefix, payload):
     with path.open('wb') as handle:
         if os.name == 'nt':
@@ -261,7 +294,7 @@ def main():
          '-f', 'lavfi', '-i', 'sine=f=997:r=48000:d=1',
          '-c:v', 'libx264', '-profile:v', 'baseline', '-level:v', '3.1',
          '-x264-params', 'bframes=0:ref=1:keyint=30:scenecut=0', '-pix_fmt', 'yuv420p',
-         '-c:a', 'aac', '-b:a', '96k', sample])
+         '-video_track_timescale', '90000', '-c:a', 'aac', '-b:a', '96k', sample])
     info, packets, reference = check_media(executable, ffmpeg, ffprobe, sample, output)
     assert info['video']['width'] == 1280 and info['video']['height'] == 720
     assert info['audio']['media_start'] == 1024
@@ -270,6 +303,21 @@ def main():
     fast = output / 'faststart.mp4'
     run(ff + ['-i', sample, '-c', 'copy', '-movflags', '+faststart', fast])
     check_media(executable, ffmpeg, ffprobe, fast, output)
+
+    for rate in ('24', '25', '30000/1001'):
+        path = output / ('timestamps-' + rate.replace('/', '-') + '.mp4')
+        run(ff + ['-f', 'lavfi', '-i', f'color=c=blue:s=1280x720:r={rate}:d=1.2',
+                  '-f', 'lavfi', '-i', 'sine=f=997:r=48000:d=1.2',
+                  '-c:v', 'libx264', '-profile:v', 'baseline', '-level:v', '3.1',
+                  '-refs', '1', '-bf', '0', '-pix_fmt', 'yuv420p', '-c:a', 'aac', path])
+        _, timed, _ = check_media(executable, ffmpeg, ffprobe, path, output)
+        video = [packet for packet in timed if packet['kind'] == 1]
+        assert any(packet['pts_us'] != packet['index'] * 1000000 // 30 for packet in video)
+
+    quantized = output / 'timestamps-33-34ms.mp4'
+    quantized.write_bytes(quantized_frame_times(original))
+    _, timed, _ = check_media(executable, ffmpeg, ffprobe, quantized, output)
+    assert {p['duration_us'] for p in timed if p['kind'] == 1} == {33000, 34000}
 
     audio = output / 'stereo-44100.m4a'
     run(ff + ['-f', 'lavfi', '-i', 'sine=f=811:r=44100:d=1.013', '-ac', '2', '-c:a', 'aac', audio])
@@ -421,7 +469,7 @@ def main():
     truncated = output / 'truncated.mp4'
     truncated.write_bytes(original[:-1])
     expect_error(executable, truncated, output, -2)
-    print('MP4: 17 real decode/packet cases, short-read IO, and 7 rejection cases passed')
+    print('MP4: 21 real decode/packet cases, short-read IO, and 7 rejection cases passed')
 
 
 if __name__ == '__main__':

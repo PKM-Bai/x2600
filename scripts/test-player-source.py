@@ -10,6 +10,7 @@ from pathlib import Path
 import shutil
 import struct
 import subprocess
+from fractions import Fraction
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -90,6 +91,22 @@ def main():
             assert data[cursor:cursor + length] == expected, (path, packet)
             cursor += length
         assert cursor == len(data)
+        if info['kind'] == 5:
+            # Compare the production adapter, not just the MP4 demux. Real
+            # container timestamps must survive queuing without an index/30
+            # reconstruction. AAC preroll remains signed after its edit.
+            by_kind = {1: [], 2: []}
+            for stream in meta['streams']:
+                kind = 1 if stream['codec_type'] == 'video' else 2
+                scale = Fraction(stream['time_base'])
+                by_kind[kind] = [(packet, scale) for packet in meta['packets']
+                                 if packet['stream_index'] == stream['index']]
+            for kind in (1, 2):
+                actual = [row['packet'] for row in rows if 'packet' in row and row['packet']['kind'] == kind]
+                assert len(actual) == len(by_kind[kind])
+                for packet, (reference, scale) in zip(actual, by_kind[kind]):
+                    for key in ('pts', 'dts', 'duration'):
+                        assert abs(Fraction(packet[key + '_us'], 1000000) - int(reference[key]) * scale) < Fraction(2, 1000000), (path, packet, reference)
         skipped = int(next((item['skip_samples'] for item in reference_packets[0].get('side_data_list', [])
                             if 'skip_samples' in item), 0))
         reference = helper.run([ffmpeg, '-v', 'error', '-i', path, '-map', '0:a:0', '-f', 's16le', '-acodec', 'pcm_s16le', '-'])
@@ -191,6 +208,40 @@ def main():
                 '-frames:v', '10', '-shortest', '-c:v', 'libx264', '-profile:v', 'baseline', '-level:v', '3.1',
                 '-refs', '1', '-bf', '0', '-pix_fmt', 'yuv420p', '-c:a', 'aac', mp4])
     assert check(mp4)['video'] == 10
+    mp4_helper = load('test-player-mp4')
+    for rate in ('24', '25', '30000/1001', '30'):
+        path = output / ('video-timestamps-' + rate.replace('/', '-') + '.mp4')
+        helper.run([ffmpeg, '-v', 'error', '-y', '-f', 'lavfi', '-i',
+                    f'color=c=blue:s=1280x720:r={rate}:d=1.2',
+                    '-f', 'lavfi', '-i', 'sine=f=997:r=48000:d=1.2', '-ac', '2',
+                    '-c:v', 'libx264', '-profile:v', 'baseline', '-level:v', '3.1',
+                    '-refs', '1', '-bf', '0', '-pix_fmt', 'yuv420p',
+                    '-video_track_timescale', '90000', '-c:a', 'aac', path])
+        check(path)
+    quantized = output / 'video-timestamps-33-34ms.mp4'
+    quantized.write_bytes(mp4_helper.quantized_frame_times(path.read_bytes()))
+    check(quantized)
+    # Until presentation trimming is connected, video preroll and a genuine
+    # shortened edit are rejected explicitly instead of playing discarded
+    # source pictures or treating their negative mapped PTS as corruption.
+    def edited_video(data, *, start=0, duration=0):
+        def track(tag, payload):
+            if tag == b'trak' and b'vide' in payload:
+                def edit(child, body):
+                    if child == b'elst':
+                        assert body[0] == 0
+                        ticks, media, fixed_rate = struct.unpack_from('>IiI', body, 8)
+                        body = body[:8] + struct.pack('>IiI', duration or ticks, start or media, fixed_rate)
+                    return child, body
+                payload = mp4_helper.rewrite(payload, edit)
+            return tag, payload
+        return mp4_helper.rewrite(data, track)
+    for name, changed in (
+            ('video-preroll.mp4', edited_video(path.read_bytes(), start=3000)),
+            ('video-trimmed-tail.mp4', edited_video(path.read_bytes(), duration=500))):
+        invalid = output / name
+        invalid.write_bytes(changed)
+        reject(invalid)
     (output / 'comparison.json').write_text(json.dumps(reports, indent=2) + '\n', encoding='utf-8')
     print(f'PASS unified source: {len(reports)} real files, AU equality, trim/PCM/backpressure/EOF and failure boundaries; no board test', flush=True)
 

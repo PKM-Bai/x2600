@@ -46,6 +46,7 @@ static unsigned packet_pending, file_eof, codec_drained, audio_eof;
 static unsigned audio_started, first_video_latched, video_pending, has_ready;
 static uint64_t pending_at;
 static uint32_t pending_frame_index;
+static int64_t pending_pts_us, pending_duration_us;
 static unsigned ready_wait_traced, ready_busy_traced, codec_busy_traced;
 static uint32_t queued_pcm_samples;
 static int pump_error;
@@ -109,6 +110,20 @@ static void trace_event(enum player_session_trace_event event, uint64_t frame,
     record.time_us_low = (uint32_t)(time ? time : platform_time_us());
     record.audio_samples = audio_status.completed_samples;
     record.duration_us = duration;
+    record.video_pts_us = -1;
+    if (event == PLAYER_SESSION_TRACE_LATCH) {
+        record.video_pts_us = pending_pts_us;
+        record.video_duration_us = (uint32_t)pending_duration_us;
+    } else if (event == PLAYER_SESSION_TRACE_DECODE || event == PLAYER_SESSION_TRACE_CODEC_BUSY) {
+        player_queued_packet *packet = player_packet_queue_front(&video_queue);
+        if (packet) {
+            record.video_pts_us = packet->media.pts_us;
+            record.video_duration_us = (uint32_t)packet->media.duration_us;
+        }
+    } else if (has_ready || event == PLAYER_SESSION_TRACE_SUBMIT || event == PLAYER_SESSION_TRACE_DROP) {
+        record.video_pts_us = ready_frame.pts_us;
+        record.video_duration_us = (uint32_t)ready_frame.duration_us;
+    }
     record.irq_sequence = irq;
     record.queues = video_queue.count | (audio_queue.count << 16);
     record.flags = (video_pending ? 1u : 0u) | (has_ready ? 2u : 0u) |
@@ -601,7 +616,8 @@ static int decode_one(void)
         if ((result = control_pump(NULL)) != 0) return result;
         uint64_t decode_at = platform_time_us();
         result = player_codec_submit(codec, video_pool.session, packet->allocation.data,
-                                      packet->media.length, packet->allocation.capacity, packet->media.index);
+                                      packet->media.length, packet->allocation.capacity, packet->media.index,
+                                      packet->media.pts_us, packet->media.duration_us);
         uint64_t elapsed = platform_time_us() - decode_at;
         if (result == -EAGAIN) {
             if (!codec_busy_traced) {
@@ -636,10 +652,11 @@ static int present_ready(void)
     int result;
     if (!has_ready || video_pending) return 0;
     if (view.state == PLAYER_SESSION_LOADING) {
-        if (first_video_latched || ready_frame.frame_index != 0) return 0;
+        if (first_video_latched) return 0;
         timing = PLAYER_VIDEO_PRESENT;
     } else {
-        timing = player_video_timing_decide(ready_frame.frame_index, media.video_frames,
+        timing = player_video_timing_decide(ready_frame.pts_us, ready_frame.duration_us,
+                                            ready_frame.output_index + 1u == media.video_frames,
                                             audio_status.completed_samples);
     }
     if (timing == PLAYER_VIDEO_WAIT) {
@@ -652,11 +669,10 @@ static int present_ready(void)
     if (timing == PLAYER_VIDEO_DROP) {
         result = player_codec_return_frame(codec, ready_frame.token);
         if (!result) {
-            uint64_t late = (uint64_t)audio_status.completed_samples * 30u - ready_frame.frame_index * 48000u;
-            uint64_t microseconds = late * 1000000u / 1440000u;
-            if (late >= 48000u) ++view.late_frames;
+            uint32_t microseconds = player_video_lateness_us(ready_frame.pts_us, audio_status.completed_samples);
+            if (microseconds >= (uint64_t)ready_frame.duration_us) ++view.late_frames;
             if (microseconds > view.max_late_us)
-                view.max_late_us = microseconds > UINT32_MAX ? UINT32_MAX : (uint32_t)microseconds;
+                view.max_late_us = microseconds;
             has_ready = 0;
             ++view.dropped_frames;
             trace_event(PLAYER_SESSION_TRACE_DROP, ready_frame.frame_index, 0, 0, 0, 0);
@@ -679,15 +695,16 @@ static int present_ready(void)
     if (result) return result;
     if (!player_video_display_submit(&video_pool, ready_frame.token)) return -EINVAL;
     if (view.state != PLAYER_SESSION_LOADING) {
-        uint64_t late = (uint64_t)audio_status.completed_samples * 30u - ready_frame.frame_index * 48000u;
-        uint64_t microseconds = late * 1000000u / 1440000u;
-        if (late >= 48000u) ++view.late_frames;
+        uint32_t microseconds = player_video_lateness_us(ready_frame.pts_us, audio_status.completed_samples);
+        if (microseconds >= (uint64_t)ready_frame.duration_us) ++view.late_frames;
         if (microseconds > view.max_late_us)
-            view.max_late_us = microseconds > UINT32_MAX ? UINT32_MAX : (uint32_t)microseconds;
+            view.max_late_us = microseconds;
     }
     video_pending = 1;
     pending_at = platform_time_us();
     pending_frame_index = (uint32_t)ready_frame.frame_index;
+    pending_pts_us = ready_frame.pts_us;
+    pending_duration_us = ready_frame.duration_us;
     has_ready = 0;
     trace_event(PLAYER_SESSION_TRACE_SUBMIT, ready_frame.frame_index, 0, 0, 0, pending_at);
     return 0;

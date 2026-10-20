@@ -17,6 +17,8 @@ typedef struct {
     uint32_t physical_y, physical_uv;
     uint32_t width, height, stride;
     uint64_t frame_index;
+    uint64_t output_index;         /* Presentation-order ordinal, distinct from AU index. */
+    int64_t pts_us, duration_us;
     uint32_t key_frame;
 } player_codec_frame_t;
 
@@ -31,7 +33,7 @@ int player_codec_open_geometry(player_codec_t **codec, player_video_pool_t *pool
  * Returns -EAGAIN if all four slots are held; the caller retains the AU then. */
 int player_codec_submit(player_codec_t *codec, uint32_t session,
                         uint8_t *access_unit, uint32_t length, uint32_t capacity,
-                        uint64_t frame_index);
+                        uint64_t frame_index, int64_t pts_us, int64_t duration_us);
 /* Flush decoder delay at EOF; get_ready then returns each final frame. */
 int player_codec_drain(player_codec_t *codec, uint32_t session);
 int player_codec_get_ready(player_codec_t *codec, uint32_t session,

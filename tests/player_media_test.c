@@ -57,14 +57,24 @@ int main(int argc, char **argv)
         if (result) break;
         if (packet.kind == PLAYER_PACKET_VIDEO) {
             uint32_t index;
-            if (packet.index != frames) { result = PLAYER_MEDIA_BAD_FORMAT; break; }
+            int64_t pts = (int64_t)(frames * 1000000u * media.fps_den / media.fps_num);
+            int64_t end = (int64_t)((frames + 1u) * 1000000u * media.fps_den / media.fps_num);
+            if (packet.index != frames || packet.pts_us != pts || packet.dts_us != pts ||
+                packet.duration_us != end - pts || packet.audio_frames) {
+                result = PLAYER_MEDIA_BAD_FORMAT; break;
+            }
             for (index = 0; index < PLAYER_MEDIA_INPUT_PADDING; ++index)
                 if (buffer[packet.length + index]) { result = PLAYER_MEDIA_BAD_FORMAT; break; }
             if (result) break;
             if (packet.length > max_packet) max_packet = packet.length;
             ++frames;
         } else {
-            if (packet.index != samples) { result = PLAYER_MEDIA_BAD_FORMAT; break; }
+            int64_t pts = (int64_t)(samples * 1000000u / media.sample_rate);
+            int64_t end = (int64_t)((samples + packet.length / 2u) * 1000000u / media.sample_rate);
+            if (packet.index != samples || packet.pts_us != pts || packet.dts_us != pts ||
+                packet.duration_us != end - pts || packet.audio_frames != packet.length / 2u) {
+                result = PLAYER_MEDIA_BAD_FORMAT; break;
+            }
             samples += packet.length / 2;
         }
     }

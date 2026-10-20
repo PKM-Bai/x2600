@@ -34,8 +34,10 @@ struct player_media_packet {
     enum player_packet_kind kind;
     uint32_t length;             /* File bytes only: excludes RIFF and decoder padding. */
     uint64_t offset;
-    uint64_t index;              /* Video frame number or first PCM sample number. */
-    int64_t pts_us;              /* Presentation time for indexed containers. */
+    uint64_t index;              /* Video decode-sample index or first PCM sample. */
+    int64_t pts_us;              /* Presentation time; container edits applied. */
+    int64_t dts_us;              /* Decode time; may differ from PTS. */
+    int64_t duration_us;         /* Packet interval, in microseconds. */
     uint32_t audio_frames;       /* Source frames for compressed audio packets. */
 };
 

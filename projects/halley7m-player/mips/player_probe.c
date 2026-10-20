@@ -383,7 +383,8 @@ static void run_video(const char *path, unsigned long frame_limit, bool keep_las
         if (result) break;
         uint64_t start = platform_time_us();
         result = player_codec_submit(codec, pool.session, packet_buffer, packet.length,
-                                       PLAYER_MEDIA_VIDEO_MAX + PLAYER_MEDIA_INPUT_PADDING, packet.index);
+                                       PLAYER_MEDIA_VIDEO_MAX + PLAYER_MEDIA_INPUT_PADDING, packet.index,
+                                       packet.pts_us, packet.duration_us);
         decode_us += platform_time_us() - start;
         if (platform_free_heap() < minimum_heap) minimum_heap = platform_free_heap();
         if (result) break;

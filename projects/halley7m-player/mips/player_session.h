@@ -23,6 +23,8 @@ typedef struct player_session_trace {
     uint32_t time_us_low; /* Modulo32; LATCH uses actual IRQ time, others owner time. */
     uint32_t audio_samples; /* Last observed valid DMA sample clock. */
     uint32_t duration_us; /* DECODE duration or SUBMIT-to-LATCH delay. */
+    int64_t video_pts_us; /* Media presentation time; -1 for unrelated events. */
+    uint32_t video_duration_us;
     uint32_t irq_sequence;
     uint32_t queues; /* video packet count low16, audio packet count high16. */
     uint32_t flags; /* bit0 video_pending, bit1 has_ready, bit2 audio_started, state<<8. */

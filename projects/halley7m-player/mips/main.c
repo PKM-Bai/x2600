@@ -61,13 +61,14 @@ static void dump_session_trace(void)
     if (!probes_allowed()) return;
     while (player_session_trace_read(cursor, &record, 1, &latest)) {
         player_amp_service();
-        printf("SESSION_TRACE seq=%lu session=%lu event=%lu frame=%lu us=%lu samples=%lu duration_us=%lu irq=%lu queues=%08lx flags=%08lx holds=%04lx result=%ld\n",
+        printf("SESSION_TRACE seq=%lu session=%lu event=%lu frame=%lu us=%lu samples=%lu duration_us=%lu irq=%lu queues=%08lx flags=%08lx holds=%04lx result=%ld pts_us=%lld frame_duration_us=%lu\n",
                (unsigned long)record.sequence, (unsigned long)record.session,
                (unsigned long)record.event, (unsigned long)record.frame,
                (unsigned long)record.time_us_low, (unsigned long)record.audio_samples,
                (unsigned long)record.duration_us, (unsigned long)record.irq_sequence,
                (unsigned long)record.queues, (unsigned long)record.flags,
-               (unsigned long)record.holds, (long)record.result);
+               (unsigned long)record.holds, (long)record.result,
+               (long long)record.video_pts_us, (unsigned long)record.video_duration_us);
         cursor = record.sequence;
     }
     printf("SESSION_TRACE_END latest=%lu\n", (unsigned long)latest);

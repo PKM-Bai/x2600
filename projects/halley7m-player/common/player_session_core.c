@@ -205,13 +205,21 @@ void player_packet_queue_pop(player_packet_queue *queue)
     }
 }
 
-enum player_video_timing player_video_timing_decide(uint64_t frame, uint64_t total_frames,
-                                                    uint32_t completed_samples)
+enum player_video_timing player_video_timing_decide(int64_t pts_us, int64_t duration_us,
+                                                    int last, uint32_t completed_samples)
 {
-    uint64_t due = frame * UINT64_C(48000);
-    uint64_t clock = (uint64_t)completed_samples * 30u;
+    uint64_t due = pts_us > 0 ? (uint64_t)pts_us * 48000u : 0;
+    uint64_t clock = (uint64_t)completed_samples * 1000000u;
     if (clock < due) return PLAYER_VIDEO_WAIT;
-    if (frame + 1u != total_frames && clock - due >= 48000u)
+    if (!last && duration_us > 0 && clock - due >= (uint64_t)duration_us * 48000u)
         return PLAYER_VIDEO_DROP;
     return PLAYER_VIDEO_PRESENT;
+}
+
+uint32_t player_video_lateness_us(int64_t pts_us, uint32_t completed_samples)
+{
+    uint64_t clock_us = (uint64_t)completed_samples * 1000000u / 48000u;
+    uint64_t due = pts_us > 0 ? (uint64_t)pts_us : 0;
+    uint64_t late = clock_us > due ? clock_us - due : 0;
+    return late > UINT32_MAX ? UINT32_MAX : (uint32_t)late;
 }

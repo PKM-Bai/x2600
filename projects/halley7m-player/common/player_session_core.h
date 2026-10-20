@@ -67,9 +67,10 @@ player_queued_packet *player_packet_queue_front(player_packet_queue *queue);
 void player_packet_queue_pop(player_packet_queue *queue);
 
 enum player_video_timing { PLAYER_VIDEO_WAIT, PLAYER_VIDEO_PRESENT, PLAYER_VIDEO_DROP };
-/* Exact 48kHz/CFR30 rational comparison. Always present the last frame even
- * after late decoding, so ENDED retains the actual final image. */
-enum player_video_timing player_video_timing_decide(uint64_t frame, uint64_t total_frames,
-                                                    uint32_t completed_samples);
+/* Compare source presentation timestamps with the consumed 48kHz sample
+ * clock. Last means the final presentation-order output, not the last AU. */
+enum player_video_timing player_video_timing_decide(int64_t pts_us, int64_t duration_us,
+                                                    int last, uint32_t completed_samples);
+uint32_t player_video_lateness_us(int64_t pts_us, uint32_t completed_samples);
 
 #endif

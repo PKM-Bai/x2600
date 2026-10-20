@@ -211,7 +211,8 @@ int player_codec_open_geometry(player_codec_t **output, player_video_pool_t *poo
 { assert((w == 720 && h == 1280) || (w == 1280 && h == 720));
   return player_codec_open(output, pool, session, buffers); }
 int player_codec_submit(player_codec_t *codec, uint32_t session, uint8_t *data,
-                         uint32_t length, uint32_t capacity, uint64_t frame)
+                         uint32_t length, uint32_t capacity, uint64_t frame,
+                         int64_t pts_us, int64_t duration_us)
 {
     player_video_token_t token;
     assert(codec->running && session == codec->pool->session && data && length && capacity >= length + 64u);
@@ -222,6 +223,8 @@ int player_codec_submit(player_codec_t *codec, uint32_t session, uint8_t *data,
     assert(player_video_codec_publish(codec->pool, token));
     memset(&codec->ready, 0, sizeof(codec->ready));
     codec->ready.token = token; codec->ready.frame_index = frame;
+    codec->ready.output_index = frame;
+    codec->ready.pts_us = pts_us; codec->ready.duration_us = duration_us;
     codec->ready.y = codec->buffers[token.slot].base;
     codec->has_ready = 1;
     now_us += 5600u;
@@ -365,6 +368,22 @@ int main(int argc, char **argv)
             fflush(stdout);
             assert(snapshot.elapsed_samples == expected_samples && snapshot.total_samples == expected_samples);
             assert(snapshot.decoded_frames == expected_video_frames && !snapshot.audio_underruns);
+            if (expected_video_frames) {
+                player_session_trace_t records[PLAYER_SESSION_TRACE_CAPACITY];
+                unsigned count = player_session_trace_read(0, records, PLAYER_SESSION_TRACE_CAPACITY, NULL);
+                int64_t previous_pts = -1;
+                unsigned latches = 0;
+                for (unsigned i = 0; i < count; ++i) {
+                    if (records[i].event != PLAYER_SESSION_TRACE_LATCH) continue;
+                    assert(records[i].video_pts_us > previous_pts && records[i].video_duration_us > 0);
+                    previous_pts = records[i].video_pts_us;
+                    ++latches;
+                }
+                assert(latches == snapshot.displayed_frames && last_displayed == expected_video_frames - 1u);
+                /* Under the 30.27Hz peer, lower-rate material must retain its
+                 * source cadence. No systematic tail-drop at frames/30. */
+                assert(snapshot.displayed_frames == expected_video_frames && !snapshot.dropped_frames);
+            }
             post(PLAYER_SESSION_STOP, 0, NULL);
             assert(snapshot.state == PLAYER_SESSION_IDLE && !allocations && !file.open && !audio.session_active);
         }

@@ -15,6 +15,7 @@ struct player_codec_slot {
     AVBuffer planes[2];
     player_video_token_t token;
     uint64_t frame_index;
+    int64_t pts_us, duration_us;
 };
 
 struct player_codec {
@@ -25,6 +26,8 @@ struct player_codec {
     struct player_codec_slot slots[PLAYER_VIDEO_SLOTS];
     uint32_t session;
     uint64_t submitting_frame;
+    uint64_t output_count;
+    int64_t submitting_pts_us, submitting_duration_us;
     int running;
 };
 
@@ -55,6 +58,8 @@ AVFrame *player_codec_frame_acquire(H264Context *h)
     slot = &codec->slots[token.slot];
     slot->token = token;
     slot->frame_index = codec->submitting_frame;
+    slot->pts_us = slot->frame.pts = codec->submitting_pts_us;
+    slot->duration_us = codec->submitting_duration_us;
     slot->frame.data[0] = slot->planes[0].buffer;
     slot->frame.data[1] = slot->planes[1].buffer;
     slot->frame.linesize[0] = slot->frame.linesize[1] = (int)codec->layout.stride;
@@ -139,7 +144,7 @@ int player_codec_open_geometry(player_codec_t **result, player_video_pool_t *poo
 
 int player_codec_submit(player_codec_t *codec, uint32_t session,
                         uint8_t *access_unit, uint32_t length, uint32_t capacity,
-                        uint64_t frame_index)
+                        uint64_t frame_index, int64_t pts_us, int64_t duration_us)
 {
     AVPacket packet;
     uint32_t i;
@@ -158,6 +163,8 @@ int player_codec_submit(player_codec_t *codec, uint32_t session,
     CleanDCache_by_Addr((unsigned long *)access_unit, length + AV_INPUT_BUFFER_PADDING_SIZE);
     packet.data = access_unit; packet.data_pa = CPHYSADDR(access_unit); packet.size = (int)length;
     codec->submitting_frame = frame_index;
+    codec->submitting_pts_us = pts_us;
+    codec->submitting_duration_us = duration_us;
     result = h264_decode_frame(&codec->avctx, NULL, &got, &packet);
     if (result < 0) return result;
     return result == (int)length ? 0 : -EIO;
@@ -186,6 +193,8 @@ int player_codec_get_ready(player_codec_t *codec, uint32_t session, player_codec
     result->physical_y = slot->planes[0].buffer_pa; result->physical_uv = slot->planes[1].buffer_pa;
     result->width = codec->layout.width; result->height = codec->layout.height; result->stride = codec->layout.stride;
     result->frame_index = slot->frame_index; result->key_frame = (uint32_t)frame->key_frame;
+    result->output_index = codec->output_count++;
+    result->pts_us = slot->pts_us; result->duration_us = slot->duration_us;
     return 0;
 }
 

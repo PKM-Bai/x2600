@@ -90,7 +90,7 @@ def prepare(destination: Path) -> None:
             text = replace_once(text, "f = list_first_entry_or_null(&h->queued_list, AVFrame, queued_entry);",
                                 "f = player_codec_frame_acquire(h);", relative)
             text = replace_once(text, "f->linesize[0] = f->buf[0]->size;\n    f->linesize[1] = f->buf[1]->size;",
-                                "f->linesize[0] = 768;\n    f->linesize[1] = 768;", relative)
+                                "/* The pool hook supplies byte strides for the configured geometry. */", relative)
             text = replace_once(text, "    list_del(&f->queued_entry);", "    /* Pool acquisition replaces the vendor's unowned queue. */", relative)
             text = replace_once(text, "fail:\n    ff_h264_unref_picture(h, pic);", "fail:\n    player_codec_frame_release(h, f);\n    ff_h264_unref_picture(h, pic);", relative)
             text = replace_once(text, "st_h264->frm_y_stride = ROUND_UP(h->width, 128);",

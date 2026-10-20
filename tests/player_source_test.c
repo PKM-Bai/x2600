@@ -123,8 +123,9 @@ int main(int argc, char **argv)
         assert(player_source_read(&source, &p, packet, p.length - 1u) == PLAYER_MEDIA_BUFFER_SMALL);
         r = player_source_read(&source, &p, packet, PLAYER_MEDIA_VIDEO_MAX + PLAYER_MEDIA_INPUT_PADDING);
         if (r) break;
-        printf("{\"packet\":{\"kind\":%u,\"offset\":%" PRIu64 ",\"bytes\":%u,\"index\":%" PRIu64 ",\"frames\":%u}}\n",
-               (unsigned)p.kind, p.offset, p.length, p.index, p.audio_frames);
+        printf("{\"packet\":{\"kind\":%u,\"offset\":%" PRIu64 ",\"bytes\":%u,\"index\":%" PRIu64 ",\"frames\":%u,\"pts_us\":%" PRId64 ",\"dts_us\":%" PRId64 ",\"duration_us\":%" PRId64 "}}\n",
+               (unsigned)p.kind, p.offset, p.length, p.index, p.audio_frames,
+               p.pts_us, p.dts_us, p.duration_us);
         if (p.kind == PLAYER_PACKET_VIDEO) {
             assert(fwrite(packet, 1, p.length, video) == p.length); ++video_count; continue;
         }

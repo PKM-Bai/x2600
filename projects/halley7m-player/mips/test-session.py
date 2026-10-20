@@ -98,6 +98,22 @@ def main():
         command += codec_args + ['-ac', '2', str(fixture)]
         subprocess.run(command, check=True)
         subprocess.run([str(executables[1]), str(fixture), '30' if suffix == 'mp4' else '0', str(expected)], check=True)
+    # The real session must follow packet PTS rather than reconstructing 30fps.
+    spec = importlib.util.spec_from_file_location('mp4_support', ROOT / 'scripts/test-player-mp4.py')
+    mp4_support = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mp4_support)
+    for rate, frames in [('24', 24), ('25', 25), ('30000/1001', 30), ('30', 30)]:
+        fixture = output / ('pts-' + rate.replace('/', '-') + '.mp4')
+        subprocess.run([str(ffmpeg), '-v', 'error', '-y', '-f', 'lavfi', '-i',
+            f'testsrc2=size=1280x720:rate={rate}:duration=1',
+            '-f', 'lavfi', '-i', 'sine=frequency=500:sample_rate=48000:duration=1',
+            '-c:v', 'libx264', '-profile:v', 'baseline', '-level:v', '3.1', '-refs', '1',
+            '-bf', '0', '-pix_fmt', 'yuv420p', '-video_track_timescale', '90000',
+            '-c:a', 'aac', '-ac', '2', str(fixture)], check=True)
+        subprocess.run([str(executables[1]), str(fixture), str(frames), '48000'], check=True)
+    fixture = output / 'pts-33-34ms.mp4'
+    fixture.write_bytes(mp4_support.quantized_frame_times((output / 'pts-30.mp4').read_bytes()))
+    subprocess.run([str(executables[1]), str(fixture), '30', '48000'], check=True)
     print('Production session/core host tests passed; no physical storage, serial or hardware access.')
 
 

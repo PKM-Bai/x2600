@@ -95,9 +95,21 @@ static int mp4_info(player_source *s)
         a->channels < 1 || a->channels > 2 || a->timescale != a->sample_rate ||
         a->empty_edit_duration || a->aac_frame_samples != 1024 ||
         (i->has_video && (v->h264_profile != 66 || v->h264_level > 31 ||
-          v->empty_edit_duration || v->has_ctts ||
+          v->empty_edit_duration || v->has_ctts || (v->has_edit && v->edit_media_time) ||
           !((v->width == 1280 && v->height == 720) || (v->width == 720 && v->height == 1280)))))
         return PLAYER_MEDIA_UNSUPPORTED;
+    if (i->has_video && v->has_edit) {
+        /* This stage supports an origin-preserving video edit only. The
+         * decoder still sees the complete GOP sequence; clipping preroll
+         * or an edited tail requires the later presentation-trim path. */
+        if (!i->movie_timescale || v->edit_duration > UINT64_MAX / v->timescale)
+            return PLAYER_MEDIA_UNSUPPORTED;
+        uint64_t end = v->edit_duration * v->timescale / i->movie_timescale;
+        uint64_t tick = ((uint64_t)v->timescale + i->movie_timescale - 1u) / i->movie_timescale;
+        if ((end < v->duration && v->duration - end > tick) ||
+            (end > v->duration && end - v->duration > tick))
+            return PLAYER_MEDIA_UNSUPPORTED;
+    }
     s->kind = PLAYER_MEDIA_MP4;
     s->width = v->width; s->height = v->height;
     s->video_frames = i->has_video ? v->sample_count : 0;
@@ -190,11 +202,10 @@ int player_source_next(player_source *s, struct player_media_packet *p)
         const struct player_mp4_packet *m = &s->mp4_pending;
         p->kind = m->kind; p->offset = m->source_offset; p->length = m->normalized_bytes;
         p->index = m->sample_index; p->pts_us = m->pts_us;
+        p->dts_us = m->dts_us; p->duration_us = (int64_t)m->duration_us;
         p->audio_frames = m->kind == PLAYER_PACKET_AUDIO ? 1024 : 0;
         if (m->kind == PLAYER_PACKET_VIDEO &&
-            (m->pts != m->dts || m->pts_us < 0 ||
-             (uint64_t)m->duration * 30u != m->timescale ||
-             (uint64_t)m->pts_us != (uint64_t)m->sample_index * 1000000u / 30u))
+            (m->pts != m->dts || m->pts_us < 0 || !m->duration_us))
             return PLAYER_MEDIA_UNSUPPORTED;
         return 0;
     }
@@ -208,6 +219,11 @@ int player_source_next(player_source *s, struct player_media_packet *p)
     if (bytes > s->end - s->cursor) return PLAYER_MEDIA_BAD_FORMAT;
     p->kind = PLAYER_PACKET_AUDIO; p->offset = s->cursor; p->length = bytes;
     p->index = s->raw_index; p->audio_frames = frames;
+    p->pts_us = (int64_t)(s->raw_index / rate * 1000000u +
+                         s->raw_index % rate * 1000000u / rate);
+    p->dts_us = p->pts_us;
+    p->duration_us = (int64_t)((s->raw_index + frames) / rate * 1000000u +
+                              (s->raw_index + frames) % rate * 1000000u / rate) - p->pts_us;
     s->raw_index += frames; s->cursor += bytes;
     return 0;
 }

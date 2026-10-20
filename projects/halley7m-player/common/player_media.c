@@ -176,12 +176,18 @@ int player_media_next(struct player_media *m, struct player_media_packet *packet
     uint64_t after, pos;
     uint8_t b[4];
     int result;
+    memset(packet, 0, sizeof(*packet));
     if (m->kind == PLAYER_MEDIA_WAV) {
         if (m->next_offset == m->data_end) return PLAYER_MEDIA_EOF;
         packet->kind = PLAYER_PACKET_AUDIO; packet->offset = m->next_offset;
         packet->length = m->data_end - m->next_offset > PLAYER_MEDIA_AUDIO_PACKET ?
                          PLAYER_MEDIA_AUDIO_PACKET : (uint32_t)(m->data_end - m->next_offset);
         packet->index = m->next_audio_sample;
+        packet->audio_frames = packet->length / 2u;
+        packet->pts_us = (int64_t)(packet->index * 1000000u / m->sample_rate);
+        packet->dts_us = packet->pts_us;
+        packet->duration_us = (int64_t)((packet->index + packet->audio_frames) * 1000000u /
+                                      m->sample_rate) - packet->pts_us;
         m->next_offset += packet->length; m->next_audio_sample += packet->length / 2;
         return PLAYER_MEDIA_OK;
     }
@@ -223,12 +229,20 @@ int player_media_next(struct player_media *m, struct player_media_packet *packet
         if (form == m->video_stream && (tag >> 16) == ('d' | ('c' << 8))) {
             if (!len || len > PLAYER_MEDIA_VIDEO_MAX) return PLAYER_MEDIA_UNSUPPORTED;
             packet->kind = PLAYER_PACKET_VIDEO; packet->index = m->next_video_frame++;
+            packet->pts_us = (int64_t)(packet->index * 1000000u * m->fps_den / m->fps_num);
+            packet->duration_us = (int64_t)((packet->index + 1u) * 1000000u *
+                                           m->fps_den / m->fps_num) - packet->pts_us;
         } else if (form == m->audio_stream && (tag >> 16) == ('w' | ('b' << 8))) {
             if (len & 1) return PLAYER_MEDIA_BAD_FORMAT;
             if (!len) continue;
             packet->kind = PLAYER_PACKET_AUDIO; packet->index = m->next_audio_sample;
+            packet->audio_frames = len / 2u;
+            packet->pts_us = (int64_t)(packet->index * 1000000u / m->sample_rate);
+            packet->duration_us = (int64_t)((packet->index + packet->audio_frames) *
+                                           1000000u / m->sample_rate) - packet->pts_us;
             m->next_audio_sample += len / 2;
         } else continue;
+        packet->dts_us = packet->pts_us;
         packet->offset = pos + 8; packet->length = len;
         return PLAYER_MEDIA_OK;
     }

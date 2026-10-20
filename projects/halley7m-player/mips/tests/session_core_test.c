@@ -121,12 +121,21 @@ int main(void)
     cache_test();
     pool_test();
     packet_queue_test();
-    assert(player_video_timing_decide(1, 90, 1599) == PLAYER_VIDEO_WAIT);
-    assert(player_video_timing_decide(1, 90, 1600) == PLAYER_VIDEO_PRESENT);
-    assert(player_video_timing_decide(1, 90, 3199) == PLAYER_VIDEO_PRESENT);
-    assert(player_video_timing_decide(1, 90, 3200) == PLAYER_VIDEO_DROP);
-    assert(player_video_timing_decide(89, 90, 144000) == PLAYER_VIDEO_PRESENT);
-    assert(player_video_timing_decide(UINT64_C(1000000), UINT64_C(1000100), UINT32_C(1600000000)) == PLAYER_VIDEO_PRESENT);
-    puts("session core: read-ahead/pool/queue/30fps rational clock passed");
+    assert(player_video_timing_decide(33333, 33333, 0, 1599) == PLAYER_VIDEO_WAIT);
+    assert(player_video_timing_decide(33333, 33333, 0, 1600) == PLAYER_VIDEO_PRESENT);
+    assert(player_video_timing_decide(33333, 33333, 0, 3199) == PLAYER_VIDEO_PRESENT);
+    assert(player_video_timing_decide(33333, 33333, 0, 3200) == PLAYER_VIDEO_DROP);
+    assert(player_video_timing_decide(2966666, 33334, 1, 144000) == PLAYER_VIDEO_PRESENT);
+    /* 25fps, 29.97fps, variable 33/34ms samples: no frame-index reconstruction. */
+    assert(player_video_timing_decide(40000, 40000, 0, 1919) == PLAYER_VIDEO_WAIT);
+    assert(player_video_timing_decide(40000, 40000, 0, 1920) == PLAYER_VIDEO_PRESENT);
+    assert(player_video_timing_decide(33366, 33367, 0, 1601) == PLAYER_VIDEO_WAIT);
+    assert(player_video_timing_decide(33366, 33367, 0, 1602) == PLAYER_VIDEO_PRESENT);
+    assert(player_video_timing_decide(66000, 34000, 0, 4799) == PLAYER_VIDEO_PRESENT);
+    assert(player_video_timing_decide(66000, 34000, 0, 4800) == PLAYER_VIDEO_DROP);
+    assert(player_video_lateness_us(66000, 4800) == 34000u);
+    assert(player_video_lateness_us(66000, 100) == 0);
+    assert(player_video_timing_decide(INT64_C(33333333333), 33334, 0, UINT32_C(1600000000)) == PLAYER_VIDEO_PRESENT);
+    puts("session core: read-ahead/pool/queue/source PTS clock passed");
     return 0;
 }
