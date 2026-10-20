@@ -285,4 +285,6 @@ PC隔离分析把5个P slice（原AU886/890/894/895/899）的默认128改成显�
 
 用户明确选择“兼容优先：允许这一小段色度近似，并在诊断页标明”。最终解析器保留规范128，在硬件边界仅对启用的显式加权通道/参考把+128映射为127，负128不改；成功提交的同一AU只计一次，GUI显示“权重近似”，串口导出`weight_approx`。实际parser/VDMA/hook回归覆盖活动边界、负权重、多slice和失败AU不累计；真实GUI断言诊断行显示5帧。
 
-本阶段最终R5 Release 2,212,960B、CRC `5d560034`、SHA `37f9e27c8bf30bb81ae0fec0e0490952dc183cd461db450cdd5356b9f17a6132`；Debug 2,341,632B、CRC `47684d76`、SHA `6334a6972baa5bfde46d201567abc3522318e43c6dadf4fc1f80471e0effe8b9`。两核Debug/Release、主机会话和GUI已通过；R5新的硬件边界近似与计数板测将在本轮RAM加载后补录，不能把R4结果写成R5通过。全部新版本仅RAM运行，Flash保持此前版本。
+本阶段最终R5 Release 2,212,960B、CRC `5d560034`、SHA `37f9e27c8bf30bb81ae0fec0e0490952dc183cd461db450cdd5356b9f17a6132`；Debug 2,341,632B、CRC `47684d76`、SHA `6334a6972baa5bfde46d201567abc3522318e43c6dadf4fc1f80471e0effe8b9`。两核Debug/Release、主机会话和GUI已通过。全部新版本仅RAM运行，Flash保持此前版本。
+
+R5已完成独立板测，RAM日志`build/player-bframes-approved-ramload-20261020.log`确认长度与CRC。`build/player-bframes-approved-gop-crc-board-20261020.log/.json`中的150帧、300个Y/UV平面全部匹配明确标记的PC“显式127权重”参考，顺序/PTS正确；这是批准的近似参考，不是原片规范像素完全一致。随后正常GUI、AMP、7%完整播放原始test.mp4：994解码、987呈现、drop/late7/7、max_late67000us，音频1592520样本且所有音频错误0；`weight_approx=5`与实际5个P帧一致。ENDED堆426256B，STOP后34388288B、IDLE/inactive/pinned0，工作区peak8、active0。日志`build/player-bframes-approved-original-play-board-20261020.log`。显示帧数和迟到数照实保留，未将功能播放成功等同于零掉帧。
