@@ -4,13 +4,20 @@
 
 ## 当前状态
 
+本轮兼容性扩展在RAM中验证，NOR仍保留下述已安装版本。新增真实PTS/DTS、
+CTTS/B帧重排、CABAC/Main/High/六参考帧、常见输入尺寸/SAR和601/709有限/全范围
+处理；普通MP4无需电脑预旋转。原始test.mp4已完整解码994帧、音频1592520样本，
+暂停/继续和尾段回收通过。用户选择兼容优先，特殊+128预测权重采用明确标记的
+127硬件近似，诊断页显示计数；实测迟到跳帧和近似误差见[验收记录](VALIDATION.md)，
+不能把完整播放当成零掉帧或规范像素完全一致。最终范围见[FORMATS.md](FORMATS.md)。
+
 2026-10-20已按用户要求将当前R4播放器安装到NOR，软件复位后自动进入播放器，
 双核握手、媒体库初始化及三秒MP4冒烟90/90帧、drop/late0、音频错误0通过。
 默认音量保持7%，结束已STOP、音频关闭。原SPL/U-Boot代码和rootfs校验未变，
 启动命令已持久保存；实际断电上电由用户拷卡后测试，不记为已完成的冷启动。
 安装包、后续更新入口和证据见[NOR安装说明](NOR_INSTALL.md)。
 
-已支持 MP3、AAC-LC/ADTS、M4A 与普通 1280×720 横屏 MP4（H.264 Baseline＋AAC）。
+此前NOR版本已支持 MP3、AAC-LC/ADTS、M4A 与普通 1280×720 横屏 MP4（H.264 Baseline＋AAC）。
 2026-10-20真实TF的12个MP3/AAC/M4A组合各完成约30秒播放，用户确认轮播声音正常；
 两份30秒横屏MP4分别覆盖44.1/48kHz双声道AAC，各900帧全呈现、drop/late0、
 1440000有效音频样本准确且全部音频错误0。普通横屏MP4无需电脑预旋转。
@@ -64,7 +71,7 @@ python scripts/ramload-regba.py --port COM52 --execute --wait-boot --file build/
 
 至少1GiB的TF文件，以及需要样本表回读的MP4/M4A，在LOADING先建立16KiB簇链映射，容量不足时报告错误；其他小文件和RAM片源不分配映射表。`session storage`显示建图与实际定位统计，STOP后保留最近文件的记录。集中UART查询可能造成窗口外偶发跳帧，长摘要和CSV均安排在STOP确认后输出；播放性能以冻结的采样窗口和GUI操作记录核验。自动板测入口对长UTF-8命令分块发送，避免串口接收FIFO溢出。
 
-`status`、`heap`、`gui`、`buttons`、`metrics`、`audio`提供显式诊断；`tone`按默认7%播放两秒短音。`ls`、`media`、`tf bench <路径>`等同步探针要求先STOP，不在播放过程中遍历或打印大目录。旧`video <帧数,0=EOF> <路径>`、`video hold/verify/stop`和DSI彩条仅在`-DiagnosticsOnly`启用；`video verify`关闭呈现调度输出全部帧CRC，该模式不能作为音画同步证据。
+`status`、`heap`、`gui`、`buttons`、`metrics`、`audio`提供显式诊断；`tone`按默认7%播放两秒短音。`ls`、`media`、`tf bench <路径>`等同步探针要求先STOP，不在播放过程中遍历或打印大目录。普通构建也可在会话停止后用`video verify <路径>`输出全部帧CRC；它不提交DPU或启用音频，不能作为呈现帧率或音画同步证据。旧`video <帧数,0=EOF> <路径>`、`video hold/stop`和DSI彩条仅在`-DiagnosticsOnly`启用。
 
 构建目录位于仓库 `build/`，工具链、下载包和媒体产物均为本地产物。RAM 上传复用 `scripts/ramload-regba.py --file <播放器合包>` 的 YMODEM、长度及 CRC 校验。进入应用前不能单独上传高端小核/共享区，因为 U-Boot 仍占用这些地址。
 

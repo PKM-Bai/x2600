@@ -87,6 +87,13 @@ static int mp3_gapless(player_source *s, uint32_t bytes, uint32_t frames)
     return 0;
 }
 
+static int video_geometry_supported(uint32_t width, uint32_t height)
+{
+    if (!width || !height || width > 2032u || height > 2032u || (width & 1u) || (height & 1u)) return 0;
+    width = (width + 15u) & ~15u; height = (height + 15u) & ~15u;
+    return (uint64_t)width * height <= 1280u * 720u;
+}
+
 static int mp4_info(player_source *s)
 {
     const struct player_mp4_info *i = player_mp4_get_info(s->mp4);
@@ -95,12 +102,16 @@ static int mp4_info(player_source *s)
         a->channels < 1 || a->channels > 2 || a->timescale != a->sample_rate ||
         a->empty_edit_duration || a->aac_frame_samples != 1024 ||
         (i->has_video && ((v->h264_profile != 66 && v->h264_profile != 77 && v->h264_profile != 100) ||
-          v->h264_level > 40 ||
           v->empty_edit_duration || !v->presentation_samples ||
-          !((v->width == 1280 && v->height == 720) || (v->width == 720 && v->height == 1280)))))
+          !video_geometry_supported(v->width, v->height))))
         return PLAYER_MEDIA_UNSUPPORTED;
     s->kind = PLAYER_MEDIA_MP4;
     s->width = v->width; s->height = v->height;
+    if (i->has_video) {
+        s->video_matrix = v->matrix_coefficients; s->video_full_range = v->full_range;
+        s->video_sar_num = v->sar_num; s->video_sar_den = v->sar_den;
+        s->video_primaries = v->colour_primaries; s->video_transfer = v->transfer_characteristics;
+    }
     s->video_frames = i->has_video ? v->sample_count : 0;
     s->video_display_frames = v->presentation_samples;
     s->video_start_us = v->presentation_start_us;
@@ -136,6 +147,8 @@ int player_source_open(player_source *s, const struct player_media_io *io)
     uint8_t b[12]; int r;
     if (!s || !io || !io->read || !io->seek || !io->size) return PLAYER_MEDIA_IO_ERROR;
     memset(s, 0, sizeof(*s)); s->io = *io; s->end = io->size(io->opaque); s->clip_end = UINT64_MAX;
+    s->video_matrix = 2u; s->video_full_range = -1;
+    s->video_primaries = 2u; s->video_transfer = 2u;
     if (s->end < sizeof(b)) return PLAYER_MEDIA_BAD_FORMAT;
     if ((r = at(s, 0, b, sizeof(b))) != 0) return r;
     if (!memcmp(b, "RIFF", 4)) {
@@ -145,6 +158,9 @@ int player_source_open(player_source *s, const struct player_media_io *io)
         s->video_frames = s->legacy.video_frames; s->audio_samples = s->legacy.audio_samples;
         s->video_display_frames = s->video_frames;
         if (s->video_frames) {
+            s->video_matrix = 6u; s->video_full_range = 1;
+            s->video_sar_num = 1u; s->video_sar_den = 1u;
+            s->video_primaries = 6u; s->video_transfer = 6u;
             s->video_end_us = (int64_t)(s->video_frames * 1000000u * s->legacy.fps_den / s->legacy.fps_num);
             s->video_last_pts_us = (int64_t)((s->video_frames - 1u) * 1000000u * s->legacy.fps_den / s->legacy.fps_num);
         }

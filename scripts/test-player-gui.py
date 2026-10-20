@@ -55,6 +55,8 @@ def main():
                 # encoding. Always rebuild this regression's host tree.
                 f'"{cmake}" --build "{output}" --clean-first --parallel 4',
                 f'"{output / "player_display_test.exe"}"',
+                f'"{output / "player_display_format_test.exe"}"',
+                f'"{output / "player_video_format_resolve_test.exe"}"',
                 f'"{output / "player_rotator_test.exe"}"',
                 f'"{output / "player_buttons_test.exe"}"',
                 f'"{output / "player_buttons_callback_test.exe"}"',

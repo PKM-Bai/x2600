@@ -11,7 +11,10 @@ import re
 
 
 def check(log, reference):
-    expected = json.loads(reference.read_text(encoding='utf-8'))
+    document = json.loads(reference.read_text(encoding='utf-8'))
+    expected = document['frames'] if isinstance(document, dict) else document
+    if not isinstance(expected, list) or not expected:
+        raise ValueError('Reference must contain a nonempty frame list')
     text = log.read_text(encoding='utf-8', errors='replace')
     rows = [dict((k, v) for k, v in re.findall(r'(\w+)=(-?[\da-f]+)', line))
             for line in text.splitlines() if line.startswith('VIDEO_FRAME_CRC ')]
@@ -26,7 +29,8 @@ def check(log, reference):
     previous_pts = None
     for order, (actual, wanted) in enumerate(zip(rows, expected)):
         index = int(actual.get('output_index', actual['index']))
-        if index != order or wanted.get('output_index', wanted['index']) != order:
+        wanted_index = wanted.get('output_index', wanted.get('index', wanted.get('frame', -1)))
+        if index != order or wanted_index != order:
             raise ValueError(f'Output order/duplicate mismatch at frame {order}')
         if 'output_index' in wanted and int(actual['index']) != wanted['index']:
             raise ValueError(f'Decode identity lost during reorder at output {order}')

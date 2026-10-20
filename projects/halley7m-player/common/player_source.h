@@ -13,6 +13,11 @@ typedef struct player_source {
     struct player_mp4_packet mp4_pending;
     enum player_media_kind kind;
     uint32_t width, height, source_rate, channels, audio_codec;
+    /* Container fallback; fill only unknown SPS properties, then infer at
+     * display as a last resort. Legacy AVI retains its 601/full contract. */
+    uint32_t video_matrix, video_sar_num, video_sar_den;
+    uint32_t video_primaries, video_transfer; /* ISO, 2 unspecified. */
+    int32_t video_full_range; /* -1 unknown, 0 limited, 1 full. */
     uint64_t video_frames, audio_samples; /* 48k output; zero = unknown. */
     uint64_t video_display_frames; /* Visible outputs; decode all video_frames AUs. */
     int64_t video_start_us, video_end_us, video_last_pts_us;

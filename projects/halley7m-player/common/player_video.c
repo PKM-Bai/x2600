@@ -1,5 +1,39 @@
 #include "player_video.h"
 #include <errno.h>
+
+static int ordinary_primaries(uint32_t value)
+{
+    return value == 1u || value == 2u || value == 4u || value == 5u || value == 6u || value == 7u;
+}
+static int ordinary_transfer(uint32_t value)
+{
+    return value == 1u || value == 2u || value == 4u || value == 5u || value == 6u || value == 7u || value == 13u;
+}
+int player_video_format_resolve(const player_video_format_t *sps,
+                                 const player_video_format_t *container,
+                                 player_video_format_t *resolved)
+{
+    player_video_format_t value;
+    if (!sps || !resolved) return -EINVAL;
+    value = *sps;
+    if (value.full_range < -1 || value.full_range > 1 || (!value.sar_num != !value.sar_den))
+        return -EINVAL;
+    if (container) {
+        if (container->full_range < -1 || container->full_range > 1 ||
+            (!container->sar_num != !container->sar_den)) return -EINVAL;
+        if (value.matrix_coefficients == 2u) value.matrix_coefficients = container->matrix_coefficients;
+        if (value.full_range < 0) value.full_range = container->full_range;
+        if (!value.sar_num) { value.sar_num = container->sar_num; value.sar_den = container->sar_den; }
+        if (value.colour_primaries == 2u) value.colour_primaries = container->colour_primaries;
+        if (value.transfer_characteristics == 2u) value.transfer_characteristics = container->transfer_characteristics;
+    }
+    if ((value.matrix_coefficients != 1u && value.matrix_coefficients != 2u &&
+         value.matrix_coefficients != 5u && value.matrix_coefficients != 6u) ||
+        !ordinary_primaries(value.colour_primaries) || !ordinary_transfer(value.transfer_characteristics))
+        return -ENOTSUP;
+    *resolved = value;
+    return 0;
+}
 #include <limits.h>
 #include <stddef.h>
 #include <string.h>

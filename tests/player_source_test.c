@@ -111,10 +111,12 @@ int main(int argc, char **argv)
     struct player_media_io io = memory_io(&f); player_source source;
     int r = player_source_open(&source, &io);
     if (r) { printf("{\"error\":%d,\"stage\":\"open\"}\n", r); free(bytes); return 3; }
-    printf("{\"info\":{\"kind\":%u,\"codec\":%u,\"rate\":%u,\"channels\":%u,\"video_frames\":%" PRIu64 ",\"clip_start\":%" PRIu64 ",\"clip_end\":%" PRIu64 ",\"video_start_us\":%" PRId64 ",\"video_end_us\":%" PRId64 ",\"video_last_pts_us\":%" PRId64 ",\"video_display_frames\":%" PRIu64 "}}\n",
+    printf("{\"info\":{\"kind\":%u,\"codec\":%u,\"rate\":%u,\"channels\":%u,\"video_frames\":%" PRIu64 ",\"clip_start\":%" PRIu64 ",\"clip_end\":%" PRIu64 ",\"video_start_us\":%" PRId64 ",\"video_end_us\":%" PRId64 ",\"video_last_pts_us\":%" PRId64 ",\"video_display_frames\":%" PRIu64 ",\"video_matrix\":%u,\"video_full_range\":%d,\"video_sar_num\":%u,\"video_sar_den\":%u,\"video_primaries\":%u,\"video_transfer\":%u}}\n",
            (unsigned)source.kind, source.audio_codec, source.source_rate, source.channels,
            source.video_frames, source.clip_start, source.clip_end, source.video_start_us,
-           source.video_end_us, source.video_last_pts_us, source.video_display_frames);
+           source.video_end_us, source.video_last_pts_us, source.video_display_frames,
+           source.video_matrix, source.video_full_range, source.video_sar_num, source.video_sar_den,
+           source.video_primaries, source.video_transfer);
     assert(source.audio_codec);
     player_audio_decode_config config = {(enum player_audio_codec)source.audio_codec,
                                         source.audio_config, source.audio_config_bytes};

@@ -125,7 +125,8 @@ static void interrupt_only(void)
 static void latch(void)
 {
     loaded_descriptor = next_descriptor;
-    loaded_y = submitted_layers[0].lay_en ? submitted_layers[0].addr : 0;
+    loaded_y = submitted_layers[0].lay_en ?
+               last_lcd->CompData.LayerDesc[last_lcd->CompData.comp_next_frame][0].words[2] : 0;
     loaded_ui = submitted_layers[1].lay_en ? submitted_layers[1].addr : 0;
     fake_dpu.LAY0_SITE = loaded_y ? loaded_y + 64u : 0;
     fake_dpu.LAY1_SITE = loaded_ui ? loaded_ui + 64u : 0;
@@ -366,6 +367,58 @@ static void wide_route(void)
     assert(player_display_stop()==0);
 }
 
+static void scaled_format_route(void)
+{
+    memset(cached_writebacks,0,sizeof(cached_writebacks));
+    assert(player_display_init()==0 && player_display_start()==0);
+    player_video_format_t f={640,480,640,480,0,0,1,1,1,0,2,2};
+    assert(player_display_set_video_format(&f)==0);
+    player_display_stats_t stats;
+    player_display_get_stats(&stats);
+    assert(stats.width==1280 && stats.height==720 && stats.format.coded_width==640);
+    assert(stats.viewport_x==160 && stats.viewport_y==0 && stats.viewport_width==960 && stats.viewport_height==720);
+    player_display_frame_t a=frame(0);
+    a.capacity=640u*480u*3u/2u;
+    assert(player_display_submit_frame(&a)==0);
+    const uint32_t *desc=last_lcd->CompData.LayerDesc[last_lcd->CompData.comp_next_frame][0].words;
+    const uint32_t *frame_desc=last_lcd->CompData.FrameDesc[last_lcd->CompData.comp_next_frame].words;
+    assert(desc[0]==(640u|(480u<<16)) && desc[3]==(960u|(720u<<16)));
+    assert(desc[6]==160 && desc[7]==341 && desc[8]==341 && (frame_desc[9]&1u));
+    assert(submitted_layers[0].disp_pos_x>2047u); /* Real HAL's native-panel clamp underflows. */
+    assert(desc[6]==160); /* The actual descriptor is restored to logical-canvas coordinates. */
+    assert(desc[9]==640 && desc[10]==CPHYSADDR(a.nv12)+640u*480u && desc[11]==640);
+    assert(fake_dpu.CSC_MULT_YRV==0x072c04a8 && fake_dpu.CSC_MULT_GUGV==0x022200da);
+    assert(fake_dpu.CSC_MULT_BU==0x873 && fake_dpu.CSC_SUB_YUV==0x00800010);
+    f.visible_height=478;
+    assert(player_display_set_video_format(&f)==-EBUSY); /* Never reinterpret an active NV12 hold. */
+    loaded_descriptor=next_descriptor; loaded_y=desc[2]; loaded_ui=0;
+    fake_dpu.LAY0_SITE=loaded_y+64u; fake_dpu.LAY1_SITE=0;
+    fake_dpu.WDMA_SITE=frame_desc[3]+64u;
+    composer_started=false;
+    fake_dpu.DC_INT_FLAG=DC_INTC_INT_EOW_0; lcd_irq(IRQ_INTC0_LCD,NULL);
+    rotation_event(PLAYER_ROTATOR_SOF|PLAYER_ROTATOR_WORKING);
+    clock_us+=33033; interrupt_only();
+    player_display_completion_t c;
+    assert(player_display_poll_completion(&c)==1 && c.has_latched);
+    assert(player_display_stop()==0);
+
+    /* A cropped portrait source keeps native GUI and consumes coded rows. */
+    memset(cached_writebacks,0,sizeof(cached_writebacks));
+    assert(player_display_init()==0 && player_display_start()==0);
+    f=(player_video_format_t){496,656,480,640,8,2,1,1,6,1,2,2};
+    assert(player_display_set_video_format(&f)==0 && !rot_irq);
+    a=frame(0); a.capacity=512u*656u*3u/2u;
+    assert(player_display_submit_frame(&a)==0);
+    desc=last_lcd->CompData.LayerDesc[last_lcd->CompData.comp_next_frame][0].words;
+    assert(desc[2]==CPHYSADDR(a.nv12)+2u*512u+8u);
+    assert(desc[10]==CPHYSADDR(a.nv12)+656u*512u+512u+8u);
+    assert(desc[0]==(480u|(640u<<16)) && desc[3]==(720u|(960u<<16)));
+    assert(desc[6]==(160u<<16));
+    latch();
+    assert(player_display_poll_completion(&c)==1 && c.has_latched);
+    assert(player_display_stop()==0);
+}
+
 int main(void)
 {
     assert(player_display_init() == 0 && player_display_start() == 0);
@@ -429,6 +482,7 @@ int main(void)
     assert(player_display_poll_overlay_completion(&serial) == 0);
     continuous_video_priority();
     wide_route();
+    scaled_format_route();
     puts("PASS production display: legacy guards/priority, CUSTOM EOW/SOF/EOD ownership, paused GUI-only/repeat, GUI route ACK, native compatibility, stop pin");
     return 0;
 }

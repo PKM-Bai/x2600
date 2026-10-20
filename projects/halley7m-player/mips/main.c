@@ -2,6 +2,7 @@
 #include "player_probe.h"
 #include "player_config.h"
 #include "player_display.h"
+#include "player_display_sample.h"
 #include "player_audio_probe.h"
 #include "player_audio_client.h"
 #include "player_session.h"
@@ -16,6 +17,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
 
 extern void platform_reboot(void) __attribute__((noreturn));
 
@@ -109,6 +111,51 @@ static int session_command(enum player_session_command_kind kind, const char *pa
     printf("SESSION_POST request=%lu kind=%u result=%d\n",
            (unsigned long)command.request_id, (unsigned)kind, result);
     return result;
+}
+
+static int sample_number(const char **cursor, uint32_t *number)
+{
+    const char *p = *cursor;
+    uint32_t value = 0;
+    while (*p == ' ') ++p;
+    if (*p < '0' || *p > '9') return -EINVAL;
+    do {
+        unsigned digit = (unsigned)(*p++ - '0');
+        if (value > (UINT32_MAX - digit) / 10u) return -EINVAL;
+        value = value * 10u + digit;
+    } while (*p >= '0' && *p <= '9');
+    if (*p && *p != ' ') return -EINVAL;
+    *cursor = p; *number = value;
+    return 0;
+}
+
+static void sample_display(const char *arguments)
+{
+    player_display_sample_point_t points[PLAYER_DISPLAY_SAMPLE_MAX];
+    player_display_sample_t sample = {0};
+    uint32_t model = UINT32_MAX, count = 0;
+    int result = sample_number(&arguments, &model);
+    while (!result) {
+        while (*arguments == ' ') ++arguments;
+        if (!*arguments) break;
+        if (count == PLAYER_DISPLAY_SAMPLE_MAX) { result = -E2BIG; break; }
+        result = sample_number(&arguments, &points[count].x);
+        if (!result) result = sample_number(&arguments, &points[count].y);
+        if (!result) ++count;
+    }
+    (void)player_session_snapshot(&console_view);
+    if (!result && console_view.state != PLAYER_SESSION_ENDED) result = -EBUSY;
+    if (!result) result = player_display_sample_custom(points, count, model, &sample);
+    if (result) {
+        printf("DISPLAY_SAMPLES model=%lu result=%d count=0\n", (unsigned long)model, result);
+        return;
+    }
+    printf("DISPLAY_SAMPLES model=%lu slot=%lu sequence=%lu count=%lu result=0\n",
+           (unsigned long)model, (unsigned long)sample.slot,
+           (unsigned long)sample.sequence, (unsigned long)sample.count);
+    for (uint32_t i = 0; i < count; ++i)
+        printf("DISPLAY_PIXEL index=%lu x=%lu y=%lu argb=%08lx\n", (unsigned long)i,
+               (unsigned long)points[i].x, (unsigned long)points[i].y, (unsigned long)sample.argb[i]);
 }
 
 #ifndef PLAYER_DIAGNOSTICS_ONLY
@@ -252,6 +299,7 @@ static void console_task(void *unused)
                 }
                 else if (!strcmp(line, "reboot")) platform_reboot();
                 else if (!strcmp(line, "display")) player_display_print_status();
+                else if (!strncmp(line, "display sample ", 15)) sample_display(line + 15);
 #ifdef PLAYER_DIAGNOSTICS_ONLY
                 else if (!strcmp(line, "display vpg")) printf("DISPLAY_VPG result=%d\n", player_display_test_pattern(true));
                 else if (!strcmp(line, "display normal")) printf("DISPLAY_VPG result=%d\n", player_display_test_pattern(false));

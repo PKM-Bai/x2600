@@ -5,6 +5,7 @@
 #include "player_source.h"
 #include "player_codec.h"
 #include "player_display.h"
+#include "player_display_format.h"
 #include "FreeRTOS.h"
 #include "task.h"
 #include <errno.h>
@@ -27,6 +28,8 @@ static uint32_t late_frames;
 static bool verify_frames;
 static uint32_t verified_frames;
 static uint64_t pending_frame_duration_us;
+static bool probe_format_ready;
+static player_video_format_t probe_format;
 
 #if PLAYER_HAVE_TEST_MEDIA
 extern const uint8_t player_test_media_start[], player_test_media_end[];
@@ -265,6 +268,7 @@ static int stop_video(void)
     }
     free(packet_buffer);
     packet_buffer = NULL;
+    probe_format_ready = false;
     return 0;
 }
 
@@ -301,11 +305,47 @@ static int poll_display(bool wait)
     }
 }
 
-static int present_ready(uint64_t *clock_start)
+static player_video_format_t source_video_format(const player_source *source)
+{
+    player_video_format_t format = {0};
+    format.coded_width = (source->width + 15u) & ~15u;
+    format.coded_height = (source->height + 15u) & ~15u;
+    format.visible_width = source->width; format.visible_height = source->height;
+    format.matrix_coefficients = source->video_matrix; format.full_range = source->video_full_range;
+    format.sar_num = source->video_sar_num; format.sar_den = source->video_sar_den;
+    format.colour_primaries = source->video_primaries; format.transfer_characteristics = source->video_transfer;
+    return format;
+}
+
+static int wait_video_format(const player_video_format_t *format)
+{
+    uint64_t deadline = platform_time_us() + 2000000u;
+    int result;
+    do {
+        result = player_display_set_video_format(format);
+        if (result != -EAGAIN) return result;
+        if (interrupted()) return -ECANCELED;
+        vTaskDelay(1);
+    } while (platform_time_us() < deadline);
+    return -ETIMEDOUT;
+}
+
+static int present_ready(uint64_t *clock_start, const player_source *source)
 {
     player_codec_frame_t frame;
     int result;
     while (!(result = player_codec_get_ready(codec, pool.session, &frame))) {
+        if (!verify_frames) {
+            player_video_format_t container = source_video_format(source), resolved;
+            result = player_video_format_resolve(&frame.format, &container, &resolved);
+            if (result) return result;
+            if (probe_format_ready && !player_display_same_format(&probe_format, &resolved)) return -ENOTSUP;
+            if (!probe_format_ready) {
+                result = wait_video_format(&resolved); /* Local READY remains held during route ACK. */
+                if (result) return result;
+                probe_format = resolved; probe_format_ready = true;
+            }
+        }
         if (verify_frames || !presented) {
             /* Read the DMA result through KSEG1. Do not clean stale CPU lines
              * over FELIX output; checksum only visible pixels, not padding. */
@@ -313,12 +353,14 @@ static int present_ready(uint64_t *clock_start)
             uint32_t chroma_sum[2] = {0, 0}, chroma_zero[2] = {0, 0}, chroma_full[2] = {0, 0};
             uint32_t chroma_min[2] = {255, 255}, chroma_max[2] = {0, 0};
             const uint8_t *planes[2] = {
-                (const uint8_t *)(uintptr_t)(frame.physical_y | 0xa0000000u),
-                (const uint8_t *)(uintptr_t)(frame.physical_uv | 0xa0000000u)
+                (const uint8_t *)(uintptr_t)((frame.physical_y | 0xa0000000u) +
+                    frame.format.crop_top * frame.stride + frame.format.crop_left),
+                (const uint8_t *)(uintptr_t)((frame.physical_uv | 0xa0000000u) +
+                    (frame.format.crop_top / 2u) * frame.stride + frame.format.crop_left)
             };
             for (unsigned p = 0; p < 2; ++p)
-                for (uint32_t row = 0; row < frame.height / (p ? 2u : 1u); ++row)
-                    for (uint32_t x = 0; x < frame.width; ++x) {
+                for (uint32_t row = 0; row < frame.format.visible_height / (p ? 2u : 1u); ++row)
+                    for (uint32_t x = 0; x < frame.format.visible_width; ++x) {
                         uint32_t sample = planes[p][row * frame.stride + x];
                         if (p) {
                             unsigned channel = x & 1u;
@@ -398,12 +440,14 @@ static void run_video(const char *path, unsigned long frame_limit, bool keep_las
         return;
     }
     verify_frames = verify;
+    probe_format_ready = false;
     verified_frames = 0;
     if (!pool_initialized) { player_video_pool_init(&pool); pool_initialized = true; }
     int result = open_video_source(path, &file, &source);
     if (result) goto done;
     if (!source.video_frames) { result = -ENOTSUP; goto done; }
-    result = player_video_layout_nv12(source.width, source.height, &layout);
+    player_video_format_t seed = source_video_format(&source);
+    result = player_video_layout_nv12(seed.coded_width, seed.coded_height, &layout);
     if (result) goto done;
     packet_buffer = memalign(128, PLAYER_MEDIA_VIDEO_MAX + PLAYER_MEDIA_INPUT_PADDING);
     if (!packet_buffer) { result = -ENOMEM; goto done; }
@@ -414,21 +458,21 @@ static void run_video(const char *path, unsigned long frame_limit, bool keep_las
         memset(buffers[i].base, 0, layout.total_bytes);
     }
     result = player_codec_open_geometry(&codec, &pool, pool.session, buffers,
-                                         source.width, source.height);
+                                         layout.width, layout.height);
     if (result) goto done;
     codec_running = true;
     if (!verify_frames) {
         result = player_display_init();
         if (!result) result = player_display_start();
         if (!result) {
-            uint64_t deadline = platform_time_us() + 2000000u;
-            do {
-                result = player_display_set_video_geometry(source.width, source.height);
-                if (result != -EAGAIN) break;
-                if (interrupted()) { result = -ECANCELED; break; }
-                vTaskDelay(1);
-            } while (platform_time_us() < deadline);
-            if (result == -EAGAIN) result = -ETIMEDOUT;
+            player_video_format_t checked;
+            result = player_video_format_resolve(&seed, NULL, &checked);
+            if (result == -ENOTSUP) {
+                seed.matrix_coefficients = 2u; seed.full_range = -1;
+                seed.colour_primaries = seed.transfer_characteristics = 2u;
+                result = 0; /* Empty canvas only; actual READY resolves strictly before submit. */
+            }
+            if (!result) result = wait_video_format(&seed);
         }
     }
     if (result) goto done;
@@ -449,14 +493,14 @@ static void run_video(const char *path, unsigned long frame_limit, bool keep_las
         if (platform_free_heap() < minimum_heap) minimum_heap = platform_free_heap();
         if (result) break;
         ++decoded;
-        result = present_ready(&clock_start);
+        result = present_ready(&clock_start, &source);
         if (result || (frame_limit && decoded >= frame_limit)) break;
     }
     if (!result || result == PLAYER_MEDIA_EOF) {
         int delayed;
         do {
             delayed = player_codec_drain(codec, pool.session);
-            result = delayed < 0 ? delayed : present_ready(&clock_start);
+            result = delayed < 0 ? delayed : present_ready(&clock_start, &source);
         } while (!result && delayed > 0);
     }
 done:

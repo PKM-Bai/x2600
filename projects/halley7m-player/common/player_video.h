@@ -9,6 +9,24 @@
 #define PLAYER_VIDEO_SLOTS     (PLAYER_VIDEO_MAX_REFS + 3u)
 #define PLAYER_VIDEO_ALIGNMENT 128u
 
+/* Coded NV12 memory and its visible SPS rectangle are separate. Matrix uses
+ * ISO/H264 values: 1=709, 5/6=601, 2=unspecified. full_range=-1 is unspecified,
+ * 0 limited, 1 full. Missing SAR is 0/0, interpreted as square pixels. */
+typedef struct {
+    uint32_t coded_width, coded_height, visible_width, visible_height;
+    uint32_t crop_left, crop_top, sar_num, sar_den, matrix_coefficients;
+    int32_t full_range;
+    uint32_t colour_primaries, transfer_characteristics; /* ISO; 2 unspecified. */
+} player_video_format_t;
+
+/* Merge each property independently, keeping known SPS values. Container
+ * geometry is ignored. Remaining unknown matrix/range/SAR is left for display
+ * inference. Explicit unsupported matrices, primaries or transfer curves are
+ * rejected; no BT2020 conversion or HDR tone mapping is implemented. */
+int player_video_format_resolve(const player_video_format_t *sps,
+                                 const player_video_format_t *container,
+                                 player_video_format_t *resolved);
+
 typedef struct {
     uint32_t width, height, stride;
     uint32_t y_bytes, uv_offset, uv_bytes, total_bytes;

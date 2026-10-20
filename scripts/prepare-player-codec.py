@@ -32,6 +32,14 @@ def prepare(destination: Path) -> None:
             text = replace_once(text, "    AVCodecContext *avctx;", "    AVCodecContext *avctx;\n    void *player_owner;", relative)
         elif relative == "include/h264_ps.h":
             text = replace_once(text, "    int num_reorder_frames;", "    int num_reorder_frames;\n    int max_dec_frame_buffering;", relative)
+            text = replace_once(text, """#if 0
+    enum AVColorPrimaries color_primaries;
+    enum AVColorTransferCharacteristic color_trc;
+    enum AVColorSpace colorspace;
+#endif""", """    /* Original ISO/H264 VUI numbers; display policy lives outside libh264. */
+    int colour_primaries;
+    int transfer_characteristics;
+    int matrix_coefficients;""", relative)
         elif relative == "include/h264_common.h":
             text = replace_once(text, "return av_popcount((uint32_t)x) + av_popcount((uint32_t)(x >> 32));",
                                 "return av_popcount_c((uint32_t)x) + av_popcount_c((uint32_t)(x >> 32));", relative)
@@ -220,6 +228,18 @@ def prepare(destination: Path) -> None:
                                 "    sps->full_range           = -1;\n    sps->bitstream_restriction_flag = 0;\n    sps->num_reorder_frames = 0;\n    sps->max_dec_frame_buffering = 0;", relative)
             text = replace_once(text, "        get_ue_golomb(gb); /* max_dec_frame_buffering */",
                                 "        sps->max_dec_frame_buffering = get_ue_golomb(gb);", relative)
+            text = replace_once(text, """            get_bits(gb, 8); /* colour_primaries */
+            get_bits(gb, 8); /* transfer_characteristics */
+            get_bits(gb, 8); /* matrix_coefficients */""", """            sps->colour_primaries = get_bits(gb, 8);
+            sps->transfer_characteristics = get_bits(gb, 8);
+            sps->matrix_coefficients = get_bits(gb, 8);""", relative)
+            text = replace_once(text, "    sps->full_range           = -1;", """    sps->full_range           = -1;
+    sps->video_signal_type_present_flag = 0;
+    sps->colour_description_present_flag = 0;
+    sps->colour_primaries = 2;
+    sps->transfer_characteristics = 2;
+    sps->matrix_coefficients = 2;
+    sps->sar.num = sps->sar.den = 0;""", relative)
         elif relative == "src/h264dec.c":
             text = '#include "player_codec_hooks.h"\n' + text
             text = replace_once(text, "    if (buf_index < 0) {\n        return AVERROR_INVALIDDATA;\n    }",

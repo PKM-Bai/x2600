@@ -15,7 +15,8 @@ typedef struct {
     player_video_token_t token;
     uint8_t *y, *uv;
     uint32_t physical_y, physical_uv;
-    uint32_t width, height, stride;
+    uint32_t width, height, stride; /* Coded allocation, including SPS padding. */
+    player_video_format_t format;  /* Per-output SPS metadata, before container fallback. */
     uint64_t frame_index;
     uint64_t output_index;         /* Presentation-order ordinal, distinct from AU index. */
     int64_t pts_us, duration_us;

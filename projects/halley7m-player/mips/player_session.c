@@ -8,6 +8,7 @@
 #include "player_storage.h"
 #include "player_codec.h"
 #include "player_display.h"
+#include "player_display_format.h"
 #include "player_audio_client.h"
 #include "FreeRTOS.h"
 #include "task.h"
@@ -41,6 +42,8 @@ static int16_t pcm_stage[PCM_STAGE_SAMPLES];
 static uint32_t pcm_read, pcm_count, decoded_offset, decoded_length;
 static uint64_t decoded_axis;
 static unsigned decoded_active, pcm_finished, geometry_ready;
+static unsigned format_ready, format_requested;
+static player_video_format_t requested_video_format, confirmed_video_format;
 static struct player_media_packet pending_packet;
 static unsigned packet_pending, file_eof, codec_drained, audio_eof;
 static unsigned audio_started, first_video_latched, video_pending, has_ready;
@@ -249,6 +252,48 @@ static int poll_video(void)
     return 0;
 }
 
+static player_video_format_t source_video_format(void)
+{
+    player_video_format_t format = {0};
+    format.coded_width = (media.width + 15u) & ~15u;
+    format.coded_height = (media.height + 15u) & ~15u;
+    format.visible_width = media.width; format.visible_height = media.height;
+    format.matrix_coefficients = media.video_matrix; format.full_range = media.video_full_range;
+    format.sar_num = media.video_sar_num; format.sar_den = media.video_sar_den;
+    format.colour_primaries = media.video_primaries; format.transfer_characteristics = media.video_transfer;
+    return format;
+}
+
+static int advance_video_geometry(void)
+{
+    int result = player_display_set_video_format(&requested_video_format);
+    if (!result) geometry_ready = 1;
+    return result;
+}
+
+static int configure_ready_format(void)
+{
+    player_video_format_t container = source_video_format(), resolved;
+    int result = player_video_format_resolve(&ready_frame.format, &container, &resolved);
+    if (result) return result;
+    if (format_ready) {
+        if (!player_display_same_format(&confirmed_video_format, &resolved)) {
+            (void)snprintf(failure_detail, sizeof(failure_detail), "decoded video format changed");
+            return -ENOTSUP;
+        }
+        return 0;
+    }
+    if (!format_requested) {
+        requested_video_format = resolved;
+        geometry_ready = 0;
+        format_requested = 1;
+    } else if (!player_display_same_format(&requested_video_format, &resolved)) return -ENOTSUP;
+    if (!geometry_ready && (result = advance_video_geometry()) != 0) return result;
+    confirmed_video_format = resolved;
+    format_ready = 1;
+    return 0;
+}
+
 static int detach_video(void)
 {
     if (!video_opened) return 0;
@@ -264,7 +309,7 @@ static int detach_video(void)
          * Finish that already requested transition before clear_video, which
          * intentionally rejects submissions while a route is in progress. */
         if (!geometry_ready) {
-            result = player_display_set_video_geometry(media.width, media.height);
+            result = advance_video_geometry();
             if (result && result != -EAGAIN) return result;
             if (result == -EAGAIN) { player_amp_service(); vTaskDelay(1); continue; }
             geometry_ready = 1;
@@ -341,7 +386,9 @@ static int stop_resources(void)
     queued_pcm_samples = 0;
     pcm_read = pcm_count = decoded_active = pcm_finished = 0;
     decoded_axis = 0;
-    geometry_ready = 0;
+    geometry_ready = format_ready = format_requested = 0;
+    memset(&requested_video_format, 0, sizeof(requested_video_format));
+    memset(&confirmed_video_format, 0, sizeof(confirmed_video_format));
     video_queue.count = audio_queue.count = 0;
     view.resources_pinned = 0;
     return result;
@@ -374,7 +421,6 @@ static int media_failure(int result, const char *operation)
 
 static int begin_media_impl(const char *path)
 {
-    player_video_layout_t layout;
     int result;
     if (!path || !*path) return -EINVAL;
     if (view.resources_pinned) return -EBUSY;
@@ -446,19 +492,18 @@ static int begin_media_impl(const char *path)
         if (result) return result;
     }
     if (media.video_frames) {
-        result = player_video_layout_nv12(media.width, media.height, &layout);
-        if (result) return result;
-        for (unsigned i = 0; i < PLAYER_VIDEO_SLOTS; ++i) {
-            if ((result = control_pump(NULL)) != 0) return result;
-            frame_buffers[i].capacity = layout.total_bytes;
-            frame_buffers[i].base = memalign(128, layout.total_bytes);
-            if (!frame_buffers[i].base) return -ENOMEM;
-            memset(frame_buffers[i].base, 0, layout.total_bytes);
-        }
-        result = player_codec_open_geometry(&codec, &video_pool, video_pool.session, frame_buffers,
-                                             media.width, media.height);
-        if (result) return result;
-        codec_running = 1;
+        requested_video_format = source_video_format();
+        /* This seeds an empty display/GUI canvas before SPS is available.
+         * Unsupported container colours cannot decide final capability yet:
+         * a known SPS property must still take precedence. No NV12 is ever
+         * submitted until the strict READY resolve below has succeeded. */
+        player_video_format_t checked;
+        result = player_video_format_resolve(&requested_video_format, NULL, &checked);
+        if (result == -ENOTSUP) {
+            requested_video_format.matrix_coefficients = 2u;
+            requested_video_format.full_range = -1;
+            requested_video_format.colour_primaries = requested_video_format.transfer_characteristics = 2u;
+        } else if (result) return result;
         result = player_display_start();
         if (result) return result;
         video_opened = 1;
@@ -472,6 +517,27 @@ static int begin_media(const char *path)
     if (result && !(result == -ECANCELED && cancel_requested) &&
         (view.state == PLAYER_SESSION_LOADING || view.resources_pinned))
         fail_session(result, "open media");
+    return result;
+}
+
+static int open_video_codec(void)
+{
+    player_video_layout_t layout;
+    int result = player_video_layout_nv12(requested_video_format.coded_width,
+                                          requested_video_format.coded_height, &layout);
+    if (result) return result;
+    /* Complete the asynchronous canvas change first: a wide GUI retains
+     * three CUSTOM surfaces until the native route ACK releases them. */
+    for (unsigned i = 0; i < PLAYER_VIDEO_SLOTS; ++i) {
+        if ((result = control_pump(NULL)) != 0) return result;
+        frame_buffers[i].capacity = layout.total_bytes;
+        frame_buffers[i].base = memalign(128, layout.total_bytes);
+        if (!frame_buffers[i].base) return -ENOMEM;
+        memset(frame_buffers[i].base, 0, layout.total_bytes);
+    }
+    result = player_codec_open_geometry(&codec, &video_pool, video_pool.session, frame_buffers,
+                                         layout.width, layout.height);
+    if (!result) codec_running = 1;
     return result;
 }
 
@@ -698,6 +764,9 @@ static int present_ready(void)
     enum player_video_timing timing;
     int result;
     if (!has_ready || video_pending) return 0;
+    result = configure_ready_format();
+    if (result == -EAGAIN) return 0; /* Keep this exact READY token through GUI route ACK. */
+    if (result) return result;
     if (view.state == PLAYER_SESSION_LOADING && !audio_started) {
         if (first_video_latched) return 0;
         timing = ready_frame.pts_us > 0 ? PLAYER_VIDEO_WAIT : PLAYER_VIDEO_PRESENT;
@@ -762,14 +831,15 @@ static int playback_step(void)
     int result = poll_video();
     if (result) return result;
     if ((result = control_pump(NULL)) != 0) return result;
-    if (codec && !geometry_ready) {
+    if (video_opened && !geometry_ready) {
 #if PLAYER_DISPLAY_HAS_GEOMETRY
-        result = player_display_set_video_geometry(media.width, media.height);
+        result = advance_video_geometry();
         if (result == -EAGAIN) return 0;
         if (result) return result;
 #endif
         geometry_ready = 1;
     }
+    if (video_opened && !codec && (result = open_video_codec()) != 0) return result;
     if (audio_started && (result = feed_audio()) != 0) return result;
     if ((result = demux_one()) != 0) return result;
     if (audio_decoder && (result = convert_audio()) != 0) return result;
@@ -777,7 +847,8 @@ static int playback_step(void)
         if ((result = decode_one()) != 0) return result;
         if ((result = present_ready()) != 0) return result;
     }
-    if (!audio_started && (!codec || first_video_latched || (has_ready && ready_frame.pts_us > 0)) &&
+    if (!audio_started && (!codec || (format_ready &&
+        (first_video_latched || (has_ready && ready_frame.pts_us > 0)))) &&
         (queued_pcm_samples >= INITIAL_PCM_SAMPLES || file_eof)) {
         /* First NV12 + backlight and at least 100ms PCM are ready before the
          * first DMA can consume five periods. Send the saved PCM as a batch. */

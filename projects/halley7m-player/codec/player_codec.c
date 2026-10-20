@@ -4,6 +4,7 @@
 #include "player_codec_workspace.h"
 #include "avcodec.h"
 #include "h264dec.h"
+#include "player_codec_format.h"
 #include <x2600_hal.h>
 #include <errno.h>
 #include <malloc.h>
@@ -20,6 +21,7 @@ struct player_codec_slot {
     player_video_token_t token;
     uint64_t frame_index;
     int64_t pts_us, duration_us;
+    player_video_format_t format;
 };
 
 struct player_codec {
@@ -97,10 +99,11 @@ AVFrame *player_codec_frame_acquire(H264Context *h)
     player_video_token_t token;
     struct player_codec_slot *slot;
     const SPS *sps = h->ps.sps;
+    player_video_format_t format;
     if (!codec || !codec->running || !sps || h->width != (int)codec->layout.width ||
         h->height != (int)codec->layout.height ||
         (sps->profile_idc != 66 && sps->profile_idc != 77 && sps->profile_idc != 100) ||
-        sps->level_idc > 40 || sps->ref_frame_count > (int)PLAYER_VIDEO_MAX_REFS ||
+        sps->ref_frame_count > (int)PLAYER_VIDEO_MAX_REFS ||
         (sps->bitstream_restriction_flag && (sps->num_reorder_frames > 4 ||
           sps->max_dec_frame_buffering > (int)PLAYER_VIDEO_MAX_REFS ||
           sps->num_reorder_frames > sps->max_dec_frame_buffering ||
@@ -108,7 +111,9 @@ AVFrame *player_codec_frame_acquire(H264Context *h)
         h->avctx->has_b_frames > 4 ||
         sps->chroma_format_idc != 1 || sps->bit_depth_luma != 8 || sps->bit_depth_chroma != 8 ||
         !sps->frame_mbs_only_flag || sps->mb_aff || !h->ps.pps ||
-        h->ps.pps->slice_group_count != 1 || !player_video_codec_acquire(codec->pool, &token))
+        h->ps.pps->slice_group_count != 1 || player_codec_format_from_sps(sps, &format) ||
+        format.coded_width != codec->layout.width || format.coded_height != codec->layout.height ||
+        !player_video_codec_acquire(codec->pool, &token))
         return NULL;
     slot = &codec->slots[token.slot];
     /* The vendor's absent-VUI SPS heuristic may be seven even for B0.
@@ -117,6 +122,7 @@ AVFrame *player_codec_frame_acquire(H264Context *h)
     if (!sps->bitstream_restriction_flag && sps->profile_idc != 66 && h->avctx->has_b_frames < 4)
         h->avctx->has_b_frames = 4;
     slot->token = token;
+    slot->format = format;
     slot->frame_index = codec->submitting_frame;
     slot->pts_us = slot->frame.pts = codec->submitting_pts_us;
     slot->duration_us = codec->submitting_duration_us;
@@ -201,7 +207,9 @@ int player_codec_open_geometry(player_codec_t **result, player_video_pool_t *poo
     uint32_t i;
     int error;
     if (!result || !pool || !buffers || !session || pool->session != session) return -EINVAL;
-    if (!((width == 720 && height == 1280) || (width == 1280 && height == 720))) return -ENOTSUP;
+    if (!width || !height || width > 2032u || height > 2032u || (width & 1u) || (height & 1u)) return -ENOTSUP;
+    width = (width + 15u) & ~15u; height = (height + 15u) & ~15u;
+    if ((uint64_t)width * height > 1280u * 720u) return -ENOTSUP;
     *result = NULL;
     if (active_codec) return -EBUSY;
     codec = calloc(1, sizeof(*codec));
@@ -336,6 +344,7 @@ int player_codec_get_ready(player_codec_t *codec, uint32_t session, player_codec
     result->y = slot->planes[0].buffer; result->uv = slot->planes[1].buffer;
     result->physical_y = slot->planes[0].buffer_pa; result->physical_uv = slot->planes[1].buffer_pa;
     result->width = codec->layout.width; result->height = codec->layout.height; result->stride = codec->layout.stride;
+    result->format = slot->format;
     result->frame_index = slot->frame_index; result->key_frame = (uint32_t)frame->key_frame;
     result->output_index = codec->output_count++;
     result->pts_us = slot->pts_us; result->duration_us = slot->duration_us;

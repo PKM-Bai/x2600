@@ -27,6 +27,12 @@ struct player_mp4_track_info {
     uint64_t duration;           /* Sum of stts, in track ticks. */
     uint64_t header_duration;    /* mdhd duration, in track ticks. */
     uint32_t width, height;
+    /* avc1 sample-entry fallback only; SPS values take precedence. ISO colour
+     * values 1=709, 5/6=601, 2=unknown. Other explicit ISO values are retained
+     * for capability rejection, never mapped to inferred 709. No tone mapping. */
+    uint32_t matrix_coefficients, colour_primaries, transfer_characteristics;
+    int32_t full_range;          /* -1 unknown, 0 limited, 1 full. */
+    uint32_t sar_num, sar_den;   /* pasp; 0/0 means absent. */
     uint32_t sample_rate, channels, aac_frame_samples;
     uint32_t h264_profile, h264_level, nal_length_bytes;
     uint32_t has_ctts, has_edit;

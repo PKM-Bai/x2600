@@ -5,6 +5,7 @@
 #define PLAYER_DISPLAY_HAS_OVERLAY 1
 #define PLAYER_DISPLAY_HAS_VIDEO_PRIORITY 1
 #define PLAYER_DISPLAY_HAS_GEOMETRY 1
+#define PLAYER_DISPLAY_HAS_VIDEO_FORMAT 1
 #define PLAYER_DISPLAY_OVERLAY_BYTES (720u * 1280u * 4u)
 
 typedef struct {
@@ -37,6 +38,10 @@ typedef struct {
     uint32_t rotator_held_sof;
     uint32_t rotator_late_binds;
     int route_error;
+    player_video_format_t format;
+    uint32_t source_stride;
+    uint32_t viewport_x, viewport_y, viewport_width, viewport_height;
+    uint32_t matrix, full_range, matrix_inferred, range_inferred;
 } player_display_stats_t;
 
 /* Init/stop run before/after both GUI and media tasks use the driver. Init/start do not
@@ -54,6 +59,12 @@ int player_display_start(void);
  * 0 acknowledges both route and GUI layout. Failure keeps DMA buffers pinned.
  * No LVGL call is made from this function. */
 int player_display_set_video_geometry(uint32_t width, uint32_t height);
+/* Same owner/LOADING/retirement contract. Keeps a fixed logical canvas chosen
+ * from visible DAR (including SAR); source layout is coded NV12, not canvas.
+ * Only the <=720p-pixel progressive envelope is enabled in this stage.
+ * NV12 crop_left must be 8-byte aligned, crop_top must be even. Unknown
+ * matrix/range is recorded as inferred: SD601/HD709, limited. */
+int player_display_set_video_format(const player_video_format_t *format);
 /* GUI adapter handshake: phase 0 running, 1 drain/pause, 2 old DMA is idle and
  * both surfaces may be rebuilt. Acknowledge the returned generation/phase.
  * Only phase2 permits changing the byte layout or overwriting old front. */

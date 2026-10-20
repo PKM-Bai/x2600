@@ -288,3 +288,40 @@ PC隔离分析把5个P slice（原AU886/890/894/895/899）的默认128改成显�
 本阶段最终R5 Release 2,212,960B、CRC `5d560034`、SHA `37f9e27c8bf30bb81ae0fec0e0490952dc183cd461db450cdd5356b9f17a6132`；Debug 2,341,632B、CRC `47684d76`、SHA `6334a6972baa5bfde46d201567abc3522318e43c6dadf4fc1f80471e0effe8b9`。两核Debug/Release、主机会话和GUI已通过。全部新版本仅RAM运行，Flash保持此前版本。
 
 R5已完成独立板测，RAM日志`build/player-bframes-approved-ramload-20261020.log`确认长度与CRC。`build/player-bframes-approved-gop-crc-board-20261020.log/.json`中的150帧、300个Y/UV平面全部匹配明确标记的PC“显式127权重”参考，顺序/PTS正确；这是批准的近似参考，不是原片规范像素完全一致。随后正常GUI、AMP、7%完整播放原始test.mp4：994解码、987呈现、drop/late7/7、max_late67000us，音频1592520样本且所有音频错误0；`weight_approx=5`与实际5个P帧一致。ENDED堆426256B，STOP后34388288B、IDLE/inactive/pinned0，工作区peak8、active0。日志`build/player-bframes-approved-original-play-board-20261020.log`。显示帧数和迟到数照实保留，未将功能播放成功等同于零掉帧。
+
+## 2026-10-20：兼容性第4步——常见尺寸、SAR与四组CSC
+
+实现按coded矩形分配NV12及内部工作区、逐帧SPS格式快照、SAR等比居中和601/709有限/全范围CSC。格式按属性使用SPS已知值、MP4容器后备、显示推断；首个READY确认实际格式后才提交NV12或启动音频，等待GUI路线ACK时保留原token。中途格式变化明确退出。可见尺寸为正偶数、单边≤2032，分别向上对齐16后coded面积≤1280×720；任意非最小coded画布裁剪、1080p、HDR/BT.2020及ICC变换不在本轮范围。Level 4.1/4.2样片只改标签，未增加实际像素、参考帧或重排预算。
+
+### 构建与主机验证
+
+- R8双核Release为1,949,856B，CRC `be8b7739`，SHA256 `bad023ccbf951a25fec04e30ecbb08f356fa0a973ae867b6b56c845d5e6bba80`；Debug为2,081,600B，CRC `42a9d478`，SHA256 `ff5d925abb27e5b9bab6db0cf5101733cbd2f0e23035812612e150451fd3dad2`。小核仍为35880B/CRC003d092f、协议4/共享布局3，默认7%。两核Debug/Release链接及嵌入、边界、6MiB上传窗口核验通过，最终Release真实ELF/BIN及损坏副本17项检查通过。冻结产物位于本地`build/player-evidence-geometry-r8`。
+- `test-player-geometry.py`的22个真实文件source/session用例通过，包含13个尺寸/色彩/标签文件、SPS优先于矛盾容器颜色/SAR、实际READY握手、正起始PTS、三轮暂停/恢复/EOF/STOP，以及奇数尺寸、1080p、coded对齐后超预算、HDR后备和中途格式变化的拒绝。codec/DPU为确定性peer，不计作硬件通过。完整生产session/core回归另行通过，包含旧AVI/WAV和B帧编辑窗口。
+- 生产显示、旋转器、headless真实LVGL、按键及纯格式/逐属性resolve测试通过；实际codec提取回归5/5通过，包含RBSP、CABAC、POC重排、权重和工作区约束。独立`test-player-codec-format.py`编译实际SPS parser及生产helper，13个MP4元数据和同id0去VUI共14项通过，检查尺寸/crop/SAR/颜色/Level及旧字段清理；证据为本地`build/player-codec-format-host/{build.log,test.log,results.json}`。CUSTOM512采样测试核对列主序地址的独立固定值、全图双射及未完成/未持有表面拒绝。板测runner的7项假UART回归覆盖末行接收、CSC记录、安静播放窗口及同UI状态堆恢复；均不作为实板证明。
+- 脚本及结果入口为本地`build/player-geometry-r8-production-host.log`、`player-geometry-r8-session-host.log`、`player-geometry-gui-host.log`、`player-geometry-display-sample-host.log`、`player-geometry-runner-host.log`、`player-geometry-r8-artifacts-host.log`。生成片源、Level重标、PC色彩参考和13例板测入口均已纳入源码；媒体、完整日志和工具链只保留本地。
+
+### 候选实板证据与修正
+
+- R6的854×480、640×360及960×540各90帧、180个Y/UV平面与PC参考CRC完全一致，分别验证coded864×480/stride896、640×368和960×544的padding裁剪，未把padding字节计入CRC。原始日志为`build/player-geometry-854-crc-board-20261020.log`、`player-geometry-640x360-crc-board-20261020.log`及`player-geometry-960x540-crc-board-20261020.log`。首个checker因参考JSON对象被当成列表而报数量不符；修正兼容`frames`数组后对同一原始日志核验通过，未重写板端结果。
+- DPU CUSTOM实测为512字节块列主序`((x/128)*height+y)*512+(x%128)*4`。R6先用原始线性地址桥接读取854样片的16个色条/灰阶点，RGB与PC理想矩阵最大差1；初始两个布局猜测不匹配，保留为失败探测。日志`build/player-geometry-color-map-r2-board-20261020.log/.json`。R7采样命令采用已验证的布局，只读取ENDED后仍持有且没有写入的表面。
+- `display`诊断打印较长，若读到`DISPLAY_FORMAT`就发长采样命令会溢出UART接收FIFO；R7增加`DISPLAY_END`，runner等待末行后再发命令。首轮320×240播放90/90且音频完整，但灰阶参考点靠近角标缩放边缘，PC点与DPU采样相位不同；PC参考移至平坦区并检查3×3邻域稳定性，RGB逐通道容差仍为2，未放宽阈值。原失败日志`build/player-geometry-final-board-20261020.log`保留。
+- R7第二轮前六个横屏尺寸均90/90、drop/late0、144000音频样本完整且错误0；切到720×1280在open阶段返回ENOMEM，0帧解码。原因是旧宽幅GUI仍持有11,059,200B的三块CUSTOM时已开始分配新NV12/codec工作区。R8改为先完成异步route/GUI ACK、释放旧CUSTOM，再创建解码池；STOP或换WAV可取消尚未开codec的等待。主机回归明确断言路由等待期间只有IO池、没有大帧/codec分配。失败日志`build/player-geometry-final-r2-board-20261020.log/.json`不记为整批通过。
+
+### R8最终实板结果
+
+`build/player-geometry-r8-ramload-20261020.log`将上述冻结Release加载至RAM，板端长度/CRC校验及双核READY通过。随后完整13例使用同一固件、真实TF和正常GUI/AMP链路：
+
+| 样片组 | 例数 | 解码/呈现帧数 | 有效音频样本 | drop/late | 音频错误 |
+| --- | ---: | ---: | ---: | --- | --- |
+| 七种可见尺寸及720×576/SAR16:15 | 8 | 720/720 | 1,152,000 | 0/0 | 全0 |
+| 601limited、709limited、709full补充 | 3 | 270/270 | 432,000 | 0/0 | 全0 |
+| Level4.1/4.2仅重标 | 2 | 180/180 | 288,000 | 0/0 | 全0 |
+| 合计 | 13 | 1170/1170 | 1,872,000 | 0/0 | 全0 |
+
+每例90帧、144000样本，EOF及STOP状态分别核对；会话IDLE、音频inactive、pinned0。四组CSC元数据和显示视口全部符合预期；12个横屏例共192个色条/灰阶/黑边写回像素，RGB对PC理想矩阵最大逐通道差1，要求容差2。原生720×1280无CUSTOM写回，只做格式/视口及帧音频计数检查，不伪称取得它的RGB样本。640×480及720×576/SAR16:15均为960×720视口、左右160黑边；854×480为1280×718、y=1。横屏→native→横屏连续切换成功。
+
+13例ENDED查询的最小空闲堆898152B、media栈累计最低余12794words、GUI2934words，属于查询边界观测，不是分配器瞬时峰值。横屏STOP后空闲堆34650432B；native为45711192B，差11060760B为CUSTOM像素及对齐开销。各首次文件名状态在runner中标为`new-ui-baseline`，未把跨标题堆差当作严格泄漏断言；同画布且保留同文件名才作精确恢复比较。正式日志为本地`build/player-geometry-r8-board-20261020.log/.json`，原日志SHA256 `e3dc0caafa11609aa420ff916f364641b3f2780c7c595adc76239b8dbe128a8a`。该runner不查询板端SHA或TF文件SHA；预期固件/片源清单与独立RAM校验分别关联。
+
+同一R8随后完整播放用户原始`0:/multimedia/video/test.mp4`，暂停时两次查询均137760样本、已解码90/呈现86，恢复后994/994帧、drop/late0、max_late27000us；1592520有效样本全部输出，DMA错误/超时、队列/FIFO欠载及会话错误全0。`weight_approx=5`，符合已批准策略。ENDED空闲堆687840B，STOP后34650432B、IDLE/inactive/pinned0，media栈最低余11264words。原始日志`build/player-geometry-r8-original-pause-board-20261020.log`，SHA256 `1f7c080cccaa1832418b7111db6b62462e07124c11096bdda9b605c81af9d564`。R5/R7的偶发跳帧记录仍保留，不能以本轮0改写历史或承诺所有视频均不掉帧。
+
+再次播放SAR16:15样片并保留089末帧，用户人工确认“方向、比例和颜色均正常”；此为屏幕外观检查，不是光学色差或声光数值测量。最终STOP并刷新媒体库，会话IDLE、音频inactive、GUI错误0；串口刷新不改变当前播放页，结束状态日志`build/player-geometry-r8-final-idle-board-20261020.log`。板测始终保持7%音量，仅RAM加载；NOR保留此前已安装的R4版本。未将旧AVI的30分钟记录移用于本轮新格式，也不声明已测得实际声光偏差数值。

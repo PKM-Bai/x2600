@@ -1,7 +1,9 @@
+#define _CRT_SECURE_NO_WARNINGS
 #include "../player_session.h"
 #include "player_storage.h"
 #include "player_codec.h"
 #include "player_display.h"
+#include "player_display_format.h"
 #include "player_audio_client.h"
 #include "player_config.h"
 #include "player_session_test_alloc.h"
@@ -15,6 +17,11 @@
 static uint64_t now_us;
 static unsigned allocations, audio_starts, stop_fail, codec_stop_fail;
 static unsigned request_id;
+static unsigned video_codec_running, ready_format_confirmed, first_ready_seen, actual_format_busy;
+static unsigned geometry_busy_calls, geometry_in_progress, seed_geometry_ready;
+static unsigned session_memalign_calls, video_codec_opens;
+static player_video_format_t fixture_format;
+static player_video_layout_t fixture_layout;
 static uint32_t last_displayed;
 static unsigned expected_video_frames = 12u;
 static unsigned reorder_depth;
@@ -28,6 +35,12 @@ static player_session_snapshot_t snapshot;
 
 void *player_test_memalign(size_t alignment, size_t bytes)
 {
+    ++session_memalign_calls;
+    /* The first two session allocations are the 2MiB read/packet pools.
+     * Large NV12 buffers follow them. They cannot be allocated while an old
+     * route's three CUSTOM surfaces are waiting for the GUI/DMA ACK. */
+    if (session_memalign_calls > 2u && bytes >= 1024u * 1024u)
+        assert(seed_geometry_ready && !geometry_in_progress);
     void *base = malloc(bytes + alignment + sizeof(void *));
     uintptr_t aligned;
     if (!base) return NULL;
@@ -75,6 +88,8 @@ int player_storage_open_utf8(struct player_storage_file **output, const char *pa
     if (mount_failed && !embedded) return -ENODEV;
     file.data = embedded || strstr(path, ".avi") ? avi : wav;
     file.size = embedded || strstr(path, ".avi") ? avi_size : sizeof(wav);
+    session_memalign_calls = seed_geometry_ready = 0;
+    first_ready_seen = ready_format_confirmed = 0;
     file.position = 0; file.open = 1; *output = &file;
     return 0;
 }
@@ -160,6 +175,7 @@ int player_audio_client_service(void)
 int player_audio_client_start(uint32_t total, unsigned volume)
 {
     assert(!audio.session_active && volume <= 100u);
+    assert(!video_codec_running || ready_format_confirmed);
     ++audio_starts;
     memset(&audio, 0, sizeof(audio));
     audio.session_active = 1; audio.total_samples = total; audio.volume_percent = volume;
@@ -221,15 +237,38 @@ int player_codec_open(player_codec_t **output, player_video_pool_t *pool, uint32
                        const player_codec_buffer_t buffers[PLAYER_VIDEO_SLOTS])
 {
     assert(session == pool->session && !decoder.running);
+    /* Opening reserves the codec's large raw workspace in production. The
+     * complete seed route must already have retired old display resources. */
+    assert(seed_geometry_ready && !geometry_in_progress);
+    ++video_codec_opens;
     memset(&decoder, 0, sizeof(decoder));
     decoder.pool = pool;
     memcpy(decoder.buffers, buffers, sizeof(decoder.buffers));
-    decoder.running = 1; *output = &decoder; return 0;
+    decoder.running = 1; video_codec_running = 1;
+    ready_format_confirmed = first_ready_seen = 0;
+    const char *busy = getenv("PLAYER_TEST_FORMAT_BUSY");
+    actual_format_busy = busy ? (unsigned)atoi(busy) : 0u;
+    *output = &decoder; return 0;
 }
 int player_codec_open_geometry(player_codec_t **output, player_video_pool_t *pool, uint32_t session,
                                 const player_codec_buffer_t buffers[PLAYER_VIDEO_SLOTS], uint32_t w, uint32_t h)
-{ assert((w == 720 && h == 1280) || (w == 1280 && h == 720));
-  return player_codec_open(output, pool, session, buffers); }
+{
+    assert(!(w & 15u) && !(h & 15u));
+    assert(!player_video_layout_nv12(w, h, &fixture_layout));
+    for (unsigned i=0;i<PLAYER_VIDEO_SLOTS;i++) assert(buffers[i].capacity == fixture_layout.total_bytes);
+    fixture_format=(player_video_format_t){w,h,w,h,0,0,0,0,2,-1,2,2};
+    const char *metadata=getenv("PLAYER_TEST_VIDEO_FORMAT");
+    if (metadata) {
+        assert(sscanf(metadata,"%u,%u,%u,%u,%u,%u,%u,%u,%u,%d,%u,%u",
+                      &fixture_format.coded_width,&fixture_format.coded_height,
+                      &fixture_format.visible_width,&fixture_format.visible_height,
+                      &fixture_format.crop_left,&fixture_format.crop_top,&fixture_format.sar_num,
+                      &fixture_format.sar_den,&fixture_format.matrix_coefficients,&fixture_format.full_range,
+                      &fixture_format.colour_primaries,&fixture_format.transfer_characteristics)==12);
+        assert(fixture_format.coded_width==w && fixture_format.coded_height==h);
+    }
+    return player_codec_open(output, pool, session, buffers);
+}
 int player_codec_submit(player_codec_t *codec, uint32_t session, uint8_t *data,
                          uint32_t length, uint32_t capacity, uint64_t frame,
                          int64_t pts_us, int64_t duration_us)
@@ -244,6 +283,11 @@ int player_codec_submit(player_codec_t *codec, uint32_t session, uint8_t *data,
     delayed->token = token; delayed->frame_index = frame;
     delayed->pts_us = pts_us; delayed->duration_us = duration_us;
     delayed->y = codec->buffers[token.slot].base;
+    delayed->uv = delayed->y + fixture_layout.uv_offset;
+    delayed->width=fixture_layout.width; delayed->height=fixture_layout.height; delayed->stride=fixture_layout.stride;
+    delayed->format=fixture_format;
+    if (getenv("PLAYER_TEST_FORMAT_CHANGE") && frame)
+        delayed->format.matrix_coefficients=fixture_format.matrix_coefficients==1u?6u:1u;
     codec->by_slot[token.slot] = *delayed;
     (void)publish_delayed(codec);
     now_us += 5600u;
@@ -251,7 +295,8 @@ int player_codec_submit(player_codec_t *codec, uint32_t session, uint8_t *data,
 }
 int player_codec_get_ready(player_codec_t *codec, uint32_t session, player_codec_frame_t *frame)
 { assert(session == codec->pool->session); (void)publish_delayed(codec);
-  if (!codec->has_ready) return -EAGAIN; *frame = codec->ready; codec->has_ready = 0; return 0; }
+  if (!codec->has_ready) return -EAGAIN; *frame = codec->ready; codec->has_ready = 0;
+  first_ready_seen=1; return 0; }
 int player_codec_return_frame(player_codec_t *codec, player_video_token_t token)
 { return player_video_discard_ready(codec->pool, token) ? 0 : -EINVAL; }
 int player_codec_drain(player_codec_t *codec, uint32_t session)
@@ -266,7 +311,7 @@ int player_codec_stop(player_codec_t *codec, uint32_t session)
         assert(player_video_codec_release(codec->pool, codec->delayed[i].token));
     codec->delayed_count = codec->has_ready = codec->has_reference = 0;
     for (unsigned i = 0; i < PLAYER_VIDEO_SLOTS; ++i) codec->pool->slots[i].holds &= ~PLAYER_VIDEO_READY;
-    codec->running = 0; return 0;
+    codec->running = 0; video_codec_running = 0; return 0;
 }
 void player_codec_close(player_codec_t *codec) { assert(!codec->running); }
 uint32_t player_codec_weight_approximation_count(const player_codec_t *codec)
@@ -280,17 +325,33 @@ static unsigned video_active;
 static uint32_t refresh_us = 1000u;
 static uint64_t latch_at;
 static uint32_t latched_decode_index;
-static unsigned geometry_busy_calls, geometry_in_progress;
-int player_display_start(void) { return 0; }
+int player_display_start(void) { seed_geometry_ready = 0; return 0; }
 int player_display_set_video_geometry(uint32_t w, uint32_t h)
 {
     assert(!display_scanout && ((w == 720 && h == 1280) || (w == 1280 && h == 720)));
     if (geometry_busy_calls) { --geometry_busy_calls; geometry_in_progress = 1; return -EAGAIN; }
-    geometry_in_progress = 0; return 0;
+    geometry_in_progress = 0; seed_geometry_ready = 1; return 0;
+}
+int player_display_set_video_format(const player_video_format_t *format)
+{
+    player_display_format_plan_t plan;
+    assert(!player_display_plan_format(format,&plan));
+    if (first_ready_seen && !ready_format_confirmed) {
+        unsigned ready=0;
+        for(unsigned i=0;i<PLAYER_VIDEO_SLOTS;i++) ready|=decoder.pool->slots[i].holds&PLAYER_VIDEO_READY;
+        assert((!video_codec_running || ready) && !audio.session_active);
+        if(actual_format_busy) { --actual_format_busy; geometry_in_progress=1; return -EAGAIN; }
+        ready_format_confirmed=1;
+    }
+    if(geometry_busy_calls) { --geometry_busy_calls; geometry_in_progress=1; return -EAGAIN; }
+    geometry_in_progress=0;
+    if(!first_ready_seen) seed_geometry_ready=1;
+    return 0;
 }
 void player_display_set_video_active(bool active) { video_active = active ? 1u : 0u; }
 int player_display_submit_frame(const player_display_frame_t *frame)
 {
+    assert(ready_format_confirmed && !geometry_in_progress);
     if (display_pending || completion_valid) return -EAGAIN;
     memset(&completion, 0, sizeof(completion));
     completion.has_latched = true;
@@ -381,6 +442,24 @@ int main(int argc, char **argv)
     rewind(input); assert(fread(avi, 1, avi_size, input) == avi_size); fclose(input);
     make_wav();
     assert(player_session_init() == 0);
+    const char *expect_error=getenv("PLAYER_TEST_EXPECT_ERROR");
+    if(expect_error) {
+        post(PLAYER_SESSION_PLAY_PATH,0,"@embedded");
+        for(unsigned i=0;i<5000u && snapshot.state!=PLAYER_SESSION_ERROR;i++) step(1);
+        assert(snapshot.state==PLAYER_SESSION_ERROR && snapshot.error_code==(!strcmp(expect_error,"format")?-ENOTSUP:atoi(expect_error)));
+        assert(!snapshot.resources_pinned && !allocations && !file.open && !audio.session_active);
+        post(PLAYER_SESSION_STOP,0,NULL);
+        assert(snapshot.state==PLAYER_SESSION_IDLE && !allocations);
+        printf("PASS expected session rejection %s\n",expect_error);free(avi);return 0;
+    }
+    if(getenv("PLAYER_TEST_STOP_FORMAT")) {
+        post(PLAYER_SESSION_PLAY_PATH,0,"@embedded");
+        for(unsigned i=0;i<5000u && !(first_ready_seen && geometry_in_progress);i++) step(1);
+        assert(first_ready_seen && geometry_in_progress && !audio_starts);
+        post(PLAYER_SESSION_STOP,0,NULL);
+        assert(snapshot.state==PLAYER_SESSION_IDLE && !allocations && !file.open && !geometry_in_progress);
+        puts("PASS STOP during actual READY format ACK releases all resources");free(avi);return 0;
+    }
     if (argc >= 4) {
         uint32_t expected_samples = (uint32_t)strtoul(argv[3], NULL, 10);
         unsigned expected_last = argc >= 6 ? (unsigned)atoi(argv[5]) : expected_video_frames - 1u;
@@ -513,17 +592,22 @@ int main(int argc, char **argv)
     post(PLAYER_SESSION_STOP, 0, NULL);
     assert(snapshot.state == PLAYER_SESSION_IDLE && !snapshot.resources_pinned && allocations == 0);
     geometry_busy_calls = 3;
+    unsigned opens_before_pending = video_codec_opens;
     post(PLAYER_SESSION_PLAY_PATH, 0, "0:/picture.avi");
     assert(snapshot.state == PLAYER_SESSION_LOADING && geometry_in_progress);
+    assert(!video_codec_running && !seed_geometry_ready && session_memalign_calls==2u && allocations==2u);
     post(PLAYER_SESSION_STOP, 0, NULL);
     assert(snapshot.state == PLAYER_SESSION_IDLE && !allocations && !geometry_in_progress);
+    assert(video_codec_opens==opens_before_pending); /* STOP ACK never needs decoder allocation. */
     geometry_busy_calls = 3;
     post(PLAYER_SESSION_PLAY_PATH, 0, "0:/picture.avi");
     assert(snapshot.state == PLAYER_SESSION_LOADING && geometry_in_progress);
+    assert(!video_codec_running && !seed_geometry_ready && session_memalign_calls==2u && allocations==2u);
     post(PLAYER_SESSION_PLAY_PATH, 0, "0:/sound.wav");
     wait_state(PLAYER_SESSION_ENDED);
     post(PLAYER_SESSION_STOP, 0, NULL);
     assert(snapshot.state == PLAYER_SESSION_IDLE && !allocations && !geometry_in_progress);
+    assert(video_codec_opens==opens_before_pending); /* Replacing an unready route stays decoder-free. */
     post(PLAYER_SESSION_PLAY_PATH, 0, "0:/picture.avi");
     wait_state(PLAYER_SESSION_PLAYING);
     now_us += 200000u; /* Late: decode every P frame, skip only presentation. */

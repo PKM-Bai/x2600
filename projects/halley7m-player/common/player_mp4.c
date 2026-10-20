@@ -235,6 +235,24 @@ static int parse_esds(struct track *t, const uint8_t *p, uint32_t bytes)
     }
     return PLAYER_MEDIA_BAD_FORMAT;
 }
+static int parse_colr(struct player_mp4 *m, struct track *t, const struct box *b)
+{
+    uint8_t h[11]; uint32_t type,matrix; uint64_t bytes=b->end-b->data; int r;
+    r=payload(m,b,h,4); if(r) return r;
+    type=be32(h);
+    /* ICC profiles and unrecognized colour types require a different colour
+     * pipeline. Leave properties unknown without reading the profile body. */
+    if(type!=FCC('n','c','l','x') && type!=FCC('n','c','l','c')) return 0;
+    if(bytes!=(type==FCC('n','c','l','x')?11u:10u)) return PLAYER_MEDIA_BAD_FORMAT;
+    r=payload(m,b,h,(uint32_t)bytes); if(r) return r;
+    if(type==FCC('n','c','l','x') && (h[10]&0x7fu)) return PLAYER_MEDIA_BAD_FORMAT;
+    matrix=be16(h+8);
+    t->info.matrix_coefficients=matrix;
+    t->info.colour_primaries=be16(h+4);
+    t->info.transfer_characteristics=be16(h+6);
+    t->info.full_range=type==FCC('n','c','l','x')?(int32_t)(h[10]>>7):-1;
+    return 0;
+}
 static int parse_stsd(struct player_mp4 *m, struct track *t, const struct box *b)
 {
     struct box sample,child; uint8_t h[40]; uint64_t pos; uint32_t kind=t->info.codec; int r,found=0;
@@ -265,6 +283,15 @@ static int parse_stsd(struct player_mp4 *m, struct track *t, const struct box *b
             else if(kind==PLAYER_MP4_AAC_LC && child.type==FCC('e','s','d','s')) r=parse_esds(t,t->config,t->info.config_bytes);
             else r=PLAYER_MEDIA_BAD_FORMAT;
             if(r) return r;
+        }
+        if(kind==PLAYER_MP4_H264 && child.type==FCC('c','o','l','r')) {
+            r=parse_colr(m,t,&child); if(r) return r;
+        }
+        if(kind==PLAYER_MP4_H264 && child.type==FCC('p','a','s','p')) {
+            if(child.end-child.data!=8u) return PLAYER_MEDIA_BAD_FORMAT;
+            r=payload(m,&child,h,8); if(r) return r;
+            t->info.sar_num=be32(h); t->info.sar_den=be32(h+4);
+            if(!t->info.sar_num || !t->info.sar_den) return PLAYER_MEDIA_BAD_FORMAT;
         }
         if(child.type==FCC('s','i','n','f')) return PLAYER_MEDIA_UNSUPPORTED;
         pos=child.end;
@@ -457,6 +484,8 @@ static int parse_trak(struct player_mp4 *m, const struct box *trak)
     else return 0;
     t=&m->tracks[kind]; if(t->present) return PLAYER_MEDIA_UNSUPPORTED;
     t->present=1; t->info.codec=kind?PLAYER_MP4_AAC_LC:PLAYER_MP4_H264;
+    t->info.matrix_coefficients=2u; t->info.full_range=-1;
+    t->info.colour_primaries=2u; t->info.transfer_characteristics=2u;
     r=find_box(m,trak->data,trak->end,FCC('t','k','h','d'),&b); if(r) return r<0?r:PLAYER_MEDIA_BAD_FORMAT;
     r=payload(m,&b,h,24); if(r) return r;
     if(h[0]>1u) return PLAYER_MEDIA_UNSUPPORTED;

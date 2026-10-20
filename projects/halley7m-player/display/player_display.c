@@ -1,5 +1,6 @@
 /* X2600 NV12 composer backend. GPL-2.0-or-later. */
 #include "player_display.h"
+#include "player_display_format.h"
 #include "player_rotator.h"
 #include "panel_zc502.h"
 #include "platform_runtime.h"
@@ -16,6 +17,8 @@
 static LCD_HandleTypeDef lcd __attribute__((aligned(64)));
 static struct lay_cfg layers[MAX_LAYER_DESC_NUM];
 static player_video_layout_t layout;
+static player_display_format_plan_t video_format, requested_format;
+static uint32_t canvas_width, canvas_height;
 static volatile player_display_frame_t pending_frame, scanout_frame;
 static volatile player_display_completion_t completed;
 static volatile player_display_stats_t counters;
@@ -406,6 +409,10 @@ int player_display_init(void)
     if (clocks_enabled) return -EBUSY;
     int result = player_video_layout_nv12(720, 1280, &layout);
     if (result) return result;
+    player_video_format_t initial={720,1280,720,1280,0,0,1,1,6,1,2,2};
+    result=player_display_plan_format(&initial,&video_format);
+    if(result) return result;
+    canvas_width=720; canvas_height=1280;
     memset(&lcd, 0, sizeof(lcd));
     memset(layers, 0, sizeof(layers));
     memset((void *)&counters, 0, sizeof(counters));
@@ -505,21 +512,46 @@ uint32_t player_display_overlay_stride(void)
 
 int player_display_set_video_geometry(uint32_t width, uint32_t height)
 {
-    if (!initialized || !running) return -ENODEV;
     if (!((width==720 && height==1280) || (width==1280 && height==720))) return -EINVAL;
+    player_video_format_t format={width,height,width,height,0,0,1,1,6,1,2,2};
+    return player_display_set_video_format(&format);
+}
+
+static void apply_video_format(const player_display_format_plan_t *plan)
+{
+    video_format=*plan; layout=plan->memory;
+    canvas_width=plan->canvas_width; canvas_height=plan->canvas_height;
+    layers[0].source_w=layout.width; layers[0].source_h=layout.height;
+    layers[0].stride=layers[0].uv_stride=layout.stride;
+    layers[1].source_w=canvas_width; layers[1].source_h=canvas_height;
+    layers[1].stride=layers[1].uv_stride=canvas_width;
+}
+
+int player_display_set_video_format(const player_video_format_t *format)
+{
+    player_display_format_plan_t plan;
+    if (!initialized || !running) return -ENODEV;
+    int checked=player_display_plan_format(format,&plan);
+    if(checked) return checked;
+    uint32_t width=plan.canvas_width,height=plan.canvas_height;
     if (route_error) return route_error;
     if (!route_phase) {
-        if (layout.width==width && layout.height==height) return 0;
+        if (player_display_same_format(&video_format.format,format)) return 0;
         if (scanout_valid || completion_valid || (pending_valid && pending_video_change)) return -EBUSY;
+        if(canvas_width==width && canvas_height==height) {
+            taskENTER_CRITICAL(); apply_video_format(&plan); taskEXIT_CRITICAL();
+            return 0;
+        }
         taskENTER_CRITICAL();
         requested_width=width; requested_height=height;
+        requested_format=plan;
         if (++route_generation==0) ++route_generation;
         route_phase=1; route_ack=gui_attached ? 0u : 1u;
         video_active=false;
         route_deadline=platform_time_us()+1000000u;
         taskEXIT_CRITICAL();
     }
-    if (width!=requested_width || height!=requested_height) return -EBUSY;
+    if (!player_display_same_format(format,&requested_format.format)) return -EBUSY;
     if (platform_time_us()>=route_deadline) return route_error=-ETIMEDOUT;
     if (route_phase==1) {
         if (route_ack!=1 || pending_valid || overlay_queued || overlay_completion_valid) return -EAGAIN;
@@ -530,15 +562,8 @@ int player_display_set_video_geometry(uint32_t width, uint32_t height)
         if (width==1280) result=start_rotator();
         else free_rotator();
         if (result) return route_error=result;
-        result=player_video_layout_nv12(width,height,&layout);
-        if (result) return route_error=result;
         rotated=width==1280;
-        for (unsigned i=0;i<2;++i) {
-            layers[i].source_w=layers[i].scale_w=width;
-            layers[i].source_h=layers[i].scale_h=height;
-        }
-        layers[0].stride=layers[0].uv_stride=layout.stride;
-        layers[1].stride=layers[1].uv_stride=width;
+        apply_video_format(&requested_format);
         overlay_valid=false; scanout_argb=0;
         CLEAR_BIT(lcd.Instance->DC_COM_CONFIG,3u);
         if (rotated) SET_BIT(lcd.Instance->DC_COM_CONFIG,1u);
@@ -575,28 +600,57 @@ static int submit(bool video_change, const player_display_frame_t *frame,
     pending_overlay_change = ui_change;
     if (frame) pending_frame = *frame;
     else if (scanout_valid) pending_frame = scanout_frame;
-    pending_y = pending_video_enabled ? CPHYSADDR(pending_frame.nv12) : 0;
+    uint32_t source_base=pending_video_enabled?CPHYSADDR(pending_frame.nv12):0;
+    pending_y = pending_video_enabled ? source_base+video_format.y_offset : 0;
     pending_argb = ui_change ? argb : (overlay_valid ? scanout_argb : 0);
     pending_serial = serial;
     layers[0].lay_en = pending_video_enabled;
-    layers[0].addr = pending_y;
-    layers[0].uv_addr = pending_y + layout.uv_offset;
+    layers[0].addr = source_base;
+    layers[0].uv_addr = source_base + layout.uv_offset;
     layers[1].lay_en = pending_argb != 0;
     layers[1].addr = pending_argb;
-    /* HAL_COMP_Init mutates crop/scale/position in place. Never carry native
-     * 720-wide GUI crop into a 1280-wide writeback: that enables a scaler and
-     * its panel-width position clamp can underflow. Both sources already have
-     * the composition geometry; request full-size pixels with no scaling. */
-    for (unsigned i=0;i<2;++i) {
-        layers[i].src_crop_x=layers[i].src_crop_y=0;
-        layers[i].src_crop_w=layout.width; layers[i].src_crop_h=layout.height;
-        layers[i].disp_pos_x=layers[i].disp_pos_y=0;
-        layers[i].scale_w=layers[i].scale_h=0;
-        layers[i].lay_scale_en=0;
-    }
+    /* Rebuild every field: the HAL mutates crop/scale/position. Its panel
+     * coordinate clamp is overridden below for the fixed logical canvas. */
+    layers[0].src_crop_x=video_format.format.crop_left;
+    layers[0].src_crop_y=video_format.format.crop_top;
+    layers[0].src_crop_w=video_format.format.visible_width;
+    layers[0].src_crop_h=video_format.format.visible_height;
+    layers[0].disp_pos_x=video_format.x; layers[0].disp_pos_y=video_format.y;
+    layers[0].scale_w=video_format.scale_enabled?video_format.width:0;
+    layers[0].scale_h=video_format.scale_enabled?video_format.height:0;
+    layers[0].lay_scale_en=video_format.scale_enabled;
+    layers[1].src_crop_x=layers[1].src_crop_y=0;
+    layers[1].src_crop_w=canvas_width; layers[1].src_crop_h=canvas_height;
+    layers[1].disp_pos_x=layers[1].disp_pos_y=0;
+    layers[1].scale_w=layers[1].scale_h=layers[1].lay_scale_en=0;
     if (HAL_COMP_Init(&lcd, layers) != HAL_OK) {
         if (rotated) (void)player_rotator_cancel_write(&rotator,pending_rotator);
         return -EIO;
+    }
+    {
+        unsigned index=lcd.CompData.comp_next_frame;
+        uint32_t *source=(uint32_t *)&lcd.CompData.LayerDesc[index][0];
+        uint32_t *frame_words=(uint32_t *)&lcd.CompData.FrameDesc[index];
+        /* PM11.4.2: explicit source/crop and destination geometry. GUI never
+         * scales. Do not alter pdata: DSI must remain native 720x1280. */
+        source[0]=video_format.format.visible_width|(video_format.format.visible_height<<16);
+        source[2]=pending_y;
+        source[3]=pending_video_enabled && video_format.scale_enabled ?
+                  video_format.width|(video_format.height<<16):0;
+        source[6]=video_format.x|(video_format.y<<16);
+        source[7]=pending_video_enabled?video_format.coef_x:0;
+        source[8]=pending_video_enabled?video_format.coef_y:0;
+        source[9]=layout.stride;
+        source[10]=pending_video_enabled?source_base+video_format.uv_offset:0;
+        source[11]=layout.stride;
+        frame_words[9]=(frame_words[9]&~1u)|
+                       (pending_video_enabled && video_format.scale_enabled?1u:0u);
+        /* PM11.5.3.13 Q10 CSC. HAL's fixed MODE2 is superseded for this
+         * transaction before descriptors are started. Limited subtracts16. */
+        WRITE_REG(lcd.Instance->CSC_MULT_YRV,video_format.mult_yrv);
+        WRITE_REG(lcd.Instance->CSC_MULT_GUGV,video_format.mult_gugv);
+        WRITE_REG(lcd.Instance->CSC_MULT_BU,video_format.mult_bu);
+        WRITE_REG(lcd.Instance->CSC_SUB_YUV,video_format.sub_yuv);
     }
     pending_descriptor = CPHYSADDR(&lcd.CompData.FrameDesc[lcd.CompData.comp_next_frame]);
     WRITE_REG(lcd.Instance->DC_CLR_ST, DC_INTC_INT_EOD_0);
@@ -780,7 +834,13 @@ void player_display_get_stats(player_display_stats_t *stats)
     stats->scanout = scanout_valid;
     stats->overlay_scanout = overlay_valid;
     stats->video_active = video_active;
-    stats->width=layout.width; stats->height=layout.height;
+    stats->width=canvas_width; stats->height=canvas_height;
+    stats->format=video_format.format;
+    stats->source_stride=layout.stride;
+    stats->viewport_x=video_format.x; stats->viewport_y=video_format.y;
+    stats->viewport_width=video_format.width; stats->viewport_height=video_format.height;
+    stats->matrix=video_format.matrix; stats->full_range=video_format.full_range;
+    stats->matrix_inferred=video_format.matrix_inferred; stats->range_inferred=video_format.range_inferred;
     stats->route_generation=route_generation; stats->route_phase=route_phase;
     stats->route_error=route_error;
     taskEXIT_CRITICAL();
@@ -804,6 +864,15 @@ void player_display_print_status(void)
            (unsigned long)timing.writebacks,(unsigned long)timing.rotator_sof,
            (unsigned long)timing.rotator_eof,(unsigned long)timing.rotator_repeats,(unsigned long)timing.rotator_errors,
            (unsigned long)timing.rotator_held_sof,(unsigned long)timing.rotator_late_binds);
+    printf("DISPLAY_FORMAT coded=%lux%lu visible=%lux%lu crop=%lu,%lu stride=%lu sar=%lu/%lu viewport=%lu,%lu,%lu,%lu matrix_input=%lu matrix=%lu range_input=%ld full=%lu matrix_inferred=%lu range_inferred=%lu\n",
+           (unsigned long)timing.format.coded_width,(unsigned long)timing.format.coded_height,
+           (unsigned long)timing.format.visible_width,(unsigned long)timing.format.visible_height,
+           (unsigned long)timing.format.crop_left,(unsigned long)timing.format.crop_top,
+           (unsigned long)timing.source_stride,(unsigned long)timing.format.sar_num,(unsigned long)timing.format.sar_den,
+           (unsigned long)timing.viewport_x,(unsigned long)timing.viewport_y,
+           (unsigned long)timing.viewport_width,(unsigned long)timing.viewport_height,
+           (unsigned long)timing.format.matrix_coefficients,(unsigned long)timing.matrix,(long)timing.format.full_range,
+           (unsigned long)timing.full_range,(unsigned long)timing.matrix_inferred,(unsigned long)timing.range_inferred);
     if (rotator_enabled) {
         rotator_event_t events[16], first;
         unsigned count;
@@ -871,7 +940,7 @@ void player_display_print_status(void)
            PWM_Instance->PWMIDL, PWM_Instance->PWMCCn[15], PWM_Instance->PWMWCn[15]);
     printf("DISPLAY_CPM clkgr0=%08lx clkgr1=%08lx pwmcdr=%08lx lpcdr=%08lx\n",
            CPM_Instance->CLKGR0, CPM_Instance->CLKGR1, CPM_Instance->PWMCDR, CPM_Instance->LPCDR);
-    if (!clocks_enabled) return;
+    if (!clocks_enabled) { printf("DISPLAY_END result=0\n"); return; }
     const uint16_t dpu_offsets[] = {
         0x0000, 0x1000, 0x2004, 0x200c, 0x2010, 0x2014, 0x2018,
         0x2204, 0x3110, 0x8000, 0x9000, 0x9004, 0x9008, 0x900c, 0x9010, 0x9014
@@ -895,4 +964,61 @@ void player_display_print_status(void)
     for (unsigned i = 0; i < 16; ++i)
         printf("DISPLAY_DESC %u frame=%08lx layer0=%08lx\n", i,
                (unsigned long)desc[i], (unsigned long)layer[i]);
+    printf("DISPLAY_END result=0\n");
+}
+
+/* Read-only sampling diagnostic. Keep the completed CUSTOM surface pinned
+ * while taking a bounded snapshot; never sample the currently writing slot. */
+#include "player_display_sample.h"
+
+#ifndef PLAYER_DISPLAY_SAMPLE_READ_WORD
+#define PLAYER_DISPLAY_SAMPLE_READ_WORD(physical) \
+    (*(const volatile uint32_t *)(uintptr_t)((physical) | 0xa0000000u))
+#endif
+
+static int display_sample_offset(uint32_t width, uint32_t height, uint32_t x, uint32_t y,
+                                 uint32_t model, uint32_t *offset)
+{
+    if (!offset || !width || !height || (width & 127u) || (height & 7u) ||
+        width > 2047u || height > 2047u || x >= width || y >= height) return -EINVAL;
+    if (model == PLAYER_DISPLAY_SAMPLE_CUSTOM512)
+        *offset = ((x / 128u) * height + y) * 512u + (x % 128u) * 4u;
+    else if (model == PLAYER_DISPLAY_SAMPLE_LINEAR) *offset = (y * width + x) * 4u;
+    else return -EINVAL;
+    return 0;
+}
+
+int player_display_sample_custom(const player_display_sample_point_t *points,
+                                 uint32_t count, uint32_t model,
+                                 player_display_sample_t *sample)
+{
+    uint32_t offsets[PLAYER_DISPLAY_SAMPLE_MAX];
+    int slot, result = 0;
+    if (!points || !sample || !count || count > PLAYER_DISPLAY_SAMPLE_MAX ||
+        model > PLAYER_DISPLAY_SAMPLE_LINEAR) return -EINVAL;
+    taskENTER_CRITICAL();
+    if (!initialized || !running || !rotated || !rotator_enabled) result = -ENOTSUP;
+    else if (rotator_stopping || route_phase || route_error || pending_valid || overlay_queued ||
+             video_active || !lcd.CompData.comp_stopped) result = -EAGAIN;
+    slot = rotator.latest_started;
+    if (!result && rotator.layout.bytes < sizeof(uint32_t)) result = -EOVERFLOW;
+    if (!result && (slot < 0 || slot >= (int)PLAYER_ROTATOR_SLOTS)) result = -EAGAIN;
+    if (!result && (!(rotator.slots[slot].flags & (PLAYER_ROT_PRESENT | PLAYER_ROT_LAST)) ||
+                    (rotator.slots[slot].flags & PLAYER_ROT_WRITING))) result = -EAGAIN;
+    for (uint32_t i = 0; !result && i < count; ++i) {
+        result = display_sample_offset(rotator.layout.width, rotator.layout.height,
+                                        points[i].x, points[i].y, model, &offsets[i]);
+        if (!result && offsets[i] > rotator.layout.bytes - sizeof(uint32_t)) result = -EOVERFLOW;
+    }
+    if (!result) {
+        sample->model = model; sample->slot = (uint32_t)slot;
+        sample->sequence = rotator.slots[slot].sequence;
+        sample->physical = rotator.slots[slot].physical; sample->count = count;
+        /* ROT may read the same words concurrently. With the media/GUI task
+         * and ISR retirement excluded, no producer can reuse this held slot. */
+        for (uint32_t i = 0; i < count; ++i)
+            sample->argb[i] = PLAYER_DISPLAY_SAMPLE_READ_WORD(sample->physical + offsets[i]);
+    }
+    taskEXIT_CRITICAL();
+    return result;
 }

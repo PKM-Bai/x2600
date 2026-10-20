@@ -10,7 +10,8 @@
 typedef enum { HAL_OK, HAL_ERROR } HAL_StatusTypeDef;
 typedef struct { unsigned long DC_INT_FLAG, DC_INTC, DC_CTRL, FRM_DES_READ;
     unsigned long LAY0_DES_READ, LAY1_DES_READ, LAY0_SITE, LAY1_SITE, DC_CLR_ST;
-    unsigned long DC_FRM_CFG_ADDR, DC_FRM_CFG_CTRL, DC_COM_CONFIG, WDMA_SITE; } DPU_TypeDef;
+    unsigned long DC_FRM_CFG_ADDR, DC_FRM_CFG_CTRL, DC_COM_CONFIG, WDMA_SITE;
+    unsigned long CSC_MULT_YRV, CSC_MULT_GUGV, CSC_MULT_BU, CSC_SUB_YUV; } DPU_TypeDef;
 typedef struct { unsigned long LPCLK_CTRL, PWR_UP, PHY_RSTZ, VID_MODE_CFG; } DSI_TypeDef;
 typedef struct { unsigned long CLKGR0, CLKGR1, PWMCDR, LPCDR, SRBC; } CPM_TypeDef;
 typedef struct { unsigned long PxPINL, PxINT, PxMSK, PxPAT1, PxPAT0; } GPIO_TypeDef;

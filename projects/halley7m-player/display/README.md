@@ -168,3 +168,16 @@ AVIX90/90、STOP后heap恢复45760344B、音频关闭，GUI354/354且错误0；�
 延后绑定与缺EOF/未知地址/旧token、GUI-only、SDK可变裁剪、先停下游会阻塞GEN_STOP
 的模型、native回切及停止超时pin；真实LVGL覆盖GUI模式ACK和脏区同步，输出六张
 截图。完整主机回归及真实MIPS显示静态库编译均通过；上述实板结果独立于主机模型记录。
+
+
+## 常见尺寸与色彩元数据
+
+`player_display_set_video_format()`区分coded内存和visible图像，按SAR计算DAR，在固定1280×720或720×1280画布内等比居中；coded右/下padding不进入可见图像。每个NV12描述符在HAL初始化后重新填写裁剪地址、实际可见尺寸、位置、缩放系数与scale-enable，避免HAL仍按原生720宽限制横屏位置。GUI覆盖层继续使用完整画布和straight alpha，视频格式等待沿用原有GUI route握手。
+
+跨画布切换先异步完成旧路线停止、GUI mode/ack和新布局，再分配九槽NV12及codec工作区，避免宽幅GUI尚持有CUSTOM时又申请下一会话的大块解码内存。STOP遇到尚未完成的route请求会先完成该握手，再撤掉视频并退休其持有；超时仍保留相关资源。媒体STOP保留GUI：宽幅路线的两块ARGB像素共7,372,800B、三块CUSTOM像素共11,059,200B，合计18,432,000B；另有163,840B LVGL行绘制缓冲、512KiB LVGL内存池，以及对齐余量和对象开销。切回native后释放三块CUSTOM，两块GUI表面仍常驻，只有整体显示/GUI退出才分别释放各自资源。因此STOP后的堆基线需匹配画布和保留的文件名，不能假定每次STOP都会释放CUSTOM。
+
+CSC支持601/709各自limited/full，limited减Y16，full减Y0，UV均减128。SPS已知元数据优先于MP4后备信息；未声明的矩阵/范围按SD601/HD709及limited推断，诊断保留推断标记。原AVI显式601full保持原契约。格式中途变化明确退出。普通右/下宏块裁剪已接通，任意非最小coded画布的左裁剪不作通用支持。
+
+`display sample <model> <x y ...>`只在会话ENDED时读取最多16个仍被持有、没有写入中的CUSTOM像素；不修改图层或DMA所有权。model0为实板核对的512字节块列主序：`((x/128)*height+y)*512+(x%128)*4`；model1仅用于原始线性地址诊断。原生路线没有CUSTOM写回，明确返回不支持。显式`display`输出最后包含`DISPLAY_END`，主机等待该行后再发长取样命令，避免诊断打印期间UART接收FIFO溢出。
+
+颜色验收使用PC实际解码末帧的色条/灰阶/黑边期望值，逐通道容差2。元数据检查、硬解NV12 CRC、DPU写回RGB以及人工屏幕检查分别记录；读取到的写回像素不等于测得屏幕光学颜色或声光偏差。复现入口为`scripts/make-player-color-reference.py`与`scripts/run-player-geometry-board.py --check-csc`。

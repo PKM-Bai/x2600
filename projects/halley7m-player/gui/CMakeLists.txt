@@ -63,8 +63,23 @@ if(PLAYER_GUI_HOST_TESTS)
     target_link_libraries(player_gui_test PRIVATE player_gui)
     add_executable(player_display_test tests/player_display_test.c
         "${CMAKE_CURRENT_SOURCE_DIR}/../display/player_display.c"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../display/player_display_format.c"
         "${CMAKE_CURRENT_SOURCE_DIR}/../display/player_rotator.c"
         "${CMAKE_CURRENT_SOURCE_DIR}/../common/player_video.c")
+    add_executable(player_display_format_test "${PLAYER_GUI_WORKSPACE}/tests/player_display_format_test.c"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../display/player_display_format.c"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../common/player_video.c")
+    add_executable(player_video_format_resolve_test "${PLAYER_GUI_WORKSPACE}/tests/player_video_format_resolve_test.c"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../common/player_video.c")
+    foreach(format_target player_display_format_test player_video_format_resolve_test)
+        target_include_directories(${format_target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../display"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../common")
+        if(MSVC)
+            target_compile_options(${format_target} PRIVATE /utf-8 /W4 /WX /UNDEBUG)
+        else()
+            target_compile_options(${format_target} PRIVATE -Wall -Wextra -Werror -UNDEBUG)
+        endif()
+    endforeach()
     add_executable(player_rotator_test "${CMAKE_CURRENT_SOURCE_DIR}/../display/tests/player_rotator_test.c"
         "${CMAKE_CURRENT_SOURCE_DIR}/../display/player_rotator.c")
     target_include_directories(player_rotator_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../display")

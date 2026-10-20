@@ -53,12 +53,12 @@ def video_edit(data, support, *, shift_ticks=0, duration_ms=None, remove=False):
     return changed, previous_start
 
 
-def main():
-    output = ROOT / 'build/player-host/session'
+def build_host(output=None):
+    output = Path(output) if output is not None else ROOT / 'build/player-host/session'
     output.mkdir(parents=True, exist_ok=True)
     includes = [SOURCE / 'tests', SOURCE, SOURCE.parent / 'common',
                 SOURCE.parent / 'codec', SOURCE.parent / 'display', SOURCE.parent / 'storage',
-                SOURCE.parent / 'audio-decode']
+                ROOT / 'projects/halley7m-player/audio-decode']
     environment = os.environ.copy()
     if os.name == 'nt':
         spec = importlib.util.spec_from_file_location('amp_support', ROOT / 'scripts/test-player-amp.py')
@@ -78,8 +78,8 @@ def main():
     common = SOURCE.parent / 'common'
     # Compile the real codec libraries so compressed lifecycle cases exercise
     # the same PCM trimming/resampling path as the MIPS session.
-    decode_build = ROOT / 'build/player-session-audio-host'
-    subprocess.run(['cmake', '-S', str(SOURCE.parent / 'audio-decode'), '-B', str(decode_build),
+    decode_build = output / 'audio-decode'
+    subprocess.run(['cmake', '-S', str(ROOT / 'projects/halley7m-player/audio-decode'), '-B', str(decode_build),
                     '-G', 'Ninja', '-DCMAKE_BUILD_TYPE=Release', '-DCMAKE_MSVC_DEBUG_INFORMATION_FORMAT=',
                     '-DCMAKE_C_FLAGS_DEBUG=', '-DCMAKE_C_FLAGS_RELEASE=/O2 /DNDEBUG' if os.name == 'nt' else '-DCMAKE_C_FLAGS_RELEASE=-O2 -DNDEBUG'],
                    env=environment, check=True)
@@ -90,7 +90,8 @@ def main():
         'session_core_test': [SOURCE / 'tests/session_core_test.c', common / 'player_session_core.c'],
         'session_test': [SOURCE / 'tests/session_test.c', SOURCE / 'player_session.c',
                          common / 'player_session_core.c', common / 'player_media.c', common / 'player_video.c',
-                         common / 'player_source.c', common / 'player_mp4.c'],
+                         common / 'player_source.c', common / 'player_mp4.c',
+                         SOURCE.parent / 'display/player_display_format.c'],
     }
     executables = []
     for name, sources in groups.items():
@@ -102,6 +103,11 @@ def main():
         command += ['/Fe:' + str(executable)] if os.name == 'nt' else ['-o', str(executable)]
         subprocess.run(command, cwd=output, env=environment, check=True)
         executables.append(executable)
+    return output, executables, base, libs, environment
+
+
+def main():
+    output, executables, _, _, _ = build_host()
     subprocess.run([str(executables[0])], check=True)
     ffmpeg = ROOT / 'tools/ffmpeg/bin' / ('ffmpeg.exe' if os.name == 'nt' else 'ffmpeg')
     if not ffmpeg.is_file():
