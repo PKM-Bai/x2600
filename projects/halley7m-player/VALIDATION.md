@@ -1,5 +1,28 @@
 # 播放器实施验收记录
 
+## 2026-10-20：R9更新Flash与自动启动检查
+
+将`7e7d61a`对应且用户已目视确认的冻结R9安装到原NOR应用范围。紧凑包
+1951392B/CRC `d4131fe7`原样嵌入，追加375136B FF形成2326528B/CRC `3d7e43a0`，
+SHA256 `52e79b4d8dddfd97cdc2073105efeeee5da03d92ab788e4cc9b88623dd88e83c`。
+核验旧R8完整应用区与环境后擦写，全部2326528字节回读一致，环境及持久启动命令
+通过；SPL/U-Boot代码CRC `3a3c3918`、rootfs CRC `8618c73f`保持不变。
+
+写入后由NOR自动加载，独立查询确认初始IDLE、媒体库、音频inactive及默认7%。
+吉他MP4首段`12960/0`有效样本时已有115750816us时长，随后控制条隐藏；暂停后
+控制条常显、时长不变，音频欠载/DMA/队列/FIFO错误均0。短播134帧解码、130呈现、
+drop/late4/4、max_late61000us，如实记录；STOP后资源pinned0及音频inactive。
+再次软件复位从NOR启动后停在媒体库，双核active、GUI1/1、错误0，音频关闭。
+R9本轮未做物理断电冷启，安装JSON保留`cold_boot_verified=false`。
+安装身份、产物路径和下一次previous参数见[NOR安装说明](NOR_INSTALL.md)。
+
+| 本地证据（`build/player-ui-fixes-20261020`） | SHA256 |
+| --- | --- |
+| `flash-install.log` | `b8cd01121c6e3b91dce0dbbc57e103ff4617989dfec4e5a8c14b9b23aff77b2e` |
+| `flash-install.json` | `b30a00f40776101f1633a772a928137b5a49c43bbb5244aed16c35e349ebcf60` |
+| `nor-smoke-board.log` | `4a4254dc8c03e84301cbdc3bf7cba873c8c4274717f59e9fbf882e5f4d48019e` |
+| `nor-smoke-board.json` | `9486f291b5c38b99c97284b62954e2b380ef556fef22d3e98e2c914a6b69e702` |
+
 ## 2026-10-20：R9播放控制条隐藏与提前总时长（RAM验证）
 
 修复播放页缺少空闲隐藏逻辑：仅视频PLAYING时约3秒无按键隐藏上下栏、进度条和

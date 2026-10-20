@@ -1,10 +1,40 @@
 # 播放器 NOR 安装与启动
 
-当前NOR为2026-10-20更新的兼容性R8版本，包含真实时间戳、Main/High、CABAC、
-B帧、常见尺寸/SAR及601/709色彩处理。更新源为已完成RAM验收的冻结产物，
-没有重新构建或修改其代码字节；默认音量7%，启动音频关闭。
+当前NOR为2026-10-20更新的R9，修复播放控制条空闲隐藏/按键唤出和总时长显示，
+沿用R8的真实时间戳、Main/High、CABAC、B帧、常见尺寸/SAR及601/709色彩处理。
+更新源为已完成RAM自动板测及用户目视确认的冻结产物，默认音量7%，启动音频关闭。
 
-## 当前安装：兼容性R8
+## 当前安装：R9播放UI与时长修复
+
+| 项目 | 值 |
+| --- | --- |
+| 对应功能源码 | `7e7d61a` |
+| 原RAM合包 | 1951392B，CRC32 `d4131fe7` |
+| 原RAM SHA256 | `17aae0405f08bc2864585b61de0699220fd83f33c7016c6b0ff8471a115c869f` |
+| NOR安装包 | 2326528B / `0x238000`，CRC32 `3d7e43a0` |
+| NOR SHA256 | `52e79b4d8dddfd97cdc2073105efeeee5da03d92ab788e4cc9b88623dd88e83c` |
+| 替换的R8安装包 | 2326528B，CRC32 `b8c0bfad` |
+| 应用写入/擦除范围 | `[0x40000,0x278000)`，与上次相同 |
+| 环境区 | `[0x3f000,0x40000)`，保持原启动命令和1秒等待 |
+| 保护区前后CRC | SPL/U-Boot代码 `3a3c3918`；当前rootfs `8618c73f` |
+
+先核验冻结ELF/BIN、BSS边界、原始双份备份、当前R8完整应用区及有效环境，再擦写
+应用范围，全部2326528字节回读比较与CRC通过。原代码包不变，追加375136B FF；
+BSS为`[0x807dc6c0,0x8090e6c0)`，填充末端`0x80838000`在启动清零范围内。
+持久命令仍为`sfcnor read 0x40000 0x238000 0x80600000;go 0x80600000`。
+
+安装后独立核验从NOR自动启动、媒体库、双核、默认7%及音频关闭。吉他MP4开头
+已显示115750816us、音频实际总数仍未知，空闲隐藏/暂停常显通过，音频错误均0。
+本轮短播134帧解码/130呈现、drop/late4/4、max_late61000us，STOP后pinned0、
+音频inactive；随后再次软件复位直接从NOR进入媒体库。未进行物理断电重上电，
+`cold_boot_verified=false`，不把此前R8的冷启动确认迁移到R9。
+
+当前派生包为`build/player-ui-fixes-20261020/nor/halley7m_player_nor.bin`，
+manifest在同目录；安装JSON/log为`build/player-ui-fixes-20261020/flash-install.json/.log`，
+独立启动/播放记录为同目录`nor-smoke-board.log/.json`。散列及RAM验收见
+[验收记录](VALIDATION.md)。这些冻结文件和安装JSON是下一次更新的previous。
+
+## R8安装（历史记录）
 
 | 项目 | 值 |
 | --- | --- |
@@ -100,14 +130,14 @@ ELF核验原文件末端为`0x807d4c20`，其后32B为对齐空隙；BSS范围�
 python scripts/flash-player-nor.py --self-test
 ```
 
-后续版本的本地准备示例（使用当前R8安装作为previous，换用新的output目录）：
+后续版本的本地准备示例（使用当前R9安装作为previous，换用新的output目录）：
 
 ```powershell
 python scripts/flash-player-nor.py `
   --file build/player-riscv-Release/mips/halley7m_player.bin `
   --manifest build/player-riscv-Release/manifest.json `
-  --previous-bin build/player-nor-compat-r8-20261020/halley7m_player_nor.bin `
-  --previous-install build/flash-player-nor-compat-r8-20261020.json `
+  --previous-bin build/player-ui-fixes-20261020/nor/halley7m_player_nor.bin `
+  --previous-install build/player-ui-fixes-20261020/flash-install.json `
   --output build/player-nor-next
 ```
 
@@ -137,4 +167,5 @@ python scripts/flash-player-nor.py `
 `build/player-converted/guitar-player-1280x720.mp4`复制到卡的`multimedia/video`。
 插回开发板后直接上电，由NOR启动新版播放器，再从媒体库选择。
 该副本为1280×720，原比例1280×656加上下黑边；以46ms实际黑帧替代起始空编辑，
-原画面PTS和AAC载荷/PTS均保持。PC全片解码和生产解析通过，实际TF播放待拷卡后测试。
+原画面PTS和AAC载荷/PTS均保持。PC全片解码和生产解析通过，真实TF已完成R9的
+开头时长、控制条隐藏/唤出和暂停回归；本轮片段测试不作为全片零掉帧验收。
