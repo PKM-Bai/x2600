@@ -1,5 +1,38 @@
 # 播放器实施验收记录
 
+## 2026-10-20：横屏MP4实时呈现与native回切通过
+
+R4修正CUSTOM/Rotator重复扫描、残留crop/scale、SOF瞬间站点滞后及停止顺序。
+三秒RAM横屏MP4为90帧全部解码/呈现，drop/late0、144000有效AAC样本完整，
+全部音频错误0。真实TF的两份30秒1280×720 MP4分别带48/44.1kHz双声道AAC，
+各900帧全部解码/呈现、drop/late0、1440000有效样本准确，EOF与STOP状态核对通过。
+原始正式结果为`build/player-formats-mp4-r4-paced-board.log/.json`；
+此前未节流的75B串口长命令丢尾、未开始播放，该次失败日志独立保留，
+工具修复已提交`271c881`，没有覆盖失败或改变固件来迁移测试结果。
+
+宽幅→WAV96017样本→native跨2GiB AVIX的回切也已通过，AVIX为90/90帧、drop/late0、
+144000样本完整且音频错误0；最终IDLE、kind0、pinned0、音频CLOSED/inactive，
+空闲堆45760344B，GUI85绘制/85确认且错误0。两TF MP4首例由native切wide后，
+停止媒体时宽幅GUI仍持有三块CUSTOM，空闲堆减少11060760B；第二例同路线差值0，
+不能把GUI仍持有的输出池当作媒体泄漏。用户已确认横屏末帧089完整、方向颜色正常。
+
+44.1kHz MP4暂停时两次查询均冻结在192960样本，恢复后900/900帧、1440000样本完整，
+drop/late0、音频错误0。独立35秒GUI按键序列在PLAYING启动，暂停20秒后恢复，
+完成菜单/诊断往返1/1次、无abort，视频仍900/900、drop/late0；这属于自动注入。
+最后再次切native AVIX并STOP，空闲堆恢复45760344B、音频关闭，GUI354/354且错误0，
+媒体任务累计最低剩余11322words（45288B）。原始记录分别为
+`build/player-formats-rotation-r4-pause-ui-board.log`、`-ui-cycle-board.log`及
+`-final-native-board.log`；暂停状态启动UI序列被门槛拒绝的原始结果也保留，未算通过。
+
+本轮候选1920032B、CRC `1e71d376`，SHA256
+`2ff6503f4650481d6339c64c21ecbe39e9670f93cd1f1d0977ba9a8abe1553c6`，
+RV35880B、协议4/布局3，保存在`build/player-format-evidence/rotation-r4`。
+RAM上传有板端长度与CRC校验，未写NOR。双核Debug、AMP Release、MIPS owner Release
+均已构建核验；真实Release ELF/BIN及损坏副本17项检查、完整GUI/显示主机回归通过。
+此前十二音频用的是R2候选，下节保留其散列，不将结果无条件记到R4。
+逐轮失败、实际事件相位、统计及日志SHA见[显示实板摘要](display/BOARD_VALIDATION_20261020.md)。
+本轮短片结果不作为新格式30分钟长跑或实际声光偏差数值证明。
+
 ## 2026-10-20：MP3、AAC、M4A 十二组合实板通过
 
 真实TF的MP3、ADTS AAC-LC、M4A各覆盖44.1/48kHz、单/双声道，12个独立约30秒

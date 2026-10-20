@@ -4,12 +4,14 @@
 
 ## 当前状态
 
-新格式扩展正在集成：MP3、AAC-LC/ADTS、M4A 与普通 1280×720 横屏 MP4
-（H.264 Baseline＋AAC）已接入生产会话、音频转换和板端旋转路径，主机真实
-片源与生命周期验证通过；2026-10-20已完成协议v4 RAM启动和真实TF的12个
-MP3/AAC/M4A短片组合，样本准确、音频错误0、逐例停止回收通过，用户确认轮播声音正常。
-普通横屏MP4仍有GUI合成后续写回问题，正在修复，尚未通过视频板测。范围及入口见
-[FORMATS.md](FORMATS.md)。下方 30 分钟记录属于原 AVI/WAV 固件。
+已支持 MP3、AAC-LC/ADTS、M4A 与普通 1280×720 横屏 MP4（H.264 Baseline＋AAC）。
+2026-10-20真实TF的12个MP3/AAC/M4A组合各完成约30秒播放，用户确认轮播声音正常；
+两份30秒横屏MP4分别覆盖44.1/48kHz双声道AAC，各900帧全呈现、drop/late0、
+1440000有效音频样本准确且全部音频错误0。普通横屏MP4无需电脑预旋转。
+宽幅路线切回WAV尾段、native大AVIX及停止回收已通过。编码范围及入口见
+[FORMATS.md](FORMATS.md)，旋转修复与板测证据见[显示实板记录](display/BOARD_VALIDATION_20261020.md)。
+音频十二例与视频两例对应的固件散列分别记录；下方30分钟记录属于原AVI/WAV固件，
+不作为新格式的30分钟长跑证明。
 
 2026-10-19：两架构独立构建、紧凑RAM合包、双FreeRTOS握手和256KiB共享校验通过，小核计时器实测校准为576MHz。FELIX跨3个GOP的90帧Y/UV CRC全部与PC一致；用户确认视频方向、颜色、中文媒体库和长按菜单正常。已接通音频主时钟的AVI/WAV会话、2MiB预读与2MiB包池、LVGL双表面及三键。同步片90帧全呈现，真实TF的96017样本WAV尾段和高运动片前缀暂停恢复已通过。
 
@@ -51,9 +53,9 @@ python scripts/ramload-regba.py --port COM52 --execute --wait-boot --file build/
 
 首次上传时在串口监听就绪后正常复位开发板。已运行播放器诊断程序时，可用 `--reboot-player` 替代 `--wait-boot`，先识别诊断程序再用 WDT0 复位并自动打断 U-Boot。该通路不写 NOR 或持久环境。Linux 版工具链通过 WSL 运行时，系统需要允许当前进程调用 WSL。
 
-正常构建使用`play <UTF-8路径>`、`pause`、`resume`、`stop`、`session`，状态和资源由唯一media/storage worker管理，GUI只发送非阻塞命令。`@embedded`为显式RAM诊断路径，不出现在媒体库；例如`play @embedded`运行受控AVI的完整有声链路。省略`-ProbeMedia`时不嵌入片源并清除旧配置。`session trace`在STOP后导出512条固定RAM时序，`measure begin <秒数> <标签>`开始最多1800秒采样，`measure summary`查看摘要，STOP后`measure dump`导出CSV，长导出逐行保持AMP心跳。
+正常构建使用`play <UTF-8路径>`、`pause`、`resume`、`stop`、`session`，状态和资源由唯一media/storage worker管理，GUI只发送非阻塞命令。`@embedded`为显式RAM诊断路径，不出现在媒体库；例如`play @embedded`运行构建时嵌入片源的完整有声链路。省略`-ProbeMedia`时不嵌入片源并清除旧配置。`session trace`在STOP后导出512条固定RAM时序，`measure begin <秒数> <标签>`开始最多1800秒采样，`measure summary`查看摘要，STOP后`measure dump`导出CSV，长导出逐行保持AMP心跳。
 
-至少1GiB的TF文件在LOADING先建立16KiB簇链映射，容量不足时报告错误；小文件和RAM片源不分配映射表。`session storage`显示建图与实际定位统计，STOP后保留最近文件的记录。集中UART查询可能造成窗口外偶发跳帧，长摘要和CSV均安排在STOP确认后输出；播放性能以冻结的采样窗口和GUI操作记录核验。
+至少1GiB的TF文件，以及需要样本表回读的MP4/M4A，在LOADING先建立16KiB簇链映射，容量不足时报告错误；其他小文件和RAM片源不分配映射表。`session storage`显示建图与实际定位统计，STOP后保留最近文件的记录。集中UART查询可能造成窗口外偶发跳帧，长摘要和CSV均安排在STOP确认后输出；播放性能以冻结的采样窗口和GUI操作记录核验。自动板测入口对长UTF-8命令分块发送，避免串口接收FIFO溢出。
 
 `status`、`heap`、`gui`、`buttons`、`metrics`、`audio`提供显式诊断；`tone`按默认7%播放两秒短音。`ls`、`media`、`tf bench <路径>`等同步探针要求先STOP，不在播放过程中遍历或打印大目录。旧`video <帧数,0=EOF> <路径>`、`video hold/verify/stop`和DSI彩条仅在`-DiagnosticsOnly`启用；`video verify`关闭呈现调度输出全部帧CRC，该模式不能作为音画同步证据。
 
@@ -72,7 +74,15 @@ python scripts/ramload-regba.py --port COM52 --execute --wait-boot --file build/
 
 ## 媒体准备与输入契约
 
-视频由电脑先保持比例补黑，再顺时针预旋转为 720×1280。使用 AVI / H264 FourCC，Baseline L3.1、YUV420、30fps、单参考、无 B 帧、GOP30、Annex B、重复 SPS/PPS 和 AUD；目标/最大/VBV 为 2/3/3Mbit。音频为 48kHz / S16LE / mono PCM；独立音频使用 WAV。支持 AVI/AVIX 顺序跨段，文件小于 4GiB，首版无进度跳转。
+普通1280×720横屏MP4可直接播放，板端旋转到面板原生扫描方向；当前要求H.264
+Baseline≤L3.1、固定30fps、单参考、无B帧/CABAC，配AAC-LC音轨。压缩音频支持
+MP3、ADTS AAC-LC及M4A，8–48kHz、单/双声道，板端转换为48kHz单声道PCM。
+完整限制见[FORMATS.md](FORMATS.md)，不将其他H.264 profile或任意MP4作为已支持范围。
+
+原AVI通路仍由电脑先保持比例补黑，再顺时针预旋转为720×1280，使用H264 FourCC、
+Baseline L3.1、YUV420、30fps、单参考、无B帧、GOP30、Annex B、重复SPS/PPS和AUD；
+目标/最大/VBV为2/3/3Mbit，音频为48kHz/S16LE/mono PCM。独立PCM音频使用WAV。
+支持AVI/AVIX顺序跨段、文件小于4GiB；进度跳转尚未接入。
 
 普通片源用 [prepare-player-media.py](../../scripts/prepare-player-media.py) 转换为 `.avi` 或 `.wav`，也可用 `--validate-only` 检查已有产物。受控验收片源有三个独立入口，脚本只准备PC本地产物，不写TF卡：
 
@@ -88,7 +98,7 @@ python projects/halley7m-player/mips/prepare-acceptance-fixture.py
 python projects/halley7m-player/mips/prepare-avix-fixture.py
 ```
 
-当前TF目录为 `0:/multimedia/video/` 放AVI、`0:/multimedia/audio/` 放WAV；正式长片路径为 `0:/multimedia/video/acceptance-30min.avi`。生成后需另行拷卡，再通过媒体库或 `play <路径>` 打开。大AVIX产物在PC上使用稀疏JUNK区，拷到FAT32后会实际占用2GiB以上；现已实板完成跨2GiB扫描，首轮掉帧问题经CLMT修复后复测90/90、drop/late0，原始失败及复测均保留在`VALIDATION.md`。
+当前TF目录为 `0:/multimedia/video/` 放AVI、MP4，`0:/multimedia/audio/` 放WAV、MP3、AAC、M4A；正式旧格式长片路径为 `0:/multimedia/video/acceptance-30min.avi`。生成后需另行拷卡，再通过媒体库或 `play <路径>` 打开。大AVIX产物在PC上使用稀疏JUNK区，拷到FAT32后会实际占用2GiB以上；现已实板完成跨2GiB扫描，首轮掉帧问题经CLMT修复后复测90/90、drop/late0，原始失败及复测均保留在`VALIDATION.md`。
 
 SW3/A 与 SW4/B 在列表前后选择、播放时调节音量、诊断页滚动；按住350ms后每100ms重复。SW6/Start 短按确认或暂停/继续、诊断返回，长按800ms打开/关闭菜单，长按释放不再短按。连续短按逐次生效，无双击/三击命令。首版不使用蓝牙或触摸。
 

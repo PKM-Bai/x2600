@@ -19,6 +19,7 @@
 #define PLAYER_ROTATOR_EOF (1u << 2)
 #define PLAYER_ROTATOR_SOF (1u << 3)
 #define PLAYER_ROTATOR_ACK (1u << 1)
+#define PLAYER_ROTATOR_FETCH (1u << 4)
 #define PLAYER_ROTATOR_WORKING 1u
 #define PLAYER_ROTATOR_IRQS (PLAYER_ROTATOR_EOF | PLAYER_ROTATOR_SOF | PLAYER_ROTATOR_ACK)
 
@@ -43,7 +44,14 @@ int player_rotator_acquire(player_rotator_t *rot, player_rotator_token_t *token)
 int player_rotator_cancel_write(player_rotator_t *rot, player_rotator_token_t token);
 int player_rotator_written(player_rotator_t *rot, player_rotator_token_t token);
 int player_rotator_queue(player_rotator_t *rot, player_rotator_token_t token);
+/* A SOF at the latest still pinned LAST/PRESENT slot may repeat its address;
+ * it never retires a DMA hold or consumes a different newer queued address. */
 int player_rotator_sof(player_rotator_t *rot, uint32_t read_site);
+/* After FETCH and SOF were observed for this exact queued token, recheck the
+ * debug site outside the SOF ISR. 0=old address/not ready, 1=bound, <0=fault.
+ * An old reader is released only with a separately observed old-frame EOF. */
+int player_rotator_resolve_start(player_rotator_t *rot, player_rotator_token_t token,
+                                 uint32_t read_site, bool old_read_ended);
 int player_rotator_eof(player_rotator_t *rot);
 /* A real DPU output EOD plus a matching observed ROT SOF is required. EOW,
  * FETCH_ADDR and EOF alone cannot acknowledge presentation to the caller. */

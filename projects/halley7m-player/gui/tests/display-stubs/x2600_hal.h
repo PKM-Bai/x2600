@@ -32,6 +32,8 @@ struct lcd_data { int unused; };
 struct lay_cfg {
     unsigned lay_en, lay_z_order, format, color, g_alpha_en, g_alpha_val;
     unsigned source_w, source_h, stride, uv_stride, scale_w, scale_h;
+    unsigned src_crop_x, src_crop_y, src_crop_w, src_crop_h;
+    unsigned disp_pos_x, disp_pos_y, lay_scale_en;
     unsigned domain_multi, addr, uv_addr;
 };
 struct FrameDesc { uint32_t words[16]; };

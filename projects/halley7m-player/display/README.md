@@ -1,8 +1,8 @@
 # NV12 视频与 ARGB GUI 显示适配
 
 复用已点亮的 `panel_zc502.c` 和固定 PHY 时序，DPU 原生扫描 720x1280。
-layer0 为 NV12，固定 stride768、UV offset983040、容量1474560字节；
-layer1 为 straight ARGB8888，stride720、容量3686400字节。
+native 路线的 layer0 为 NV12，stride768、UV offset983040、容量1474560字节；
+layer1 为 straight ARGB8888，stride720、容量3686400字节。普通横屏路线的布局见下文。
 四层 Z 顺序为 `2/3/1/0`，GUI 最上层；即使禁用层也不能复用 Z 顺序。
 真实屏幕黑屏曾由重复 Z 顺序引起，不能以 DPU 读取地址正常代替可见画面验收。
 
@@ -28,7 +28,7 @@ GUI 生产者保留两个表面。`submit_overlay` 返回0后，提交表面与�
 必须保持只读，直到 `poll_overlay_completion` 返回相同非零序号；此时仅旧
 表面可写，新扫描表面继续保持。最多接受一个等待中的 GUI 请求：当前视频
 仍在硬件中时先排队，下个视频提交合并此 GUI。媒体 worker 通过
-`player_display_set_video_active(bool)` 告知连续视频状态：仅 AVI PLAYING 时为 true，
+`player_display_set_video_active(bool)` 告知连续视频状态：AVI/MP4 视频 PLAYING 时为 true，
 此时 GUI 请求一律排队，GUI poll 不另占一次刷新，由下一个视频描述符合并；
 LOADING、PAUSED、ENDED、STOP/error 时为 false，GUI poll 可在硬件空闲后发起
 GUI-only 描述符。默认 false 保留独立 probe 行为，切换标志不会释放任何缓冲。
@@ -78,7 +78,7 @@ mismatch0。首帧背光准备104ms在媒体时钟开始前完成，原始IRQ全
 HAL/RTOS/MMIO测试，覆盖错误EOD、GUI排队合并、GUI-only不伪造视频latch、
 独立完成槽、撤层退休和stop超时pin，并复现 GUI 先于媒体 worker 在 EOD 后 poll
 的竞争，断言 continuous-video 状态下不能增加 GUI-only 硬件提交，暂停/结束则
-恢复独立更新。GUI模块另有真实LVGL渲染和四张截图验证。
+恢复独立更新。GUI模块另有真实LVGL渲染和六张截图验证。
 
 整机 GUI 首次实板已由用户确认中文、方向和菜单正常；同步片首轮音频完成且
 无欠载，但视频90帧仅显示63帧、丢27帧，尚未达到连续30fps。上述视频优先合并
@@ -114,12 +114,57 @@ SDK的 `HAL_COMP_Start` 会清除ROT_SEL，宽幅路线因此自行发布描述�
 
 EOW仅确认匹配描述符/地址的写回结束，FA仅表示取地址；观察目标CUSTOM的SOF及
 地址后，还必须收到实际DPU EOD才产生原有 `has_latched/retired` 完成通知。
-Rotator EOF独立结束读取持有；没有新帧时重投末表面，暂停/ENDED也能GUI-only更新，
-不会增加视频计数。停止先停DPU生产，再等待Rotator ACK/idle后释放CUSTOM池。
-`display`显式查询输出 `DISPLAY_ROUTE/ROT/WB`，运行中没有逐帧UART。
+Rotator EOF独立结束读取持有；硬件会保持扫描末表面，暂停/ENDED也能GUI-only更新，
+不会增加视频计数。停止先禁止新命令，保持DPU显示端消费，GEN_STOP Rotator并等
+ACK/idle后才停DPU、释放CUSTOM池。先停下游可能使Rotator无法完成当前帧。
+停止期间所有表面保持pin，超时仍不释放，不添加quick-stop后备路径。
+目标newlib定义`ETIMEDOUT=116`、`ESTALE=133`，不能按主机errno解释板端`-116`。
 
-`scripts/test-player-gui.py` 已覆盖生产driver宽幅EOW/SOF/EOD区分、三槽生命周期、
-重复扫描、GUI-only、旧路线回切与停止超时pin；真实LVGL覆盖异步暂停/布局ACK、
-重绘及native/logical脏区同步，另输出 `playback-wide.png`。显示与GUI静态库均已
-通过真实MIPS编译。**宽幅CUSTOM/Rotator尚未实板验收**，其SOF/EOD相位、方向、
-连续刷新、30fps与暂停/结束页面更新需在宽幅片源上核验，不能由主机模型推定。
+FA/SOF到达时，RDMA_SITE可能仍指向旧表面。驱动按同一queued token保存FETCH与SOF
+证据，在EOD和非阻塞poll时重读实际站点；只有新地址匹配且旧读取EOF已观察到，
+才转移读取占用，仍须真实EOD才latch。旧表面SOF不会消费不同的新queued，未知地址
+仍报错pin。每次提交还明确重建完整裁剪、零位置并禁用缩放，避免SDK原地修改的
+native crop/scale污染宽幅写回；EOW后将composer标记为已停止的一次性事务。
+
+`display`显式查询输出`DISPLAY_ROUTE/ROT/WB`，`DISPLAY_LOADED`读取硬件加载的
+frame/layer0/layer1，`DISPLAY_WDMA`保留写回站点与pending地址。首次16条
+`DISPLAY_ROT_EVENT`和独立首错保存在固定RAM，运行中没有逐帧UART；W1C后读回STATUS。
+事件中的`us/eod_seq/wb_us/kind`区分原始状态(kind0)和延后地址绑定(kind1)，
+`late_binds`统计绑定次数，不计作视频呈现。
+
+### R4实板结果与范围
+
+R4候选MIPS包为1,920,032B，CRC32 `1e71d376`，SHA256
+`2ff6503f4650481d6339c64c21ecbe39e9670f93cd1f1d0977ba9a8abe1553c6`。
+早期重复SOF错误、GUI裁剪残留和两刷新呈现、回切超时的历史，见
+[r1–r4实板记录](BOARD_VALIDATION_20261020.md)，不以R4结果改写旧候选结论。
+
+- 三秒1280x720 `@embedded` MP4到ENDED：解码/显示90/90、drop0、late0，
+  max_late6666µs；AAC有效样本144000全部完成，音量7%，音频错误和欠载均为0。
+  写回93次、延后绑定92次、旋转错误0；GUI渲染/呈现26/26、错误0。
+- 相位记录中，两次FA/SOF的旧表面站点分别在285µs、295µs后绑定到新表面，
+  此时EOD序号均未增加；下一记录的EOD序号增加且LAST切换到新表面。
+  这支持消除等待下一SOF的额外刷新，FA本身仍不产生呈现。该间隔是站点绑定时间，
+  不是声光同步测量，也不是绑定到呈现的延迟。
+- wide STOP→WAV尾数片96017样本→STOP→native的`>2GiB` AVIX回归通过：
+  WAV全部96017样本完成；native视频解码/显示90/90、drop0、late0、max_late6666µs，
+  音频144000样本完整，各项音频错误为0。最后STOP回到IDLE、kind0、pinned0，
+  音频CLOSED/inactive；heap free45,760,344B，GUI渲染/呈现85/85、错误0、栈余2934words。
+
+原始证据为`build/player-formats-rotation-r4-probe-board.log`和
+`build/player-formats-rotation-r4-native-board.log`。用户已确认宽幅末帧画面完整、
+方向和颜色正常。后续两份TF卡30秒MP4正式复测也均通过：各900帧解码/呈现、
+drop/late0、1440000有效样本完整，音频与旋转错误0，STOP状态正常；见
+`build/player-formats-mp4-r4-paced-board.log/.json`。首次长命令发送失败及工具修复
+另有记录，不覆盖原失败。
+
+44.1kHz MP4暂停时两次查询均冻结在192960样本，恢复后900帧和1440000样本全部
+完成。另一次在PLAYING启动35秒按键序列，暂停20秒后恢复，使菜单/诊断周期落在
+播放中；cycle1/1、无abort，仍900/900且drop/late0、音频错误0。最终再切回native
+AVIX90/90、STOP后heap恢复45760344B、音频关闭，GUI354/354且错误0；三块CUSTOM
+已释放。以上是短片与自动输入证据，不将它记作新格式30分钟长跑或实体按键人工验收。
+
+`scripts/test-player-gui.py` 已覆盖生产driver的EOW/SOF/EOD区分、三槽持有、
+延后绑定与缺EOF/未知地址/旧token、GUI-only、SDK可变裁剪、先停下游会阻塞GEN_STOP
+的模型、native回切及停止超时pin；真实LVGL覆盖GUI模式ACK和脏区同步，输出六张
+截图。完整主机回归及真实MIPS显示静态库编译均通过；上述实板结果独立于主机模型记录。

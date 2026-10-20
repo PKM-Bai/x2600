@@ -87,10 +87,26 @@ int player_rotator_queue(player_rotator_t *r, player_rotator_token_t t)
 
 int player_rotator_sof(player_rotator_t *r, uint32_t site)
 {
-    if (r->reading>=0 || r->queued<0) return -EINVAL;
-    player_rotator_slot_t *s=&r->slots[r->queued];
-    if (site<s->physical || site-s->physical>=r->layout.bytes) return -ESTALE;
-    s->flags=(s->flags&~PLAYER_ROT_QUEUED)|PLAYER_ROT_READING;
+    if (!r) return -EINVAL;
+    player_rotator_slot_t *next=r->queued>=0 ? &r->slots[r->queued] : NULL;
+    if (!next || site<next->physical || site-next->physical>=r->layout.bytes) {
+        /* The display port may scan the held address again without fetching a
+         * new command. Accept only the same fully written, still pinned slot.
+         * This also makes a repeated observation of its SOF harmless: it does
+         * not end a read or release any buffer. A newer queued address remains
+         * queued until its own SOF/site is observed. Never infer a new slot. */
+        int slot=r->reading>=0 ? r->reading : r->latest_started;
+        if (slot<0 || slot>=(int)PLAYER_ROTATOR_SLOTS) return -EINVAL;
+        player_rotator_slot_t *held=&r->slots[slot];
+        if (!(held->flags&(PLAYER_ROT_LAST|PLAYER_ROT_PRESENT)) ||
+            (held->flags&~(PLAYER_ROT_READING|PLAYER_ROT_LAST|PLAYER_ROT_PRESENT))) return -EINVAL;
+        if (site<held->physical || site-held->physical>=r->layout.bytes) return -ESTALE;
+        held->flags|=PLAYER_ROT_READING;
+        r->reading=r->latest_started=slot;
+        return 0;
+    }
+    if (r->reading>=0) return -EINVAL;
+    next->flags=(next->flags&~PLAYER_ROT_QUEUED)|PLAYER_ROT_READING;
     r->reading=r->latest_started=r->queued;
     r->queued=-1;
     return 0;
@@ -102,6 +118,26 @@ int player_rotator_eof(player_rotator_t *r)
     r->slots[r->reading].flags &= ~PLAYER_ROT_READING;
     r->reading=-1;
     return 0;
+}
+
+int player_rotator_resolve_start(player_rotator_t *r, player_rotator_token_t t,
+                                 uint32_t site, bool old_read_ended)
+{
+    player_rotator_slot_t *next=find(r,t);
+    if (!next || r->queued!=(int)t.slot || !(next->flags&PLAYER_ROT_QUEUED)) return -ESTALE;
+    if (site<next->physical || site-next->physical>=r->layout.bytes) {
+        int old=r->reading>=0 ? r->reading : r->latest_started;
+        if (old>=0 && site>=r->slots[old].physical &&
+            site-r->slots[old].physical<r->layout.bytes) return 0;
+        return -ESTALE;
+    }
+    if (r->reading>=0) {
+        if (!old_read_ended) return 0;
+        int result=player_rotator_eof(r);
+        if (result) return result;
+    }
+    int result=player_rotator_sof(r,site);
+    return result ? result : 1;
 }
 
 bool player_rotator_display_ready(const player_rotator_t *r, player_rotator_token_t t)

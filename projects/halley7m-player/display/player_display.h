@@ -34,6 +34,8 @@ typedef struct {
     bool pending, scanout, overlay_scanout, video_active;
     uint32_t width, height, route_generation, route_phase;
     uint32_t writebacks, rotator_sof, rotator_eof, rotator_repeats, rotator_errors;
+    uint32_t rotator_held_sof;
+    uint32_t rotator_late_binds;
     int route_error;
 } player_display_stats_t;
 

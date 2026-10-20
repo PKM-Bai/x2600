@@ -36,51 +36,119 @@ static void *writeback_allocations[PLAYER_ROTATOR_SLOTS];
 static volatile bool rotated, rotator_enabled;
 static bool rotator_irq_registered;
 static volatile bool rotator_stopping, pending_written;
+static bool queued_fetched, queued_start_seen, queued_old_read_ended;
+static player_rotator_token_t queued_start_token;
+static uint32_t pending_writeback_us;
 static bool gui_attached;
 static volatile unsigned route_phase, route_ack;
 static volatile uint32_t route_generation, requested_width, requested_height;
 static volatile int route_error;
 static uint64_t route_deadline;
+/* First events and the first failure survive subsequent IRQs. No UART in ISR. */
+typedef struct {
+    uint32_t status, site, time_us, eod_sequence, writeback_us, kind;
+    int queued, reading, last, latest, result;
+} rotator_event_t;
+static rotator_event_t rotator_events[16], rotator_first_error;
+static unsigned rotator_event_count;
+static bool rotator_has_error;
+
+static void record_rotator_event(rotator_event_t event)
+{
+    event.time_us=(uint32_t)platform_time_us();
+    event.eod_sequence=counters.vblanks;
+    event.writeback_us=pending_writeback_us;
+    if (rotator_event_count<sizeof(rotator_events)/sizeof(*rotator_events))
+        rotator_events[rotator_event_count++]=event;
+    if (event.result && !rotator_has_error) { rotator_first_error=event; rotator_has_error=true; }
+}
 
 #ifndef PLAYER_ROTATOR_MMIO
 #define PLAYER_ROTATOR_MMIO ((volatile unsigned long *)(uintptr_t)0xb3070000u)
 #endif
 #define ROT_REG(offset) PLAYER_ROTATOR_MMIO[(offset)/4u]
 
+static void post_rotator(player_rotator_token_t token)
+{
+    queued_start_token=token;
+    queued_fetched=queued_start_seen=queued_old_read_ended=false;
+    WRITE_REG(ROT_REG(PLAYER_ROTATOR_BUFFER),rotator.slots[token.slot].physical|1u);
+}
+
+static int resolve_rotator_start(void)
+{
+    if (!rotator_enabled || rotator_stopping || route_error || rotator.queued<0 ||
+        !queued_fetched || !queued_start_seen) return 0;
+    uint32_t site=READ_REG(ROT_REG(PLAYER_ROTATOR_READ_SITE));
+    rotator_event_t event={0};
+    event.status=READ_REG(ROT_REG(PLAYER_ROTATOR_STATUS)); event.site=site; event.kind=1;
+    event.queued=rotator.queued; event.reading=rotator.reading;
+    event.last=rotator.last; event.latest=rotator.latest_started;
+    int result=player_rotator_resolve_start(&rotator,queued_start_token,site,queued_old_read_ended);
+    if (result) {
+        event.result=result<0 ? result : 0;
+        record_rotator_event(event);
+        if (result<0) { route_error=result; ++counters.rotator_errors; }
+        else { ++counters.rotator_late_binds; queued_start_seen=false; }
+    }
+    return result<0 ? result : 0;
+}
+
 static void rotator_queue_ready(void)
 {
     if (!pending_valid || !pending_written || rotator_stopping) return;
     if (!(rotator.slots[pending_rotator.slot].flags & PLAYER_ROT_READY)) return;
     int result=player_rotator_queue(&rotator,pending_rotator);
-    if (!result) WRITE_REG(ROT_REG(PLAYER_ROTATOR_BUFFER),
-                          rotator.slots[pending_rotator.slot].physical|1u);
+    if (!result) post_rotator(pending_rotator);
     else if (result!=-EAGAIN) { route_error=result; ++counters.rotator_errors; }
 }
 
 static void rotator_service(void)
 {
     if (!rotator_enabled) return;
-    uint32_t flags=READ_REG(ROT_REG(PLAYER_ROTATOR_STATUS))&0x1eu;
+    uint32_t status=READ_REG(ROT_REG(PLAYER_ROTATOR_STATUS));
+    uint32_t flags=status&0x1eu;
     if (!flags) return;
+    rotator_event_t event={0};
+    event.status=status; event.site=READ_REG(ROT_REG(PLAYER_ROTATOR_READ_SITE));
+    event.queued=rotator.queued; event.reading=rotator.reading;
+    event.last=rotator.last; event.latest=rotator.latest_started;
     /* Clear the captured flags before posting another command. */
     WRITE_REG(ROT_REG(PLAYER_ROTATOR_CLEAR),flags);
+    (void)READ_REG(ROT_REG(PLAYER_ROTATOR_STATUS)); /* Drain the peripheral clear write. */
+    if (rotator_stopping) {
+        /* No frame is being presented during quiescence. Keep every slot
+         * pinned until ACK/idle; do not interpret a stopped RDMA debug site. */
+        record_rotator_event(event);
+        return;
+    }
+    if (rotator.queued>=0) {
+        if (flags&PLAYER_ROTATOR_FETCH) queued_fetched=true;
+        if ((flags&PLAYER_ROTATOR_SOF) && queued_fetched) queued_start_seen=true;
+        if (flags&PLAYER_ROTATOR_EOF) queued_old_read_ended=true;
+    }
     bool ended=(flags&PLAYER_ROTATOR_EOF)!=0;
     int result=0;
     if (ended && rotator.reading>=0) {
         result=player_rotator_eof(&rotator); ++counters.rotator_eof; ended=false;
     }
     if (!result && (flags&PLAYER_ROTATOR_SOF)) {
-        result=player_rotator_sof(&rotator,READ_REG(ROT_REG(PLAYER_ROTATOR_READ_SITE)));
+        int queued=rotator.queued;
+        result=player_rotator_sof(&rotator,event.site);
         ++counters.rotator_sof;
+        if (!result && rotator.queued==queued) ++counters.rotator_held_sof;
     }
     if (!result && ended) { result=player_rotator_eof(&rotator); ++counters.rotator_eof; }
+    event.result=result;
+    record_rotator_event(event);
     if (result) { route_error=result; ++counters.rotator_errors; return; }
     if (rotator_stopping || route_error) return;
+    if (resolve_rotator_start()) return;
     rotator_queue_ready();
     if (rotator.reading<0 && rotator.queued<0) {
         player_rotator_token_t repeat;
         if (!player_rotator_repeat(&rotator,&repeat)) {
-            WRITE_REG(ROT_REG(PLAYER_ROTATOR_BUFFER),rotator.slots[repeat.slot].physical|1u);
+            post_rotator(repeat);
             ++counters.rotator_repeats;
         }
     }
@@ -123,6 +191,7 @@ static void display_irq(int irq, void *argument)
     uint32_t flags = READ_REG(lcd.Instance->DC_INT_FLAG) &
                      READ_REG(lcd.Instance->DC_INTC);
     if (rotated) rotator_service(); /* SOF may precede this EOD with its IRQ still pending. */
+    if (rotated && (flags&DC_INTC_INT_EOD_0)) (void)resolve_rotator_start();
     if (flags & DC_INTC_INT_UOT_0) ++counters.underruns;
     if (flags & DC_INTC_INT_OOW_0) { ++counters.rotator_errors; route_error=-EIO; }
     if (rotated && (flags&DC_INTC_INT_EOW_0) && pending_valid && !pending_written) {
@@ -133,7 +202,12 @@ static void display_irq(int irq, void *argument)
             wb_site-wb<=rotator.layout.bytes) {
             int result=player_rotator_written(&rotator,pending_rotator);
             if (result) { route_error=result; ++counters.rotator_errors; }
-            else { pending_written=true; ++counters.writebacks; rotator_queue_ready(); }
+            else {
+                /* Stop=1 is a single composer transaction, not a live chain. */
+                lcd.CompData.comp_stopped=1;
+                pending_writeback_us=(uint32_t)platform_time_us();
+                pending_written=true; ++counters.writebacks; rotator_queue_ready();
+            }
         } else { ++counters.mismatches; route_error=-EIO; }
     }
     if (flags & DC_INTC_INT_EOD_0) {
@@ -210,9 +284,11 @@ static int stop_dma(void)
 static int stop_rotator(void)
 {
     if (!rotator_enabled) return 0;
+    taskENTER_CRITICAL();
     rotator_stopping=true;
     WRITE_REG(ROT_REG(PLAYER_ROTATOR_MASK),0);
     WRITE_REG(ROT_REG(PLAYER_ROTATOR_CONTROL),PLAYER_ROTATOR_STOP);
+    taskEXIT_CRITICAL();
     uint64_t deadline=platform_time_us()+100000u;
     bool acknowledged=false;
     for (;;) {
@@ -228,6 +304,7 @@ static int stop_rotator(void)
         vTaskDelay(1);
     }
     WRITE_REG(ROT_REG(PLAYER_ROTATOR_CONTROL),PLAYER_ROTATOR_STOP|PLAYER_ROTATOR_FLUSH);
+    rotator_enabled=false; /* A previously latched IRQ cannot inspect reset metadata. */
     (void)player_rotator_reset(&rotator,true);
     return 0;
 }
@@ -235,7 +312,7 @@ static int stop_rotator(void)
 static void free_rotator(void)
 {
     if (rotator_irq_registered) { ll_release_irq(IRQ_INTC0_ROTATE); rotator_irq_registered=false; }
-    if (rotator_enabled) CPM_GATE_Disable(CPM_Instance,CPM_CLKID_ROTATE);
+    if (writeback_allocations[0]) CPM_GATE_Disable(CPM_Instance,CPM_CLKID_ROTATE);
     rotator_enabled=false;
     for (unsigned i=0;i<PLAYER_ROTATOR_SLOTS;++i) {
         free(writeback_allocations[i]); writeback_allocations[i]=NULL;
@@ -259,6 +336,9 @@ static int start_rotator(void)
     }
     result=player_rotator_init(&rotator,1280,720,physical);
     if (result) { free_rotator(); return result; }
+    rotator_event_count=0;
+    rotator_has_error=false;
+    pending_writeback_us=0;
     CPM_GATE_Enable(CPM_Instance,CPM_CLKID_ROTATE);
     SET_BIT(CPM_Instance->SRBC,1u<<22);
     vTaskDelay(1);
@@ -267,6 +347,7 @@ static int start_rotator(void)
     WRITE_REG(ROT_REG(PLAYER_ROTATOR_CONTROL),PLAYER_ROTATOR_FLUSH);
     WRITE_REG(ROT_REG(PLAYER_ROTATOR_CONTROL),0);
     WRITE_REG(ROT_REG(PLAYER_ROTATOR_CLEAR),0x1eu);
+    (void)READ_REG(ROT_REG(PLAYER_ROTATOR_STATUS));
     WRITE_REG(ROT_REG(PLAYER_ROTATOR_FRAME_SIZE),geometry.frame_size);
     WRITE_REG(ROT_REG(PLAYER_ROTATOR_GLOBAL),geometry.global);
     rotator_stopping=false;
@@ -290,14 +371,16 @@ int player_display_stop(void)
     video_active = false;
     initialized = false;
     if (!clocks_enabled) return 0;
+    WRITE_REG(lcd.Instance->DC_INTC, 0);
+    /* The ROT display port needs the downstream DPU to finish its frame.
+     * Stop the streaming producer before stopping that consumer. */
+    int result = stop_rotator();
+    if (result) return result; /* Hardware may still read the caller's buffers. */
+    result=stop_dma();
+    if (result) return result;
     panel_zc502_power_off();
     backlight_on = false;
     backlight_starting = false;
-    WRITE_REG(lcd.Instance->DC_INTC, 0);
-    int result = stop_dma();
-    if (result) return result; /* Hardware may still read the caller's buffers. */
-    result=stop_rotator();
-    if (result) return result;
     free_rotator();
     if (irq_registered) {
         ll_release_irq(IRQ_INTC0_LCD);
@@ -441,8 +524,8 @@ int player_display_set_video_geometry(uint32_t width, uint32_t height)
     if (route_phase==1) {
         if (route_ack!=1 || pending_valid || overlay_queued || overlay_completion_valid) return -EAGAIN;
         WRITE_REG(lcd.Instance->DC_INTC,0);
-        int result=stop_dma();
-        if (!result) result=stop_rotator();
+        int result=stop_rotator();
+        if (!result) result=stop_dma();
         if (result) return route_error=result;
         if (width==1280) result=start_rotator();
         else free_rotator();
@@ -500,6 +583,17 @@ static int submit(bool video_change, const player_display_frame_t *frame,
     layers[0].uv_addr = pending_y + layout.uv_offset;
     layers[1].lay_en = pending_argb != 0;
     layers[1].addr = pending_argb;
+    /* HAL_COMP_Init mutates crop/scale/position in place. Never carry native
+     * 720-wide GUI crop into a 1280-wide writeback: that enables a scaler and
+     * its panel-width position clamp can underflow. Both sources already have
+     * the composition geometry; request full-size pixels with no scaling. */
+    for (unsigned i=0;i<2;++i) {
+        layers[i].src_crop_x=layers[i].src_crop_y=0;
+        layers[i].src_crop_w=layout.width; layers[i].src_crop_h=layout.height;
+        layers[i].disp_pos_x=layers[i].disp_pos_y=0;
+        layers[i].scale_w=layers[i].scale_h=0;
+        layers[i].lay_scale_en=0;
+    }
     if (HAL_COMP_Init(&lcd, layers) != HAL_OK) {
         if (rotated) (void)player_rotator_cancel_write(&rotator,pending_rotator);
         return -EIO;
@@ -637,8 +731,9 @@ int player_display_poll_overlay_completion(uint32_t *serial)
     if (route_error) return route_error;
     int queued_result = 0;
     taskENTER_CRITICAL();
+    queued_result=resolve_rotator_start();
     /* With paused/no video, GUI polling itself drives the queued update. */
-    if (overlay_queued && !pending_valid && !video_active)
+    if (!queued_result && overlay_queued && !pending_valid && !video_active)
         queued_result = submit_with_queued_overlay(false, NULL);
     taskEXIT_CRITICAL();
     if (queued_result) return queued_result;
@@ -658,11 +753,13 @@ int player_display_poll_completion(player_display_completion_t *completion)
     if (route_error) return route_error;
     int result = 0;
     taskENTER_CRITICAL();
-    if (completion_valid) {
+    result=resolve_rotator_start();
+    if (!result && completion_valid) {
         *completion = completed;
         result = 1;
     }
     taskEXIT_CRITICAL();
+    if (result<0) return result;
     if (result && !backlight_on) {
         int error = enable_backlight();
         if (error) return error < 0 ? error : 0;
@@ -701,12 +798,33 @@ void player_display_print_status(void)
 {
     player_display_stats_t timing;
     player_display_get_stats(&timing);
-    printf("DISPLAY_ROUTE width=%lu height=%lu rotated=%u generation=%lu phase=%lu error=%d writebacks=%lu rot_sof=%lu rot_eof=%lu repeats=%lu rot_errors=%lu\n",
+    printf("DISPLAY_ROUTE width=%lu height=%lu rotated=%u generation=%lu phase=%lu error=%d writebacks=%lu rot_sof=%lu rot_eof=%lu repeats=%lu rot_errors=%lu held_sof=%lu late_binds=%lu\n",
            (unsigned long)timing.width,(unsigned long)timing.height,(unsigned)rotated,
            (unsigned long)timing.route_generation,(unsigned long)timing.route_phase,timing.route_error,
            (unsigned long)timing.writebacks,(unsigned long)timing.rotator_sof,
-           (unsigned long)timing.rotator_eof,(unsigned long)timing.rotator_repeats,(unsigned long)timing.rotator_errors);
+           (unsigned long)timing.rotator_eof,(unsigned long)timing.rotator_repeats,(unsigned long)timing.rotator_errors,
+           (unsigned long)timing.rotator_held_sof,(unsigned long)timing.rotator_late_binds);
     if (rotator_enabled) {
+        rotator_event_t events[16], first;
+        unsigned count;
+        bool failed;
+        taskENTER_CRITICAL();
+        count=rotator_event_count;
+        memcpy(events,rotator_events,count*sizeof(*events));
+        failed=rotator_has_error; first=rotator_first_error;
+        taskEXIT_CRITICAL();
+        if (failed)
+            printf("DISPLAY_ROT_FIRST_ERROR status=%08lx flags=%02lx site=%08lx queued=%d reading=%d last=%d latest=%d result=%d us=%lu eod_seq=%lu wb_us=%lu kind=%lu\n",
+                   (unsigned long)first.status,(unsigned long)(first.status&0x1eu),(unsigned long)first.site,
+                   first.queued,first.reading,first.last,first.latest,first.result,
+                   (unsigned long)first.time_us,(unsigned long)first.eod_sequence,
+                   (unsigned long)first.writeback_us,(unsigned long)first.kind);
+        for (unsigned i=0;i<count;++i)
+            printf("DISPLAY_ROT_EVENT index=%u status=%08lx flags=%02lx site=%08lx queued=%d reading=%d last=%d latest=%d result=%d us=%lu eod_seq=%lu wb_us=%lu kind=%lu\n",
+                   i,(unsigned long)events[i].status,(unsigned long)(events[i].status&0x1eu),(unsigned long)events[i].site,
+                   events[i].queued,events[i].reading,events[i].last,events[i].latest,events[i].result,
+                   (unsigned long)events[i].time_us,(unsigned long)events[i].eod_sequence,
+                   (unsigned long)events[i].writeback_us,(unsigned long)events[i].kind);
         printf("DISPLAY_ROT status=%08lx global=%08lx frame=%08lx mask=%08lx site=%08lx queued=%d reading=%d last=%d latest=%d\n",
                READ_REG(ROT_REG(PLAYER_ROTATOR_STATUS)),READ_REG(ROT_REG(PLAYER_ROTATOR_GLOBAL)),
                READ_REG(ROT_REG(PLAYER_ROTATOR_FRAME_SIZE)),READ_REG(ROT_REG(PLAYER_ROTATOR_MASK)),
@@ -727,6 +845,24 @@ void player_display_print_status(void)
     printf("DISPLAY clocks=%d init=%d running=%d backlight=%d panel_result=%d pending=%d scanout=%d\n",
            clocks_enabled, initialized, running, backlight_on, panel_zc502_result(),
            pending_valid, scanout_valid);
+    if (clocks_enabled) {
+        uint32_t frame_words[16], video_words[16], ui_words[16], wb_site;
+        taskENTER_CRITICAL();
+        WRITE_REG(lcd.Instance->DC_CTRL,DC_CTRL_DES_CNT_RST_0);
+        for (unsigned i=0;i<16;++i) {
+            frame_words[i]=READ_REG(lcd.Instance->FRM_DES_READ);
+            video_words[i]=READ_REG(lcd.Instance->LAY0_DES_READ);
+            ui_words[i]=READ_REG(lcd.Instance->LAY1_DES_READ);
+        }
+        wb_site=READ_REG(lcd.Instance->WDMA_SITE);
+        taskEXIT_CRITICAL();
+        printf("DISPLAY_WDMA site=%08lx comp_stopped=%d pending_descriptor=%08lx pending_y=%08lx pending_argb=%08lx pending_written=%u\n",
+               (unsigned long)wb_site,lcd.CompData.comp_stopped,(unsigned long)pending_descriptor,
+               (unsigned long)pending_y,(unsigned long)pending_argb,(unsigned)pending_written);
+        for (unsigned i=0;i<16;++i)
+            printf("DISPLAY_LOADED %u frame=%08lx layer0=%08lx layer1=%08lx\n",i,
+                   (unsigned long)frame_words[i],(unsigned long)video_words[i],(unsigned long)ui_words[i]);
+    }
     printf("GPIOC pin=%08lx int=%08lx mask=%08lx pat1=%08lx pat0=%08lx\n",
            PC_Instance->PxPINL, PC_Instance->PxINT, PC_Instance->PxMSK,
            PC_Instance->PxPAT1, PC_Instance->PxPAT0);

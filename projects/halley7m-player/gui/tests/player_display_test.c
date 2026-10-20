@@ -21,8 +21,11 @@ static uint64_t clock_us;
 static void (*lcd_irq)(int, void *);
 static void (*rot_irq)(int,void *);
 static bool rot_hang;
+static bool composer_started;
+static bool display_consumer_active;
 static uintptr_t cached_writebacks[3];
 static uint32_t queued_rotation;
+static uint32_t posted_rotator_clear;
 static LCD_HandleTypeDef *last_lcd;
 
 void fake_cache_publish(unsigned long *pointer, long bytes)
@@ -40,6 +43,12 @@ uint32_t fake_physical(uintptr_t p)
 
 unsigned long fake_read(const volatile unsigned long *reg)
 {
+    if (reg==&fake_rotator_regs[PLAYER_ROTATOR_STATUS/4] && posted_rotator_clear) {
+        unsigned long captured=*reg;
+        fake_rotator_regs[PLAYER_ROTATOR_STATUS/4]&=~posted_rotator_clear;
+        posted_rotator_clear=0;
+        return captured; /* A status read drains a posted W1C write. */
+    }
     if (reg == &fake_dpu.FRM_DES_READ) return loaded_descriptor;
     if (reg == &fake_dpu.LAY0_DES_READ) return word++ == 2 ? loaded_y : 0;
     if (reg == &fake_dpu.LAY1_DES_READ) return word++ == 2 ? loaded_ui : 0;
@@ -51,12 +60,16 @@ void fake_write(volatile unsigned long *reg, unsigned long value)
     if (reg == &fake_dpu.DC_CTRL) word = 0;
     if (reg == &fake_dpu.DC_CLR_ST) fake_dpu.DC_INT_FLAG &= ~value;
     if (reg == &fake_dpu.DC_FRM_CFG_CTRL && value==1) {
+        assert(!composer_started);
+        composer_started=true;
+        display_consumer_active=true;
         next_descriptor=(uint32_t)fake_dpu.DC_FRM_CFG_ADDR; ++starts;
     }
     if (reg==&fake_rotator_regs[PLAYER_ROTATOR_CLEAR/4])
-        fake_rotator_regs[PLAYER_ROTATOR_STATUS/4]&=~value;
+        posted_rotator_clear|=(uint32_t)value;
     if (reg==&fake_rotator_regs[PLAYER_ROTATOR_BUFFER/4]) queued_rotation=(uint32_t)value&~1u;
-    if (reg==&fake_rotator_regs[PLAYER_ROTATOR_CONTROL/4] && (value&PLAYER_ROTATOR_STOP) && !rot_hang)
+    if (reg==&fake_rotator_regs[PLAYER_ROTATOR_CONTROL/4] && (value&PLAYER_ROTATOR_STOP) && !rot_hang &&
+        (display_consumer_active || !(fake_rotator_regs[PLAYER_ROTATOR_STATUS/4]&PLAYER_ROTATOR_WORKING)))
         fake_rotator_regs[PLAYER_ROTATOR_STATUS/4]=PLAYER_ROTATOR_ACK;
 }
 uint64_t platform_time_us(void) { return clock_us; }
@@ -70,7 +83,7 @@ void panel_zc502_power_off(void) { }
 HAL_StatusTypeDef HAL_LCDC_Init(LCD_HandleTypeDef *lcd) { (void)lcd; return HAL_OK; }
 HAL_StatusTypeDef HAL_LCDC_Enable(LCD_HandleTypeDef *lcd) { (void)lcd; return HAL_OK; }
 HAL_StatusTypeDef HAL_COMP_Stop(LCD_HandleTypeDef *lcd, int mode)
-{ (void)lcd; (void)mode; return HAL_OK; }
+{ (void)lcd; (void)mode; composer_started=false; display_consumer_active=false; return HAL_OK; }
 HAL_StatusTypeDef HAL_SRDMA_Stop(LCD_HandleTypeDef *lcd, int mode)
 { (void)lcd; (void)mode; return HAL_OK; }
 HAL_StatusTypeDef HAL_COMP_Init(LCD_HandleTypeDef *lcd, struct lay_cfg *layers)
@@ -78,6 +91,18 @@ HAL_StatusTypeDef HAL_COMP_Init(LCD_HandleTypeDef *lcd, struct lay_cfg *layers)
     last_lcd=lcd;
     if (lcd->CompData.comp_stopped) lcd->CompData.comp_next_frame = 0;
     else lcd->CompData.comp_next_frame = (lcd->CompData.comp_next_frame + 1) % 3u;
+    /* The real SDK mutates this configuration, including persistent crop.
+     * Its position limit uses native panel dimensions even in WB mode. */
+    for (unsigned i=0;i<4;++i) {
+        struct lay_cfg *l=&layers[i];
+        if (!l->lay_en) { l->scale_w=l->scale_h=l->lay_scale_en=0; continue; }
+        if (!l->src_crop_w || l->src_crop_w>=l->source_w) l->src_crop_w=l->source_w;
+        if (!l->src_crop_h || l->src_crop_h>=l->source_h) l->src_crop_h=l->source_h;
+        l->lay_scale_en=(l->src_crop_w!=l->scale_w || l->src_crop_h!=l->scale_h) && l->scale_w && l->scale_h;
+        if (!l->scale_w || !l->scale_h) l->scale_w=l->scale_h=0;
+        l->disp_pos_x=l->disp_pos_x+l->scale_w>=720u ? 720u-l->scale_w : l->disp_pos_x;
+        l->disp_pos_y=l->disp_pos_y+l->scale_h>=1280u ? 1280u-l->scale_h : l->disp_pos_y;
+    }
     memcpy(submitted_layers, layers, sizeof(submitted_layers));
     lcd->CompData.FrameDesc[lcd->CompData.comp_next_frame].words[0]=
         CPHYSADDR(&lcd->CompData.FrameDesc[lcd->CompData.comp_next_frame]);
@@ -85,6 +110,7 @@ HAL_StatusTypeDef HAL_COMP_Init(LCD_HandleTypeDef *lcd, struct lay_cfg *layers)
 }
 HAL_StatusTypeDef HAL_COMP_Start(LCD_HandleTypeDef *lcd)
 {
+    display_consumer_active=true;
     next_descriptor = CPHYSADDR(&lcd->CompData.FrameDesc[lcd->CompData.comp_next_frame]);
     lcd->CompData.comp_stopped = 0;
     ++starts;
@@ -173,6 +199,8 @@ static void continuous_video_priority(void)
 
 static void writeback(void)
 {
+    assert(composer_started); /* A second one-shot needs a second actual start. */
+    composer_started=false;
     loaded_descriptor=next_descriptor;
     loaded_y=submitted_layers[0].lay_en ? submitted_layers[0].addr : 0;
     loaded_ui=submitted_layers[1].lay_en ? submitted_layers[1].addr : 0;
@@ -180,6 +208,11 @@ static void writeback(void)
     fake_dpu.LAY1_SITE=loaded_ui+64u;
     uint32_t *words=last_lcd->CompData.FrameDesc[last_lcd->CompData.comp_next_frame].words;
     assert(words[1]==0x02d00500 && words[2]==0x00070003 && words[4]==1280);
+    for (unsigned i=0;i<2;++i) if (submitted_layers[i].lay_en) {
+        assert(submitted_layers[i].src_crop_w==1280 && submitted_layers[i].src_crop_h==720);
+        assert(!submitted_layers[i].lay_scale_en && !submitted_layers[i].scale_w && !submitted_layers[i].scale_h);
+        assert(!submitted_layers[i].disp_pos_x && !submitted_layers[i].disp_pos_y);
+    }
     fake_dpu.WDMA_SITE=words[3]+64u;
     fake_dpu.DC_INT_FLAG=DC_INTC_INT_EOW_0;
     lcd_irq(IRQ_INTC0_LCD,NULL);
@@ -196,6 +229,12 @@ static void rotation_event(uint32_t flags)
 static void wide_route(void)
 {
     assert(player_display_init()==0 && player_display_start()==0);
+    uint32_t native_serial=0;
+    assert(player_display_submit_overlay((const uint32_t *)(uintptr_t)0x82000000u,
+           PLAYER_DISPLAY_OVERLAY_BYTES,80)==0);
+    latch();
+    assert(player_display_poll_overlay_completion(&native_serial)==1 && native_serial==80);
+    assert(submitted_layers[1].src_crop_w==720 && submitted_layers[1].src_crop_h==1280);
     player_display_gui_attach(true);
     assert(player_display_set_video_geometry(1279,720)==-EINVAL);
     assert(player_display_set_video_geometry(1280,720)==-EAGAIN);
@@ -226,18 +265,52 @@ static void wide_route(void)
     assert(player_display_poll_completion(&c)==0); /* FETCH_ADDR cannot claim it either. */
     rotation_event(PLAYER_ROTATOR_SOF|PLAYER_ROTATOR_WORKING);
     assert(player_display_poll_completion(&c)==0);
+    assert(!(fake_rotator_regs[PLAYER_ROTATOR_STATUS/4]&0x1eu));
+    /* First-board regression hypothesis: one CUSTOM writeback, then a held
+     * frame's combined EOF/SOF, without another software command. */
+    rotation_event(PLAYER_ROTATOR_EOF|PLAYER_ROTATOR_SOF|PLAYER_ROTATOR_WORKING|0x000c0080u);
+    assert(player_display_poll_completion(&c)==0);
+    rotation_event(PLAYER_ROTATOR_SOF|PLAYER_ROTATOR_WORKING|0x000c0080u);
+    player_display_stats_t held;
+    player_display_get_stats(&held);
+    assert(!held.route_error && !held.rotator_errors && held.rotator_held_sof==2);
     clock_us+=33033; interrupt_only();
     assert(player_display_poll_completion(&c)==1 && c.has_latched && c.latched.slot==0);
+    /* Real R2: the first video WB succeeds, then a GUI-only one-shot must also
+     * write back after native GUI has previously mutated its crop to 720. */
+    assert(player_display_submit_overlay((const uint32_t *)(uintptr_t)0x82400000u,
+           PLAYER_DISPLAY_OVERLAY_BYTES,81)==0);
+    writeback();
+    rotation_event(PLAYER_ROTATOR_EOF|PLAYER_ROTATOR_SOF|PLAYER_ROTATOR_WORKING);
+    clock_us+=33033; interrupt_only();
+    assert(player_display_poll_overlay_completion(&serial)==1 && serial==81);
+    assert(player_display_poll_completion(&c)==0);
     assert(player_display_set_video_geometry(720,1280)==-EBUSY);
     assert(player_display_submit_frame(&b)==0);
+    uint32_t old_rotation=queued_rotation;
     writeback();
-    rotation_event(PLAYER_ROTATOR_EOF);
+    uint32_t new_rotation=queued_rotation;
+    assert(old_rotation!=new_rotation);
+    fake_rotator_regs[PLAYER_ROTATOR_READ_SITE/4]=old_rotation+128u;
+    fake_rotator_regs[PLAYER_ROTATOR_STATUS/4]=PLAYER_ROTATOR_SOF|PLAYER_ROTATOR_WORKING;
+    rot_irq(IRQ_INTC0_ROTATE,NULL); /* A delayed/held old SOF leaves the new address queued. */
+    assert(player_display_poll_completion(&c)==0);
+    fake_rotator_regs[PLAYER_ROTATOR_STATUS/4]=PLAYER_ROTATOR_FETCH|PLAYER_ROTATOR_WORKING;
+    rot_irq(IRQ_INTC0_ROTATE,NULL);
+    fake_rotator_regs[PLAYER_ROTATOR_READ_SITE/4]=new_rotation+64u;
+    assert(player_display_poll_completion(&c)==0); /* FETCH without SOF cannot bind/latch. */
+    fake_rotator_regs[PLAYER_ROTATOR_READ_SITE/4]=old_rotation+128u;
+    fake_rotator_regs[PLAYER_ROTATOR_STATUS/4]=PLAYER_ROTATOR_EOF|PLAYER_ROTATOR_SOF|PLAYER_ROTATOR_WORKING;
+    rot_irq(IRQ_INTC0_ROTATE,NULL); /* Actual new SOF still reports the old debug site. */
     interrupt_only();
-    assert(player_display_poll_completion(&c)==0); /* EOF still names frame a. */
-    rotation_event(PLAYER_ROTATOR_SOF|PLAYER_ROTATOR_WORKING);
+    assert(player_display_poll_completion(&c)==0); /* Old site remains pinned and unpresented. */
+    fake_rotator_regs[PLAYER_ROTATOR_READ_SITE/4]=new_rotation+64u;
+    assert(player_display_poll_completion(&c)==0); /* Site binds, but still no new EOD. */
     clock_us+=33033; interrupt_only();
     assert(player_display_poll_completion(&c)==1 && c.has_latched && c.latched.slot==1);
     assert(c.has_retired && c.retired.slot==0);
+    player_display_get_stats(&held);
+    assert(held.rotator_late_binds==1 && !held.route_error);
     assert(player_display_submit_overlay((const uint32_t *)(uintptr_t)0x82000000u,
            PLAYER_DISPLAY_OVERLAY_BYTES,99)==0);
     writeback();
@@ -248,7 +321,7 @@ static void wide_route(void)
     rotation_event(PLAYER_ROTATOR_EOF); /* END/PAUSE repeats the held CUSTOM frame. */
     player_display_stats_t stats;
     player_display_get_stats(&stats);
-    assert(stats.confirmed==2 && stats.writebacks==3 && stats.rotator_repeats==1);
+    assert(stats.confirmed==2 && stats.writebacks==4 && stats.rotator_repeats==1);
     assert(player_display_clear_video()==0);
     writeback();
     rotation_event(PLAYER_ROTATOR_SOF|PLAYER_ROTATOR_WORKING); /* Repeat drains first. */
@@ -279,6 +352,18 @@ static void wide_route(void)
     assert(player_display_stop()==-ETIMEDOUT && rot_irq); /* All CUSTOM allocations stay pinned. */
     rot_hang=false;
     assert(player_display_stop()==0 && !rot_irq);
+    memset(cached_writebacks,0,sizeof(cached_writebacks));
+    assert(player_display_init()==0 && player_display_start()==0);
+    assert(player_display_set_video_geometry(1280,720)==0);
+    assert(player_display_submit_frame(&a)==0); writeback();
+    rotation_event(PLAYER_ROTATOR_SOF|PLAYER_ROTATOR_WORKING);
+    fake_rotator_regs[PLAYER_ROTATOR_READ_SITE/4]=queued_rotation+3686400u;
+    fake_rotator_regs[PLAYER_ROTATOR_STATUS/4]=PLAYER_ROTATOR_SOF|PLAYER_ROTATOR_WORKING;
+    rot_irq(IRQ_INTC0_ROTATE,NULL);
+    assert(player_display_poll_completion(&c)<0); /* Unknown/reused address remains pinned. */
+    player_display_get_stats(&stats);
+    assert(stats.route_error && stats.rotator_errors==1 && stats.pending && !stats.scanout);
+    assert(player_display_stop()==0);
 }
 
 int main(void)
