@@ -1,5 +1,30 @@
 # 播放器实施验收记录
 
+## 2026-10-20：MP3、AAC、M4A 十二组合实板通过
+
+真实TF的MP3、ADTS AAC-LC、M4A各覆盖44.1/48kHz、单/双声道，12个独立约30秒
+会话均到ENDED/DRAINED。累计17281552有效样本，每例session和audio计数精确一致；
+音频underrun、DMA错误/超时、queue/FIFO欠载均0。用户轮播期间回复“能听到，声音正常”。
+
+每例STOP后IDLE、音频CLOSED/inactive、pinned0，空闲堆前后均45764440B，十二例差值均0。
+媒体96KiB栈累计最小剩余11322words（45288B）。四例M4A的有界CLMT实际运行并释放。
+完整逐例计数、样本裁剪解释、日志摘要与证据范围见
+[音频实板摘要](audio-decode/BOARD_VALIDATION_20261020.md)。本轮是12次独立会话，
+不称连续六分钟，也不替代新格式30分钟长跑。
+
+该结果对应1917840B、CRC `6635efcb`、SHA256
+`70220c27b013bbf9d366b30c52150dc72f24d81617a295486a0672a07b9ebb55`候选，
+原ELF/BIN/MAP/manifest已保存`build/player-format-evidence/rotation-r2`；上传日志确认
+板端长度与CRC一致。新包的旋转测试仍未通过，不能把音频结果扩展成MP4视频验收：
+
+- 原27aca候选在横屏首帧后因同表面重复SOF触发`-EINVAL`，保留资源，音频未START。
+- 本70220候选对held SOF已正常处理：rotator错误0，SOF/EOF持续递增。三秒MP4的
+  90帧全部解码，但仅呈现1帧、drop/late各88，GUI-only第二次写回未完成，不能到ENDED。
+  AAC144000样本完整且错误0；STOP后音频关闭，显示资源pinned1，未算停止回收通过。
+- 原始显示证据是`build/player-formats-rotation-r2-probe-board.log`和
+  `build/player-formats-rotation-r2-display-board.log`。源码复核发现HAL会保留并修改
+  crop/scale，旧native720宽裁剪污染wide1280的GUI层；对应修复和复验正在进行。
+
 ## 2026-10-20：新格式固件 RAM 启动，串口连接待恢复
 
 用户已将14个新格式样片复制到TF的`multimedia/audio`及`multimedia/video`。
