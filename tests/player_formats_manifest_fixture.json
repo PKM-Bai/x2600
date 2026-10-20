@@ -1,0 +1,388 @@
+{
+  "note": "Metadata-only captured 30s format matrix for fake-UART runner tests; no media or board result.",
+  "source_manifest_sha256": "f3d7c17417ce8cf03de35b5c15db153a5bfc42fa640b6decdab2578ce2110e43",
+  "files": [
+    {
+      "file": "format-44100-1ch-30s.mp3",
+      "source_rate": 44100,
+      "source_channels": 1,
+      "audio_packets": 1150,
+      "skip_side_data": [
+        {
+          "side_data_type": "Skip Samples",
+          "skip_samples": 1105,
+          "discard_padding": 0,
+          "skip_reason": 0,
+          "discard_reason": 0
+        },
+        {
+          "side_data_type": "Skip Samples",
+          "skip_samples": 0,
+          "discard_padding": 695,
+          "skip_reason": 0,
+          "discard_reason": 0
+        }
+      ],
+      "coded_frames_assuming_lc1024_or_mpeg1layer3_1152": 1324800,
+      "sha256": "e2b8d93c25c9a962c694d3fe128fe85a3275a7832fc5402d2b3b08ac5d8b577c",
+      "bytes": 481090
+    },
+    {
+      "file": "format-44100-1ch-30s.aac",
+      "source_rate": 44100,
+      "source_channels": 1,
+      "audio_packets": 1293,
+      "skip_side_data": [],
+      "coded_frames_assuming_lc1024_or_mpeg1layer3_1152": 1324032,
+      "sha256": "88fb4e2856bef50775d65217eee60043217165f305f071054298f74217371e01",
+      "bytes": 138629
+    },
+    {
+      "file": "format-44100-1ch-30s.m4a",
+      "source_rate": 44100,
+      "source_channels": 1,
+      "audio_packets": 1293,
+      "skip_side_data": [
+        {
+          "side_data_type": "Skip Samples",
+          "skip_samples": 1024,
+          "discard_padding": 0,
+          "skip_reason": 0,
+          "discard_reason": 0
+        },
+        {
+          "side_data_type": "Skip Samples",
+          "skip_samples": 0,
+          "discard_padding": 8,
+          "skip_reason": 0,
+          "discard_reason": 0
+        }
+      ],
+      "coded_frames_assuming_lc1024_or_mpeg1layer3_1152": 1324032,
+      "sha256": "3b86302c668e2cf0b4b19b914f8d9a4db36ae470d034d362e77b0b848b569ddb",
+      "bytes": 135520,
+      "native_demux": {
+        "info": {
+          "movie_scale": 44100,
+          "audio": {
+            "rate": 44100,
+            "channels": 1,
+            "frame_samples": 1024,
+            "duration": 1324024,
+            "edit": 1,
+            "media_start": 1024,
+            "empty_duration": 0,
+            "edit_duration": 1323000
+          }
+        }
+      }
+    },
+    {
+      "file": "format-44100-2ch-30s.mp3",
+      "source_rate": 44100,
+      "source_channels": 2,
+      "audio_packets": 1150,
+      "skip_side_data": [
+        {
+          "side_data_type": "Skip Samples",
+          "skip_samples": 1105,
+          "discard_padding": 0,
+          "skip_reason": 0,
+          "discard_reason": 0
+        },
+        {
+          "side_data_type": "Skip Samples",
+          "skip_samples": 0,
+          "discard_padding": 695,
+          "skip_reason": 0,
+          "discard_reason": 0
+        }
+      ],
+      "coded_frames_assuming_lc1024_or_mpeg1layer3_1152": 1324800,
+      "sha256": "39da7c463851ef76ca173de7b30c77418dd8d25952fdb0866028323af2a5696c",
+      "bytes": 721625
+    },
+    {
+      "file": "format-44100-2ch-30s.aac",
+      "source_rate": 44100,
+      "source_channels": 2,
+      "audio_packets": 1293,
+      "skip_side_data": [],
+      "coded_frames_assuming_lc1024_or_mpeg1layer3_1152": 1324032,
+      "sha256": "4f415fe63f960012603dd89fa064514f5575d1de0c42e3031670b298ecf8d170",
+      "bytes": 288954
+    },
+    {
+      "file": "format-44100-2ch-30s.m4a",
+      "source_rate": 44100,
+      "source_channels": 2,
+      "audio_packets": 1293,
+      "skip_side_data": [
+        {
+          "side_data_type": "Skip Samples",
+          "skip_samples": 1024,
+          "discard_padding": 0,
+          "skip_reason": 0,
+          "discard_reason": 0
+        },
+        {
+          "side_data_type": "Skip Samples",
+          "skip_samples": 0,
+          "discard_padding": 8,
+          "skip_reason": 0,
+          "discard_reason": 0
+        }
+      ],
+      "coded_frames_assuming_lc1024_or_mpeg1layer3_1152": 1324032,
+      "sha256": "2c70f8389c3472ed9b663f5b815408303dd40ebacc4a5c5dc63cd178e3b88e1e",
+      "bytes": 285845,
+      "native_demux": {
+        "info": {
+          "movie_scale": 44100,
+          "audio": {
+            "rate": 44100,
+            "channels": 2,
+            "frame_samples": 1024,
+            "duration": 1324024,
+            "edit": 1,
+            "media_start": 1024,
+            "empty_duration": 0,
+            "edit_duration": 1323000
+          }
+        }
+      }
+    },
+    {
+      "file": "format-48000-1ch-30s.mp3",
+      "source_rate": 48000,
+      "source_channels": 1,
+      "audio_packets": 1251,
+      "skip_side_data": [
+        {
+          "side_data_type": "Skip Samples",
+          "skip_samples": 1105,
+          "discard_padding": 0,
+          "skip_reason": 0,
+          "discard_reason": 0
+        },
+        {
+          "side_data_type": "Skip Samples",
+          "skip_samples": 0,
+          "discard_padding": 47,
+          "skip_reason": 0,
+          "discard_reason": 0
+        }
+      ],
+      "coded_frames_assuming_lc1024_or_mpeg1layer3_1152": 1441152,
+      "sha256": "f38ab8daa0ea77ef1cb8b0d7abe4dd5006e738c025de863e5473779aad25d58d",
+      "bytes": 480788
+    },
+    {
+      "file": "format-48000-1ch-30s.aac",
+      "source_rate": 48000,
+      "source_channels": 1,
+      "audio_packets": 1408,
+      "skip_side_data": [],
+      "coded_frames_assuming_lc1024_or_mpeg1layer3_1152": 1441792,
+      "sha256": "badd2f49e7397cc08695cd081a177e148e23cd542ec89f5253daa532eebcd83c",
+      "bytes": 139019
+    },
+    {
+      "file": "format-48000-1ch-30s.m4a",
+      "source_rate": 48000,
+      "source_channels": 1,
+      "audio_packets": 1408,
+      "skip_side_data": [
+        {
+          "side_data_type": "Skip Samples",
+          "skip_samples": 1024,
+          "discard_padding": 0,
+          "skip_reason": 0,
+          "discard_reason": 0
+        },
+        {
+          "side_data_type": "Skip Samples",
+          "skip_samples": 0,
+          "discard_padding": 768,
+          "skip_reason": 0,
+          "discard_reason": 0
+        }
+      ],
+      "coded_frames_assuming_lc1024_or_mpeg1layer3_1152": 1441792,
+      "sha256": "a81539612ffc7cd892d2d2fdfb9f6ea1766280e765fa16f78a4340a9c606a4e2",
+      "bytes": 135565,
+      "native_demux": {
+        "info": {
+          "movie_scale": 48000,
+          "audio": {
+            "rate": 48000,
+            "channels": 1,
+            "frame_samples": 1024,
+            "duration": 1441024,
+            "edit": 1,
+            "media_start": 1024,
+            "empty_duration": 0,
+            "edit_duration": 1440000
+          }
+        }
+      }
+    },
+    {
+      "file": "format-48000-2ch-30s.mp3",
+      "source_rate": 48000,
+      "source_channels": 2,
+      "audio_packets": 1251,
+      "skip_side_data": [
+        {
+          "side_data_type": "Skip Samples",
+          "skip_samples": 1105,
+          "discard_padding": 0,
+          "skip_reason": 0,
+          "discard_reason": 0
+        },
+        {
+          "side_data_type": "Skip Samples",
+          "skip_samples": 0,
+          "discard_padding": 47,
+          "skip_reason": 0,
+          "discard_reason": 0
+        }
+      ],
+      "coded_frames_assuming_lc1024_or_mpeg1layer3_1152": 1441152,
+      "sha256": "0a86b155d6b9b5fcb6150eaaec5d3c37d8a3db795a71ba92484d8c82526f3b78",
+      "bytes": 721172
+    },
+    {
+      "file": "format-48000-2ch-30s.aac",
+      "source_rate": 48000,
+      "source_channels": 2,
+      "audio_packets": 1408,
+      "skip_side_data": [],
+      "coded_frames_assuming_lc1024_or_mpeg1layer3_1152": 1441792,
+      "sha256": "d7610b4967221df773ffb3ab93b8f2f4af8572762dffeb4f5e5b8b6d27830c56",
+      "bytes": 287003
+    },
+    {
+      "file": "format-48000-2ch-30s.m4a",
+      "source_rate": 48000,
+      "source_channels": 2,
+      "audio_packets": 1408,
+      "skip_side_data": [
+        {
+          "side_data_type": "Skip Samples",
+          "skip_samples": 1024,
+          "discard_padding": 0,
+          "skip_reason": 0,
+          "discard_reason": 0
+        },
+        {
+          "side_data_type": "Skip Samples",
+          "skip_samples": 0,
+          "discard_padding": 768,
+          "skip_reason": 0,
+          "discard_reason": 0
+        }
+      ],
+      "coded_frames_assuming_lc1024_or_mpeg1layer3_1152": 1441792,
+      "sha256": "79a0a1eece2e1d195927885a81d5c2805e56a490220efc74c39e2c728f75a10d",
+      "bytes": 283549,
+      "native_demux": {
+        "info": {
+          "movie_scale": 48000,
+          "audio": {
+            "rate": 48000,
+            "channels": 2,
+            "frame_samples": 1024,
+            "duration": 1441024,
+            "edit": 1,
+            "media_start": 1024,
+            "empty_duration": 0,
+            "edit_duration": 1440000
+          }
+        }
+      }
+    },
+    {
+      "file": "format-landscape-1280x720-30fps-48000-2ch-30s.mp4",
+      "source_rate": 48000,
+      "source_channels": 2,
+      "audio_packets": 1408,
+      "skip_side_data": [
+        {
+          "side_data_type": "Skip Samples",
+          "skip_samples": 1024,
+          "discard_padding": 0,
+          "skip_reason": 0,
+          "discard_reason": 0
+        },
+        {
+          "side_data_type": "Skip Samples",
+          "skip_samples": 0,
+          "discard_padding": 768,
+          "skip_reason": 0,
+          "discard_reason": 0
+        }
+      ],
+      "coded_frames_assuming_lc1024_or_mpeg1layer3_1152": 1441792,
+      "video_frames": 900,
+      "sha256": "08035231a0b321e25ab131339a04ad99958df7150aa01f1fec1dae69e46a5100",
+      "bytes": 511529,
+      "native_demux": {
+        "info": {
+          "movie_scale": 48000,
+          "audio": {
+            "rate": 48000,
+            "channels": 2,
+            "frame_samples": 1024,
+            "duration": 1441024,
+            "edit": 1,
+            "media_start": 1024,
+            "empty_duration": 0,
+            "edit_duration": 1440000
+          }
+        }
+      }
+    },
+    {
+      "file": "format-landscape-1280x720-30fps-44100-2ch-30s.mp4",
+      "source_rate": 44100,
+      "source_channels": 2,
+      "audio_packets": 1293,
+      "skip_side_data": [
+        {
+          "side_data_type": "Skip Samples",
+          "skip_samples": 1024,
+          "discard_padding": 0,
+          "skip_reason": 0,
+          "discard_reason": 0
+        },
+        {
+          "side_data_type": "Skip Samples",
+          "skip_samples": 0,
+          "discard_padding": 8,
+          "skip_reason": 0,
+          "discard_reason": 0
+        }
+      ],
+      "coded_frames_assuming_lc1024_or_mpeg1layer3_1152": 1324032,
+      "video_frames": 900,
+      "sha256": "ae722cb9371ef77ccf85eb65255a71b4e0a83a802ef76a0e947bc009af2f6d75",
+      "bytes": 513789,
+      "native_demux": {
+        "info": {
+          "movie_scale": 11289600,
+          "audio": {
+            "rate": 44100,
+            "channels": 2,
+            "frame_samples": 1024,
+            "duration": 1324024,
+            "edit": 1,
+            "media_start": 1024,
+            "empty_duration": 0,
+            "edit_duration": 338688000
+          }
+        }
+      }
+    }
+  ]
+}

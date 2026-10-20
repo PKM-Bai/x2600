@@ -52,6 +52,8 @@ python projects/halley7m-player/mips/test-session.py
 python scripts/test-player-gui.py
 python scripts/make-player-format-fixtures.py
 .\scripts\build-player.ps1 -Configuration Release
+python scripts/test-player-formats-runner.py
+python scripts/run-player-formats-board.py --dry-run
 ```
 
 解码器 16 个真实片源、MP4 25 项、统一 source 24 个真实片源及 16 个错误用例
@@ -64,3 +66,19 @@ python scripts/make-player-format-fixtures.py
 参数及源/实际 PC 解码计数；`_sources`、`_reports`、`_host` 留在 PC。使用原 RAM
 加载入口，软件复位先识别播放器，不写 NOR。用户已取消手机录像及实际声光
 偏差数值验证，本轮不再要求补录。
+
+片源复制并完成 RAM 加载后，可运行：
+
+```powershell
+python scripts/run-player-formats-board.py --port COM52 --root 0:/multimedia `
+  --log build/player-formats-board-r1.log `
+  --firmware-manifest build/player-riscv-Release/manifest.json
+```
+
+该入口逐个播放 manifest 中的14例，EOF 后核对实际封闭的有效样本、音频错误、
+视频帧计数及栈余量，再STOP并确认IDLE/音频关闭；播放期间不集中查询串口。
+`--file <完整文件名>`可重复选择子集，目录也可用`--audio-root/--video-root`
+覆盖。日志和JSON报告要求新文件；全程仅设置7%，失败不自动重播、复位或上传。
+drop/late单列为视频实时指标，不能用功能播放成功替代。manifest记录的是预期
+主机固件，板端固件身份由独立RAM上传日志关联，不伪称runner查询了板端SHA。
+10组假UART测试通过；实际板测结果仍须另记。
