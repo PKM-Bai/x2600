@@ -79,7 +79,7 @@ static void dump_session_trace(void)
 static void print_session(void)
 {
     (void)player_session_snapshot(&console_view);
-    printf("SESSION_STATUS session=%lu state=%u kind=%lu samples=%lu/%lu decoded=%lu displayed=%lu dropped=%lu underruns=%lu volume=%lu pinned=%lu error=%ld request=%lu result=%ld path=%s detail=%s\n",
+    printf("SESSION_STATUS session=%lu state=%u kind=%lu samples=%lu/%lu decoded=%lu displayed=%lu dropped=%lu underruns=%lu volume=%lu pinned=%lu error=%ld request=%lu result=%ld duration_us=%llu has_video=%lu path=%s detail=%s\n",
            (unsigned long)console_view.session_id, (unsigned)console_view.state,
            (unsigned long)console_view.media_kind, (unsigned long)console_view.elapsed_samples,
            (unsigned long)console_view.total_samples, (unsigned long)console_view.decoded_frames,
@@ -87,6 +87,7 @@ static void print_session(void)
            (unsigned long)console_view.audio_underruns, (unsigned long)console_view.volume_percent,
            (unsigned long)console_view.resources_pinned, (long)console_view.error_code,
            (unsigned long)console_view.last_request_id, (long)console_view.last_request_result,
+           (unsigned long long)console_view.duration_us, (unsigned long)console_view.has_video,
            console_view.media_path, console_view.error);
     printf("SESSION_QUEUES late=%lu max_late_us=%lu video_packets=%lu audio_packets=%lu pcm_queued=%lu trimmed=%lu audio_padding=%lu weight_approx=%lu\n",
            (unsigned long)console_view.late_frames, (unsigned long)console_view.max_late_us,
@@ -291,11 +292,12 @@ static void console_task(void *unused)
                 else if (!strcmp(line, "gui")) {
                     player_gui_stats_t s;
                     player_gui_get_stats(&s);
-                    printf("GUI_STATUS page=%u menu=%u generation=%lu rendered=%lu presented=%lu dropped_repeats=%lu dropped_actions=%lu error=%d stack_free_words=%lu\n",
+                    printf("GUI_STATUS page=%u menu=%u generation=%lu rendered=%lu presented=%lu dropped_repeats=%lu dropped_actions=%lu error=%d stack_free_words=%lu controls_visible=%u\n",
                            (unsigned)s.page, s.menu_open, (unsigned long)s.generation,
                            (unsigned long)s.rendered, (unsigned long)s.presented,
                            (unsigned long)s.dropped_repeats, (unsigned long)s.dropped_actions,
-                           s.output_error, gui_handle ? (unsigned long)uxTaskGetStackHighWaterMark(gui_handle) : 0);
+                           s.output_error, gui_handle ? (unsigned long)uxTaskGetStackHighWaterMark(gui_handle) : 0,
+                           s.controls_visible);
                 }
                 else if (!strcmp(line, "reboot")) platform_reboot();
                 else if (!strcmp(line, "display")) player_display_print_status();

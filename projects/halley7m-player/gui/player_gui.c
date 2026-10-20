@@ -29,6 +29,7 @@ static lv_disp_drv_t driver;
 static lv_disp_draw_buf_t draw_buffer;
 static lv_disp_t *display;
 static lv_obj_t *screen, *heading, *path_label, *footer, *notice, *rows[10];
+static lv_obj_t *top_bar, *bottom_bar, *playback_controls;
 static lv_obj_t *progress_track, *progress_fill, *menu, *menu_rows[3];
 static void *allocations[2];
 static lv_color_t *draw_pixels;
@@ -40,6 +41,8 @@ static unsigned diagnostic_offset;
 static uint32_t library_generation, volume_request;
 static unsigned requested_volume;
 static bool volume_pending;
+static uint32_t controls_activity_ms;
+static bool key_activity;
 
 static void text(lv_obj_t *object, const char *value)
 {
@@ -98,14 +101,17 @@ static void build_page(enum player_gui_page page)
     lv_obj_clean(screen);
     memset(rows, 0, sizeof(rows));
     progress_track = progress_fill = NULL;
+    playback_controls = NULL;
+    stats.controls_visible = page == PLAYER_GUI_PLAYBACK;
+    controls_activity_ms = last_ms;
     lv_obj_set_style_bg_opa(screen, page == PLAYER_GUI_PLAYBACK ? LV_OPA_TRANSP : LV_OPA_COVER, 0);
     lv_obj_set_style_bg_color(screen, lv_color_hex(0x101820), 0);
-    lv_obj_t *top = box(screen, 0, 0, 1280, 108, 0x101820, page == PLAYER_GUI_PLAYBACK ? 190 : 255);
-    heading = label(top, 32, 14, 1120, page == PLAYER_GUI_LIBRARY ? "媒体库" :
+    top_bar = box(screen, 0, 0, 1280, 108, 0x101820, page == PLAYER_GUI_PLAYBACK ? 190 : 255);
+    heading = label(top_bar, 32, 14, 1120, page == PLAYER_GUI_LIBRARY ? "媒体库" :
                     page == PLAYER_GUI_PLAYBACK ? "正在播放" : "运行诊断", 0x63dfd2);
-    path_label = label(top, 32, 60, 1216, "", 0xd7e1e9);
-    lv_obj_t *bottom = box(screen, 0, 642, 1280, 78, 0x101820, page == PLAYER_GUI_PLAYBACK ? 210 : 255);
-    footer = label(bottom, 32, 20, 1216, "", 0xc1ccd6);
+    path_label = label(top_bar, 32, 60, 1216, "", 0xd7e1e9);
+    bottom_bar = box(screen, 0, 642, 1280, 78, 0x101820, page == PLAYER_GUI_PLAYBACK ? 210 : 255);
+    footer = label(bottom_bar, 32, 20, 1216, "", 0xc1ccd6);
     notice = label(screen, 32, 594, 1216, "", 0xf1c86b);
     if (page == PLAYER_GUI_LIBRARY) {
         for (unsigned i = 0; i < 10; ++i) {
@@ -115,9 +121,9 @@ static void build_page(enum player_gui_page page)
             lv_obj_set_style_pad_top(rows[i], 3, 0);
         }
     } else if (page == PLAYER_GUI_PLAYBACK) {
-        lv_obj_t *controls = box(screen, 24, 500, 1232, 86, 0x101820, 205);
-        rows[0] = label(controls, 20, 10, 1150, "", 0xffffff);
-        progress_track = box(controls, 20, 57, 1192, 8, 0x4c5965, 255);
+        playback_controls = box(screen, 24, 500, 1232, 86, 0x101820, 205);
+        rows[0] = label(playback_controls, 20, 10, 1150, "", 0xffffff);
+        progress_track = box(playback_controls, 20, 57, 1192, 8, 0x4c5965, 255);
         progress_fill = box(progress_track, 0, 0, 1, 8, 0x63dfd2, 255);
         rows[1] = label(screen, 48, 310, 1184, "", 0xf1c86b);
         lv_obj_set_style_text_align(rows[1], LV_TEXT_ALIGN_CENTER, 0);
@@ -249,17 +255,20 @@ static void update_view(void)
     } else if (stats.page == PLAYER_GUI_PLAYBACK) {
         text(heading, state_name());
         text(path_label, basename_utf8(view.media_path));
-        uint32_t elapsed = view.elapsed_samples / 48000u, total = view.total_samples / 48000u;
+        uint32_t elapsed = view.elapsed_samples / 48000u;
+        uint64_t total = view.duration_us / 1000000u;
         char duration[24];
-        if (view.total_samples) snprintf(duration,sizeof(duration),"%02lu:%02lu",
+        if (view.duration_us) snprintf(duration,sizeof(duration),"%02lu:%02lu",
             (unsigned long)(total/60u),(unsigned long)(total%60u));
         else snprintf(duration,sizeof(duration),"--:--");
         snprintf(line, sizeof(line), "%s   %02lu:%02lu / %s    音量 %lu%%",
                  state_name(), (unsigned long)(elapsed / 60u), (unsigned long)(elapsed % 60u),
                  duration, (unsigned long)view.volume_percent);
         text(rows[0], line);
-        unsigned width = view.total_samples ? (unsigned)((uint64_t)view.elapsed_samples * 1192u / view.total_samples) : 1u;
-        if (width > 1192) width = 1192;
+        uint64_t elapsed_us = (uint64_t)view.elapsed_samples * 1000000u / 48000u;
+        unsigned width = !view.duration_us ? 1u :
+            view.state == PLAYER_SESSION_ENDED || elapsed_us >= view.duration_us ? 1192u :
+            (unsigned)(elapsed_us * 1192u / view.duration_us);
         if (!width) width = 1;
         if (lv_obj_get_width(progress_fill) != (lv_coord_t)width) lv_obj_set_width(progress_fill, (lv_coord_t)width);
         const char *media_label=view.media_kind==1 ? "WAV音频" : view.media_kind==3 ? "MP3音频" :
@@ -346,6 +355,7 @@ int player_gui_init(const player_gui_output_t *backend)
     request_id = media_session = last_ms = next_refresh = 0;
     library_generation = volume_request = requested_volume = 0;
     volume_pending = false;
+    key_activity = false;
     build_page(PLAYER_GUI_LIBRARY);
     return_page = PLAYER_GUI_LIBRARY;
     (void)send_command(PLAYER_SESSION_LIBRARY_OPEN, 0);
@@ -355,8 +365,34 @@ int player_gui_init(const player_gui_output_t *backend)
 void player_gui_sample_keys(uint32_t now_ms, uint16_t keys)
 {
     INPUT_LOCK();
-    if (initialized) player_input_sample(&input, keys, now_ms);
+    if (initialized) {
+        /* Start's command waits for release/long-press recognition, but every
+         * debounced press must reveal the overlay immediately. Keep only an
+         * activity latch here; LVGL remains confined to the GUI task. */
+        if ((keys & PLAYER_INPUT_KEY_MASK) || input.held) key_activity = true;
+        player_input_sample(&input, keys, now_ms);
+    }
     INPUT_UNLOCK();
+}
+
+static void update_controls(uint32_t now_ms)
+{
+    INPUT_LOCK();
+    bool active = key_activity;
+    key_activity = false;
+    INPUT_UNLOCK();
+    if (stats.page != PLAYER_GUI_PLAYBACK) return;
+    if (active || !view.has_video || view.state != PLAYER_SESSION_PLAYING ||
+        stats.menu_open || view.error_code || view.resources_pinned)
+        controls_activity_ms = now_ms;
+    bool visible = now_ms - controls_activity_ms < 3000u;
+    if (visible == (stats.controls_visible != 0)) return;
+    stats.controls_visible = visible;
+    lv_obj_t *objects[] = {top_bar, bottom_bar, playback_controls, rows[1]};
+    for (unsigned i = 0; i < sizeof(objects) / sizeof(objects[0]); ++i) {
+        if (visible) lv_obj_clear_flag(objects[i], LV_OBJ_FLAG_HIDDEN);
+        else lv_obj_add_flag(objects[i], LV_OBJ_FLAG_HIDDEN);
+    }
 }
 
 static bool pop_input(player_input_event_t *event)
@@ -436,6 +472,7 @@ int player_gui_step(uint32_t now_ms)
                 lv_obj_set_style_bg_opa(menu_rows[i], opa, 0);
             }
         }
+    update_controls(now_ms);
     /* LVGL's invalidation path resumes its refresh timer automatically.
      * Page/menu changes may invalidate while our DMA surface is still pinned;
      * enforce the gate after all mutations, immediately before timers run. */

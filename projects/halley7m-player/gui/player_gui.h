@@ -21,7 +21,7 @@ typedef struct {
 } player_gui_output_t;
 typedef struct {
     enum player_gui_page page;
-    unsigned menu_open, menu_selected;
+    unsigned menu_open, menu_selected, controls_visible;
     uint32_t generation, rendered, presented, dropped_repeats, dropped_actions;
     int output_error;
     uint32_t output_generation;

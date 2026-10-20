@@ -29,6 +29,12 @@ def ceiling(value):
     return (value.numerator + value.denominator - 1) // value.denominator
 
 
+def run_session(arguments, duration_us):
+    environment = os.environ.copy()
+    environment['PLAYER_TEST_DURATION_US'] = str(duration_us)
+    subprocess.run(list(map(str, arguments)), env=environment, check=True)
+
+
 def video_edit(data, support, *, shift_ticks=0, duration_ms=None, remove=False):
     """Fixtures use movie scale 1000 and video scale 90000; keep every AU."""
     previous_start = None
@@ -129,7 +135,7 @@ def main():
         arguments = [str(executables[1]), str(fixture)]
         if frames == 90:
             arguments.append(str(frames))
-        subprocess.run(arguments, check=True)
+        run_session(arguments, frames * 1000000 // 30)
     # Exact source frame counts after MP3 encoder delay/padding and M4A elst;
     # bare ADTS keeps its padding because it carries no edit duration.
     for suffix, codec_args, expected in [
@@ -148,7 +154,8 @@ def main():
                         '-bf', '0', '-g', '30', '-pix_fmt', 'yuv420p']
         command += codec_args + ['-ac', '2', str(fixture)]
         subprocess.run(command, check=True)
-        subprocess.run([str(executables[1]), str(fixture), '30' if suffix == 'mp4' else '0', str(expected)], check=True)
+        run_session([executables[1], fixture, '30' if suffix == 'mp4' else '0', expected],
+                    0 if suffix == 'aac' else 1000000)
     # The real session must follow packet PTS rather than reconstructing 30fps.
     spec = importlib.util.spec_from_file_location('mp4_support', ROOT / 'scripts/test-player-mp4.py')
     mp4_support = importlib.util.module_from_spec(spec)
@@ -163,10 +170,11 @@ def main():
             '-c:a', 'aac', '-ac', '2', str(fixture)], check=True)
         video = reference_video(probe(ffprobe, fixture))
         expected_samples = max(48000, ceiling(max(pts + duration for pts, duration in video) * 48000))
-        subprocess.run([str(executables[1]), str(fixture), str(frames), str(expected_samples)], check=True)
+        duration_us = max(1000000, int(max(pts + duration for pts, duration in video) * 1000000))
+        run_session([executables[1], fixture, frames, expected_samples], duration_us)
     fixture = output / 'pts-33-34ms.mp4'
     fixture.write_bytes(mp4_support.quantized_frame_times((output / 'pts-30.mp4').read_bytes()))
-    subprocess.run([str(executables[1]), str(fixture), '30', '48000'], check=True)
+    run_session([executables[1], fixture, '30', '48000'], 1000000)
     # PTS order intentionally differs from AU order. The fake codec owns
     # delayed slots until reorder eligibility, and EOF must drain the tail.
     cases = []
@@ -220,15 +228,17 @@ def main():
                                        '-ar', '48000', '-ac', '1', '-f', 's16le', '-'])
         metadata = probe(ffprobe, path)
         track = next(stream for stream in metadata['streams'] if stream['codec_type'] == 'audio')
-        edited_samples = int(int(track['duration_ts']) * Fraction(track['time_base']) * 48000)
+        audio_duration = int(track['duration_ts']) * Fraction(track['time_base'])
+        edited_samples = int(audio_duration * 48000)
         audio_samples = min(len(pcm) // 2, edited_samples)
         expected = max(audio_samples, ceiling(end * 48000))
         references.append({'name': path.name, 'decode_frames': len(timeline), 'visible_frames': len(visible),
                            'last_display_decode_index': last_decode_index, 'audio_media_samples': audio_samples,
                            'audio_total_samples': expected, 'audio_padding_samples': expected - audio_samples,
                            'reorder_depth': depth})
-        subprocess.run([str(executables[1]), str(path), str(len(timeline)), str(expected),
-                        str(depth), str(last_decode_index), str(len(visible)), str(expected - audio_samples)], check=True)
+        run_session([executables[1], path, len(timeline), expected,
+                     depth, last_decode_index, len(visible), expected - audio_samples],
+                    int(max(end, audio_duration) * 1000000))
     (output / 'bframes-reference.json').write_text(json.dumps(references, indent=2) + '\n', encoding='utf-8')
     print('Production session/core host tests passed; no physical storage, serial or hardware access.')
 

@@ -475,10 +475,22 @@ int main(int argc, char **argv)
         }
         for (unsigned run = 0; run < 3; ++run) {
             post(PLAYER_SESSION_PLAY_PATH, 0, "@embedded");
+            uint64_t opened_duration = snapshot.duration_us;
+            assert(snapshot.has_video == (uint32_t)(expected_video_frames != 0));
+            if (snapshot.media_kind == PLAYER_MEDIA_MP4) {
+                /* Metadata is already published while audio START still has
+                 * an unknown total. No EOF/decoder work may be needed for UI. */
+                assert(snapshot.state == PLAYER_SESSION_LOADING && !audio.session_active);
+                assert(opened_duration && !snapshot.total_samples);
+            }
+            const char *duration_reference = getenv("PLAYER_TEST_DURATION_US");
+            if (duration_reference)
+                assert(opened_duration == (uint64_t)strtoull(duration_reference, NULL, 10));
             wait_state(PLAYER_SESSION_PLAYING);
             post(PLAYER_SESSION_PAUSE, 0, NULL);
             uint32_t paused_samples = snapshot.elapsed_samples;
             step(20); assert(snapshot.elapsed_samples == paused_samples);
+            if (opened_duration) assert(snapshot.duration_us == opened_duration);
             post(PLAYER_SESSION_RESUME, 0, NULL);
             wait_state(PLAYER_SESSION_ENDED);
             printf("compressed run=%u kind=%u samples=%u total=%u decoded=%u audio_errors=%u\n",
@@ -486,6 +498,8 @@ int main(int argc, char **argv)
                    snapshot.decoded_frames, snapshot.audio_underruns);
             fflush(stdout);
             assert(snapshot.elapsed_samples == expected_samples && snapshot.total_samples == expected_samples);
+            assert(snapshot.duration_us == (opened_duration ? opened_duration :
+                   (uint64_t)expected_samples * 1000000u / 48000u));
             assert(snapshot.decoded_frames == expected_video_frames && !snapshot.audio_underruns);
             if (argc >= 8) assert(snapshot.audio_padding_samples == expected_padding);
             assert(snapshot.trimmed_frames == expected_video_frames - expected_visible);
@@ -510,6 +524,7 @@ int main(int argc, char **argv)
             }
             post(PLAYER_SESSION_STOP, 0, NULL);
             assert(snapshot.state == PLAYER_SESSION_IDLE && !allocations && !file.open && !audio.session_active);
+            assert(!snapshot.has_video && !snapshot.duration_us);
         }
         free(avi); return 0;
     }
@@ -562,6 +577,7 @@ int main(int argc, char **argv)
     assert(snapshot.state == PLAYER_SESSION_IDLE && !file.open && !allocations && !audio_starts);
     post(PLAYER_SESSION_PLAY_PATH, 0, "0:/sound.wav");
     assert(snapshot.state == PLAYER_SESSION_LOADING && audio_starts == 0);
+    assert(!snapshot.has_video && snapshot.duration_us == UINT64_C(19201) * 1000000u / 48000u);
     wait_state(PLAYER_SESSION_PLAYING);
     assert(audio.written_samples >= 4800u && snapshot.volume_percent == PLAYER_DEFAULT_VOLUME_PERCENT);
     post(PLAYER_SESSION_PAUSE, 0, NULL);
@@ -595,6 +611,7 @@ int main(int argc, char **argv)
     unsigned opens_before_pending = video_codec_opens;
     post(PLAYER_SESSION_PLAY_PATH, 0, "0:/picture.avi");
     assert(snapshot.state == PLAYER_SESSION_LOADING && geometry_in_progress);
+    assert(snapshot.has_video && snapshot.duration_us == (uint64_t)expected_video_frames * 1000000u / 30u);
     assert(!video_codec_running && !seed_geometry_ready && session_memalign_calls==2u && allocations==2u);
     post(PLAYER_SESSION_STOP, 0, NULL);
     assert(snapshot.state == PLAYER_SESSION_IDLE && !allocations && !geometry_in_progress);

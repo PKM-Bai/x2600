@@ -419,6 +419,26 @@ static int media_failure(int result, const char *operation)
     return pump_error ? pump_error : result;
 }
 
+static int media_duration_us(uint64_t *duration)
+{
+    uint64_t samples = media.audio_samples;
+    uint32_t rate = 48000u;
+    /* MP4 edits and MP3 gapless metadata describe the source sample axis.
+     * Use that timeline for the UI without promising a PCM count to START:
+     * the compressed decoder may already suppress its priming samples. */
+    if (media.audio_codec && media.clip_end != UINT64_MAX) {
+        samples = media.clip_end - media.clip_start;
+        rate = media.source_rate;
+    }
+    uint64_t whole = samples / rate;
+    uint64_t tail = samples % rate * UINT64_C(1000000) / rate;
+    if (whole > (UINT64_MAX - tail) / UINT64_C(1000000)) return -EOVERFLOW;
+    *duration = whole * UINT64_C(1000000) + tail;
+    if (media.video_end_us > 0 && (uint64_t)media.video_end_us > *duration)
+        *duration = (uint64_t)media.video_end_us;
+    return 0;
+}
+
 static int begin_media_impl(const char *path)
 {
     int result;
@@ -430,9 +450,11 @@ static int begin_media_impl(const char *path)
     result = stop_resources();
     if (result) return result;
     view.media_kind = 0;
+    view.has_video = 0;
     view.error_code = 0;
     view.error[0] = 0;
     view.elapsed_samples = view.total_samples = 0;
+    view.duration_us = 0;
     view.decoded_frames = view.displayed_frames = view.dropped_frames = view.audio_underruns = 0;
     view.trimmed_frames = view.audio_padding_samples = 0;
     view.weight_approximated_frames = 0;
@@ -480,7 +502,10 @@ static int begin_media_impl(const char *path)
         return -ENOTSUP;
     }
     view.media_kind = (uint32_t)media.kind;
+    view.has_video = media.video_frames != 0;
     view.total_samples = (uint32_t)media.audio_samples;
+    result = media_duration_us(&view.duration_us);
+    if (result) return result;
     player_packet_queue_init(&video_queue, video_packets, PLAYER_VIDEO_QUEUE_PACKETS);
     player_packet_queue_init(&audio_queue, audio_packets, PLAYER_AUDIO_QUEUE_PACKETS);
     if (media.audio_codec) {
@@ -686,7 +711,11 @@ static int feed_audio(void)
         }
     }
     player_audio_client_get_status(&audio_status);
-    if (audio_eof) view.total_samples = audio_status.total_samples;
+    if (audio_eof) {
+        view.total_samples = audio_status.total_samples;
+        if (!view.duration_us)
+            view.duration_us = (uint64_t)view.total_samples * 1000000u / 48000u;
+    }
     view.elapsed_samples = audio_status.completed_samples;
     view.audio_underruns = audio_status.underruns;
     return audio_status.last_error;
@@ -1031,6 +1060,8 @@ static int handle_command(const player_session_command_t *command)
             view.error_code = 0;
             view.error[0] = 0;
             view.media_kind = 0;
+            view.has_video = 0;
+            view.duration_us = 0;
         }
         return result;
     case PLAYER_SESSION_PAUSE:

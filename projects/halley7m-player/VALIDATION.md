@@ -1,5 +1,53 @@
 # 播放器实施验收记录
 
+## 2026-10-20：R9播放控制条隐藏与提前总时长（RAM验证）
+
+修复播放页缺少空闲隐藏逻辑：仅视频PLAYING时约3秒无按键隐藏上下栏、进度条和
+中央媒体提示，任意已去抖按键按下即唤出，仍执行原音量/暂停/长按菜单动作。
+按住、暂停、菜单、ENDED、错误及资源持有时常显，纯音频不隐藏。输入扫描只记录
+活动，LVGL更新仍只在GUI任务；可见性变化沿用原异步双表面和脏区同步通路。
+
+原总时长误用音频协议`total_samples`，压缩解码在EOF前刻意保持0，故长期显示
+`--:--`。新增独立的`duration_us`和`has_video`：打开时从完整流/编辑后媒体时间线
+计算时长，取音视频终点较长者；MP4/VFR/B帧不靠帧率猜测，也不提前承诺实际PCM
+样本数。已知时长在暂停和EOF保持稳定，未知裸音频EOF才补齐，STOP/新会话清零。
+GUI总时长和进度使用媒体时长，自然结束进度满格；音频START/EOF/DRAIN契约不变。
+
+主机验证为完整生产会话回归和headless LVGL回归。前者覆盖WAV/AVI、MP3/AAC/
+M4A/MP4、VFR、24/25/29.97/30fps、B帧/CTTS/edit及音频短尾；新增LOADING阶段
+MP4时长已知且音频总样本仍0的断言。GUI为79次异步表面提交，native/wide布局
+均检查整表面alpha清零、多次隐藏唤出无残影、3秒边界、Start按下与释放分离、
+队列背压、连发、计时回绕、暂停/菜单/EOF等常显及末尾进度。既有UI序列回归通过。
+
+两核Debug/Release构建及内存/合包核验通过，Release1951392B、CRC `d4131fe7`、
+SHA256 `17aae0405f08bc2864585b61de0699220fd83f33c7016c6b0ff8471a115c869f`；
+Debug2083648B、CRC `f96f4d0d`，SHA256
+`651dc893ba52e29e87d3eb3723a35469b45330d9a55591788926cec1f748664e`。
+冻结ELF/BIN/MAP及修正为冻结路径的manifest在`build/player-ui-fixes-20261020`。
+RAM上传由U-Boot长度和CRC核验后执行，默认7%，本轮未改显示时钟或背光参数。
+
+真实TF自动板测已通过：吉他MP4在LOADING即有115750816us，播放初期仍为
+`480/0`实际音频样本；空闲隐藏、Start按下唤出早于长按菜单、菜单/诊断往返1/1、
+暂停4秒冻结2200800样本、常显及恢复后再次隐藏均通过。原始test.mp4载入即有
+33200725us，完整994帧解码/988呈现，drop/late6/6、max_late57000us，1592520
+有效音频样本完整，ENDED控制条可见、时长不变。30分钟AVI仅短播验证开头即有
+1800000000us及隐藏，不能算重跑30分钟；M4A开头即有30000000us且不自动隐藏。
+所有查询的音频欠载、DMA错误/超时、队列/FIFO错误均0；各次STOP后IDLE、pinned0、
+音频inactive。吉他中途停止为1507解码/1439呈现、drop/late67/67，AVI短播为134/
+132、drop/late1/1，如实保留迟到跳帧，不将本轮UI修复描述成视频零掉帧优化。
+
+用户已在RAM修正版确认吉他视频开头显示总时长01:55，Start播放后约3秒上下UI和
+进度条全部隐藏，再短按Start能重新显示并暂停，回复“两项都正常”。当前以上结果
+为RAM板测及人工确认，不能当作Flash更新结果。
+
+| 本地证据 | SHA256 |
+| --- | --- |
+| `build/player-ui-session-duration-test.log` | `0de9291d467f10c58af4affcf8177987300f802d552bc3c5081db0613b5140b3` |
+| `build/player-ui-fix-20261020/gui-host/test.log` | `d49906ad2cb82a3df4abe4c4f5884066acbf3d70cb8b4f2dc87e76bc9be76b63` |
+| `build/player-ui-fixes-20261020/ram-upload.log` | `a81f9fe048fb7df2f1a4c602cad3e9f22b76e5d9f351a05fada5fc090239873c` |
+| `build/player-ui-fixes-20261020/ram-ui-board.log` | `e45f4b676aff1d14e15ec56a2e8c8abfe52bcaf3df4b8d968ceaa51db15de79f` |
+| 同名`.json` | `3139362393c68c0adee5e65fc55ed9de8752a6d509f36e30de276d8000cf7fc0` |
+
 ## 2026-10-20：R8 Flash冷启动补验与频闪排查
 
 用户反馈从Flash启动后，未播放文件的媒体库也曾出现整屏亮暗闪烁。本轮保留

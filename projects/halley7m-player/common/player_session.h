@@ -41,10 +41,13 @@ typedef struct player_session_snapshot {
     uint32_t revision;
     uint32_t session_id;
     enum player_session_state state;
-    uint32_t media_kind; /* 0=none, 1=WAV, 2=AVI. */
+    uint32_t media_kind; /* 0=none; otherwise enum player_media_kind. */
+    uint32_t has_video;
     uint32_t volume_percent;
     uint32_t elapsed_samples; /* 48 kHz audio clock, valid PCM only. */
-    uint32_t total_samples;
+    uint32_t total_samples; /* Audio protocol total; zero until streaming EOF. */
+    uint64_t duration_us; /* Edited media timeline, available on open; 0=unknown.
+                           * Independent of the decoder's eventual PCM count. */
     uint32_t decoded_frames;
     uint32_t displayed_frames;
     uint32_t dropped_frames;

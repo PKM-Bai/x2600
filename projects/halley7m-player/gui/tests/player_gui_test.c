@@ -125,6 +125,124 @@ static bool contains_label(lv_obj_t *object, const char *value)
     return false;
 }
 
+static uint32_t pixel(unsigned x, unsigned y)
+{
+    assert(front);
+    return front[memory_logical ? y * 1280u + x : x * 720u + 719u - y];
+}
+
+static void controls_visible(bool visible)
+{
+    player_gui_stats_t gui;
+    player_gui_get_stats(&gui);
+    assert((gui.controls_visible != 0) == visible);
+    assert(!pending); /* Compare the completed DMA front, not just LVGL flags. */
+    if (visible) {
+        assert(pixel(0, 0) == 0xbe101820);
+        assert(pixel(0, 650) == 0xd2101820);
+        assert(pixel(44, 557) >> 24 == 255); /* Progress remains visible. */
+    } else {
+        for (unsigned i = 0; i < PLAYER_GUI_SURFACE_BYTES / 4u; ++i)
+            assert(front[i] >> 24 == 0); /* No title, footer, progress or ghost pixels. */
+    }
+}
+
+static void video_controls_test(void)
+{
+    player_gui_stats_t gui;
+    snapshot.has_video = 1;
+    snapshot.state = PLAYER_SESSION_PLAYING;
+    snapshot.duration_us = 180000000u;
+    snapshot.total_samples = 0; /* MP4 keeps the final PCM count unknown until EOF. */
+    ++snapshot.revision;
+    press(PLAYER_INPUT_KEY_A);
+    tick(150, 0);
+    assert(contains_label(lv_scr_act(), "00:37 / 03:00"));
+    controls_visible(true);
+    tick(2800, 0);
+    controls_visible(true); /* Not hidden before the three-second timeout. */
+    tick(250, 0);
+    controls_visible(false);
+    unsigned before = commands;
+    full_queue = 1;
+    press(PLAYER_INPUT_KEY_B);
+    tick(150, 0);
+    assert(commands == before);
+    controls_visible(true); /* Command queue backpressure must not delay wake-up. */
+    full_queue = 0;
+    tick(150, 0);
+    assert(commands == before + 1 && last_command.kind == PLAYER_SESSION_SET_VOLUME);
+    controls_visible(true); /* Wake also executes the original command. */
+    tick(3100, 0);
+    controls_visible(false); /* Repeat the full clear after swapping both surfaces. */
+    before = commands;
+    tick(60, PLAYER_INPUT_KEY_START);
+    assert(commands == before); /* Short-press command still waits for release. */
+    controls_visible(true); /* The press itself already woke the overlay. */
+    tick(150, 0);
+    assert(commands == before + 1 && last_command.kind == PLAYER_SESSION_TOGGLE_PAUSE);
+    snapshot.state = PLAYER_SESSION_PAUSED;
+    ++snapshot.revision;
+    tick(3300, 0);
+    controls_visible(true);
+    snapshot.state = PLAYER_SESSION_PLAYING;
+    ++snapshot.revision;
+    tick(3300, 0);
+    controls_visible(false);
+    before = commands;
+    tick(850, PLAYER_INPUT_KEY_START);
+    tick(150, 0);
+    player_gui_get_stats(&gui);
+    assert(gui.menu_open && commands == before);
+    tick(3300, 0);
+    controls_visible(true); /* Menu remains usable over an otherwise idle video. */
+    tick(850, PLAYER_INPUT_KEY_START);
+    tick(150, 0);
+    player_gui_get_stats(&gui);
+    assert(!gui.menu_open && commands == before);
+    tick(3100, 0);
+    controls_visible(false);
+    snapshot.state = PLAYER_SESSION_ENDED;
+    snapshot.elapsed_samples = 180u * 48000u - 1000u;
+    ++snapshot.revision;
+    tick(3300, 0);
+    controls_visible(true);
+    assert(pixel(1235, 557) == 0xff63dfd2); /* EOF fills the track despite AAC trimming. */
+    snapshot.state = PLAYER_SESSION_PLAYING;
+    snapshot.has_video = 0;
+    snapshot.media_kind = 3;
+    ++snapshot.revision;
+    tick(3300, 0);
+    controls_visible(true); /* Audio playback does not disappear. */
+    snapshot.has_video = 1;
+    snapshot.media_kind = 2;
+    snapshot.elapsed_samples = 48000u * 37u;
+    ++snapshot.revision;
+    tick(3300, 0);
+    controls_visible(false);
+    snapshot.error_code = -EIO;
+    strcpy(snapshot.error, "测试播放错误");
+    ++snapshot.revision;
+    tick(150, 0);
+    controls_visible(true);
+    assert(contains_label(lv_scr_act(), snapshot.error));
+    snapshot.error_code = 0;
+    snapshot.error[0] = 0;
+    snapshot.resources_pinned = 1;
+    ++snapshot.revision;
+    tick(3300, 0);
+    controls_visible(true);
+    assert(contains_label(lv_scr_act(), "停止尚未完成"));
+    snapshot.resources_pinned = 0;
+    ++snapshot.revision;
+    tick(3300, 0);
+    controls_visible(false);
+    /* An uninterrupted held key, including its repeats, keeps the UI awake. */
+    tick(3300, PLAYER_INPUT_KEY_A);
+    tick(150, 0);
+    controls_visible(true);
+}
+
 static void surface_test(void)
 {
     uint32_t *a = malloc(PLAYER_GUI_SURFACE_BYTES + 8u);
@@ -237,8 +355,10 @@ int main(int argc, char **argv)
     snapshot.session_id = 1;
     snapshot.state = PLAYER_SESSION_PLAYING;
     snapshot.media_kind = 2;
+    snapshot.has_video = 1;
     snapshot.elapsed_samples = 48000 * 37;
     snapshot.total_samples = 48000 * 180;
+    snapshot.duration_us = 180000000u;
     snapshot.decoded_frames = 1110;
     snapshot.displayed_frames = 1108;
     snapshot.weight_approximated_frames = 5;
@@ -270,7 +390,8 @@ int main(int argc, char **argv)
     player_gui_get_stats(&gui);
     assert(gui.page == PLAYER_GUI_PLAYBACK);
     assert(gui.presented > 4 && gui.output_error == 0 && submissions >= gui.presented);
-    snapshot.media_kind=3; snapshot.total_samples=0; ++snapshot.revision;
+    snapshot.media_kind=3; snapshot.has_video=0; snapshot.total_samples=0;
+    snapshot.duration_us=0; ++snapshot.revision;
     capture("audio-unknown");
     assert(contains_label(lv_scr_act(),"--:--") && contains_label(lv_scr_act(),"MP3音频"));
     snapshot.media_kind=4; ++snapshot.revision; tick(150,0);
@@ -279,9 +400,11 @@ int main(int argc, char **argv)
     ++snapshot.revision; tick(150,0);
     assert(contains_label(lv_scr_act(),"M4A音频"));
     snapshot.total_samples=snapshot.elapsed_samples=96017;
+    snapshot.duration_us=(uint64_t)snapshot.total_samples*1000000u/48000u;
     snapshot.state=PLAYER_SESSION_ENDED; ++snapshot.revision; tick(150,0);
     assert(!contains_label(lv_scr_act(),"--:--") && contains_label(lv_scr_act(),"00:02 / 00:02"));
     snapshot.media_kind=2; snapshot.state=PLAYER_SESSION_PLAYING;
+    snapshot.has_video=1; snapshot.duration_us=180000000u;
     snapshot.elapsed_samples=48000*37; snapshot.total_samples=48000*180;
     strcpy(snapshot.media_path,"0:/本地媒体/清晨的城市与海边漫步.avi"); ++snapshot.revision;
     tick(150,0);
@@ -296,14 +419,28 @@ int main(int argc, char **argv)
     player_gui_get_stats(&gui);
     assert(mode_ack==2 && gui.logical_output && gui.output_generation==mode_generation);
     assert(front[250*1280+500]==0 && front[0]==0xbe101820);
+    video_controls_test();
     mode_phase=1; mode_ack=0; ++mode_generation; target_logical=false;
     tick(100,0);
     assert(mode_ack==1 && !pending);
     front=NULL; mode_phase=2; tick(150,0);
     player_gui_get_stats(&gui);
     assert(!gui.logical_output && gui.output_generation==mode_generation && front[719]==0xbe101820);
+    video_controls_test();
+    /* The activity deadline must also survive the 32-bit millisecond wrap. */
+    now = UINT32_MAX - 1500u;
+    tick(150, PLAYER_INPUT_KEY_A);
+    tick(100, 0);
+    controls_visible(true);
+    tick(2700, 0);
+    controls_visible(true);
+    tick(400, 0);
+    controls_visible(false);
+    press(PLAYER_INPUT_KEY_B);
+    tick(150, 0);
+    controls_visible(true);
     assert(player_gui_deinit(0) == -EBUSY);
     assert(player_gui_deinit(1) == 0);
-    printf("PASS production LVGL GUI: native/logical rotation/guards, async pin/sync, GUI route drain/rebuild ACK, font, 3 keys, backpressure, three pages/menu (%u submissions)\n", submissions);
+    printf("PASS production LVGL GUI: native/logical rotation/guards, async pin/sync, GUI route drain/rebuild ACK, font, 3 keys, backpressure, video overlay idle/wake/alpha/wrap, duration metadata/EOF fill, three pages/menu (%u submissions)\n", submissions);
     return 0;
 }
