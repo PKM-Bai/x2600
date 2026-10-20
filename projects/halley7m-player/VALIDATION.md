@@ -1,5 +1,35 @@
 # 播放器实施验收记录
 
+## 2026-10-20：兼容性R8更新NOR并从Flash启动
+
+用户明确要求将当前新版RAM固件写入Flash。使用已完成兼容性验收的冻结R8镜像，
+对应功能源码`c0e5033`，未重新构建；紧凑包1949856B/CRC `be8b7739`、SHA256
+`bad023ccbf951a25fec04e30ecbb08f356fa0a973ae867b6b56c845d5e6bba80`。沿用旧擦除范围，
+追加376672B FF形成2326528B/`0x238000`的NOR包，CRC `b8c0bfad`、SHA256
+`805c15d899246f81aa59a29ea623fd37ce1353d2e85db3f3c71aec9cf1090861`。真实ELF/BIN、
+BSS填充边界、上次R4安装身份和双份原始16MiB备份通过；共享烧写流程及播放器包装
+自测通过。本地准备使用独立输出目录，没有覆盖历史安装证据。
+
+播放器STOP确认、音频关闭后，软件复位进入原U-Boot并上传。擦除前匹配整段6MiB
+旧应用分区及有效环境，再擦写`[0x40000,0x278000)`；擦除FF核验、写入CRC及
+全部2326528字节比较通过，环境CRC及持久bootcmd核验通过。SPL/U-Boot代码
+CRC `3a3c3918`、当前rootfs CRC `8618c73f`前后不变。保持启动命令
+`sfcnor read 0x40000 0x238000 0x80600000;go 0x80600000`及1秒等待。
+
+reset后直接由NOR装载新版，未追加RAM上传或手工go；日志观察到PLAYER_BOOT、
+AMP_READY及DISPLAY/GUI/BUTTONS_INIT=0。独立串口查询AMP active、owner=riscv、
+会话IDLE、GUI媒体库页、音频关闭，默认音量7%。随后完整播放TF原始test.mp4：
+解码994、呈现989、drop/late5/5、max_late67000us；1592520音频样本完整，
+DMA错误/超时、队列/FIFO欠载及音频错误全0，权重近似计数5。GUI58/58呈现、错误0；
+STOP后IDLE、kind0、pinned0、音频inactive，空闲堆34650432B、media栈最低余11264words。
+如实保留迟到跳帧，未将RAM暂停回归的994/994零掉帧结果迁移到本次NOR运行。
+
+安装记录为本地`build/flash-player-nor-compat-r8-20261020.log/.json`，原始播放记录为
+`build/player-nor-compat-r8-boot-play-board-20261020.log`，逐份SHA及后续更新入口见
+[NOR安装说明](NOR_INSTALL.md)。本轮确认写入、逐字节回读与软件复位自动启动，
+`cold_boot_verified=false`保持如实；未进行物理断电冷启动或新格式30分钟重测。
+用户可以停止后断电取卡、复制媒体，重新上电时由持久启动命令装载新版。
+
 ## 2026-10-20：NOR安装与复位自动启动通过
 
 用户明确要求将当前RAM播放器写入Flash。源R4合包1920032B/CRC1e71d376保持不变，
