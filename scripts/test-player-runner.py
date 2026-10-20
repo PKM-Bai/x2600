@@ -28,6 +28,10 @@ class FakeBoard:
         self.fault_emitted = False
         self.summary_induced_drops = 0
         self.summary_audio_active = []
+        self.input = bytearray()
+
+    def pause(self, seconds):
+        self.now += seconds
 
     def clock(self):
         return self.now
@@ -91,6 +95,14 @@ class FakeBoard:
                 f"elapsed_ms={round(min(elapsed,self.seconds)*1000)} duration_ms={self.seconds*1000} keys=000 aborted={int(aborted)} cancel_may_emit_short=0")
 
     def write(self, payload):
+        self.input.extend(payload)
+        while b"\r" in self.input:
+            end = self.input.index(b"\r") + 1
+            command = bytes(self.input[:end]); del self.input[:end]
+            self.write_command(command)
+        return len(payload)
+
+    def write_command(self, payload):
         command = payload.decode("utf-8").strip()
         self.commands.append((self.now, command))
         response = ""
@@ -110,9 +122,10 @@ class FakeBoard:
             state = 0 if self.stopped else 4 if self.media_ended() else 2
             dropped = int(self.fault == "drop" and elapsed > 90) + self.summary_induced_drops
             late = int(self.fault == "late" and elapsed > 90)
+            request = self.request - int(self.fault == 'stale-stop-status')
             response = (f"SESSION_STATUS session=1 state={state} kind=2 samples={int(elapsed*48000)}/86400000 decoded={int(elapsed*30)} "
                 f"displayed={int(elapsed*30)-dropped} dropped={dropped} underruns=0 volume=7 pinned=0 error=0 "
-                f"request={self.request} result=0 path={self.media} detail=\r\n"
+                f"request={request} result=0 path={self.media} detail=\r\n"
                 f"SESSION_QUEUES late={late} max_late_us=1000 video_packets=2 audio_packets=3 pcm_queued=3200")
         elif command == "audio":
             volume = 10 if self.fault == "volume" else 7
@@ -164,7 +177,7 @@ class FakeBoard:
 def exercise(seconds=600, fault=None):
     board, log, events = FakeBoard(fault), io.BytesIO(), []
     args = SimpleNamespace(seconds=seconds, label="amp30" if seconds == 1800 else "mips10", media=board.media)
-    console = RUNNER.Console(board, log, board.clock)
+    console = RUNNER.Console(board, log, board.clock, board.pause)
     runner = RUNNER.Runner(console, args, events.append)
     error = None
     try:
@@ -177,23 +190,134 @@ def exercise(seconds=600, fault=None):
 
 
 class RunnerTests(unittest.TestCase):
+    def test_long_utf8_command_survives_realistic_64_byte_fifo_and_one_byte_ticks(self):
+        class SlowUART:
+            def __init__(self):
+                self.now, self.next_tick = 0.0, 0.001
+                self.fifo, self.line, self.output = bytearray(), bytearray(), bytearray()
+                self.writes, self.pauses, self.commands, self.dropped = [], [], [], 0
+
+            @property
+            def in_waiting(self):
+                return len(self.output)
+
+            def advance(self, seconds):
+                end = self.now + seconds
+                while self.next_tick <= end:
+                    if self.fifo:
+                        byte = self.fifo.pop(0)
+                        if byte == 13:
+                            command = self.line.decode('utf-8')
+                            self.commands.append(command)
+                            self.output.extend((command + '\r\nSESSION_POST request=1 kind=1 result=0\r\n').encode('utf-8'))
+                            self.line.clear()
+                        else:
+                            self.line.append(byte)
+                    self.next_tick += 0.001
+                self.now = end
+
+            def pause(self, seconds):
+                self.pauses.append(seconds)
+                self.advance(seconds)
+
+            def write(self, payload):
+                self.writes.append(bytes(payload))
+                accepted = min(len(payload), 64 - len(self.fifo))
+                self.fifo.extend(payload[:accepted]); self.dropped += len(payload) - accepted
+                return len(payload)  # Host write succeeds even when board RX overflows.
+
+            def flush(self):
+                pass
+
+            def read(self, count):
+                self.advance(0.001)
+                data = bytes(self.output[:min(count, 9)]); del self.output[:len(data)]
+                return data
+
+        path = 'play 0:/multimedia/video/片源_测试_' + '长路径' * 12 + '.mp4'
+        uart, log = SlowUART(), io.BytesIO()
+        console = RUNNER.Console(uart, log, lambda: uart.now, uart.pause)
+        record, transcript = console.command(path, 'SESSION_POST')
+        self.assertEqual(record['kind'], '1')
+        self.assertEqual(uart.commands, [path])
+        self.assertEqual(uart.dropped, 0)
+        self.assertTrue(all(len(block) <= 16 for block in uart.writes))
+        self.assertTrue(all(0.020 <= pause <= 0.032 for pause in uart.pauses))
+        self.assertEqual(len(uart.pauses), len(uart.writes) - 1)
+        self.assertEqual(b''.join(uart.writes), path.encode('utf-8') + b'\r')
+        self.assertEqual(b''.join(uart.writes).count(b'\r'), 1)
+        self.assertIn('SESSION_POST request=1 kind=1 result=0', transcript)
+        self.assertIn(path, log.getvalue().decode('utf-8'))
+
+    def test_cleanup_stop_ignores_wrong_kind_and_stale_request(self):
+        class ReplyUART:
+            def __init__(self):
+                self.now, self.output = 0.0, bytearray()
+
+            @property
+            def in_waiting(self):
+                return len(self.output)
+
+            def write(self, payload):
+                self.output.extend(b'SESSION_POST request=7 kind=1 result=0\r\n'
+                                   b'SESSION_POST request=6 kind=5 result=0\r\n'
+                                   b'SESSION_POST request=8 kind=5 result=0\r\n')
+                return len(payload)
+
+            def flush(self):
+                pass
+
+            def read(self, count):
+                self.now += 0.001
+                data = bytes(self.output[:count]); del self.output[:count]
+                return data
+
+        uart = ReplyUART()
+        console = RUNNER.Console(uart, io.BytesIO(), lambda: uart.now)
+        record, _ = console.command('stop', 'SESSION_POST')
+        self.assertEqual(record['request'], '8')
+        self.assertEqual(console.last_stop_request, 8)
+        # The original failure concatenated STOP onto a partial PLAY path,
+        # producing only a PLAY(kind=1) reply. Never report that as STOP ACK.
+        bad = ReplyUART()
+        def concatenated_play(payload):
+            bad.output.extend(b'SESSION_POST request=7 kind=1 result=0\r\n')
+            return len(payload)
+        bad.write = concatenated_play
+        console = RUNNER.Console(bad, io.BytesIO(), lambda: bad.now)
+        with self.assertRaises(RUNNER.BoardError):
+            console.command('stop', 'SESSION_POST', timeout=0.02)
+        self.assertIsNone(console.last_stop_request)
+
+    def test_cleanup_does_not_accept_old_idle_request(self):
+        board, _, events, error = exercise(fault='stale-stop-status')
+        self.assertIsNotNone(error)
+        self.assertFalse(events[-1]['idle_confirmed'])
+        self.assertFalse(any(command.startswith('play ') for _, command in board.commands))
+
     def test_actual_idle_uart_fixture_has_no_trailing_prompt(self):
         fixture = json.loads((ROOT / "tests/player_runner_uart_fixture.json").read_text(encoding="utf-8"))
 
         class RecordedUART:
             def __init__(self):
                 self.now, self.output, self.next = 0.0, bytearray(), 0
+                self.input = bytearray()
 
             @property
             def in_waiting(self):
                 return len(self.output)
 
             def write(self, data):
+                self.input.extend(data)
+                if b"\r" not in self.input:
+                    return len(data)
+                command = bytes(self.input); self.input.clear()
                 recorded = fixture["responses"][self.next]
-                if data.decode().strip() != recorded["command"]:
-                    raise AssertionError(data)
+                if command.decode().strip() != recorded["command"]:
+                    raise AssertionError(command)
                 self.output.extend(recorded["wire"].encode("utf-8"))
                 self.next += 1
+                return len(data)
 
             def flush(self):
                 pass

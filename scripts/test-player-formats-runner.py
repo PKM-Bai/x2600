@@ -31,6 +31,10 @@ class FakeBoard:
         self.fault, self.fault_emitted = fault, False
         self.dtr = self.rts = True
         self.port, self.opened, self.closed = None, False, False
+        self.input = bytearray()
+
+    def pause(self, seconds):
+        self.now += seconds
 
     def clock(self):
         return self.now
@@ -70,6 +74,14 @@ class FakeBoard:
         return self.now - self.started >= self.case['expected_samples'] / 48000 + extra
 
     def write(self, payload):
+        self.input.extend(payload)
+        while b'\r' in self.input:
+            end = self.input.index(b'\r') + 1
+            command = bytes(self.input[:end]); del self.input[:end]
+            self.write_command(command)
+        return len(payload)
+
+    def write_command(self, payload):
         if self.fault == 'serial' and self.started is not None and self.now - self.started > 3:
             raise OSError('fake UART disconnected')
         command = payload.decode('utf-8').strip()
@@ -89,7 +101,8 @@ class FakeBoard:
                 self.started, self.stopped = self.now, False
                 if self.fault != 'stale-session':
                     self.session += 1
-            response = f'SESSION_POST request={self.request} kind=1 result={result}'
+            kind = 5 if command == 'stop' else 6 if command.startswith('volume ') else 1
+            response = f'SESSION_POST request={self.request} kind={kind} result={result}'
         elif command == 'session':
             ended = self.ended()
             state = 0 if self.stopped else 4 if ended else 2
@@ -139,7 +152,7 @@ def exercise(plan=None, fault=None):
     plan = plan or [PLAN[0]]
     board, log, events = FakeBoard(plan, fault), io.BytesIO(), []
     report = {'cases': [], 'passed': False, 'collection_complete': False}
-    console = RUN.BASE.Console(board, log, board.clock)
+    console = RUN.BASE.Console(board, log, board.clock, board.pause)
     runner = RUN.FormatsRunner(console, SimpleNamespace(), plan, report, events.append)
     error = None
     try:
@@ -263,7 +276,7 @@ class FormatsTests(unittest.TestCase):
             # the clock binding, keeping production parsing and runner logic.
             actual_console = RUN.BASE.Console
             def console(uart, output):
-                return actual_console(uart, output, board.clock)
+                return actual_console(uart, output, board.clock, board.pause)
             with mock.patch.dict(sys.modules, {'serial': serial}), mock.patch.object(RUN.BASE, 'Console', console), contextlib.redirect_stdout(io.StringIO()):
                 self.assertEqual(RUN.main(argv), 0)
             saved = json.loads(report.read_text(encoding='utf-8'))
@@ -291,7 +304,7 @@ class FormatsTests(unittest.TestCase):
             serial = SimpleNamespace(Serial=mock.Mock(return_value=board))
             actual_console = RUN.BASE.Console
             def console(uart, output):
-                return actual_console(uart, output, board.clock)
+                return actual_console(uart, output, board.clock, board.pause)
             log = folder / 'failed.log'
             with mock.patch.dict(sys.modules, {'serial': serial}), mock.patch.object(RUN.BASE, 'Console', console), contextlib.redirect_stdout(io.StringIO()):
                 code = RUN.main(['--manifest', str(MANIFEST_PATH), '--port', 'FAKE', '--log', str(log), '--file', PLAN[1]['file']])

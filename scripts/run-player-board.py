@@ -28,10 +28,12 @@ def value(record, name):
 
 
 class Console:
-    def __init__(self, uart, log, clock=time.monotonic):
+    def __init__(self, uart, log, clock=time.monotonic, pause=time.sleep):
         self.uart, self.log, self.clock = uart, log, clock
+        self.pause = pause
         self.started = clock()
         self.pending = bytearray()
+        self.last_post_request = self.last_stop_request = None
 
     def stamp(self):
         return f"[{datetime.now(timezone.utc).isoformat(timespec='milliseconds')} +{self.clock() - self.started:.3f}s] "
@@ -64,8 +66,17 @@ class Console:
 
     def command(self, command, marker, timeout=5, ignore_faults=False):
         self.host("command: " + command)
-        self.uart.write(command.encode("utf-8") + b"\r")
-        self.uart.flush()
+        # The worker reads one UART byte per loop, then delays one tick. A
+        # full long pathname can overflow its hardware RX FIFO at 115200.
+        # Pace bytes (not Unicode characters), including exactly one final CR.
+        payload = command.encode("utf-8") + b"\r"
+        for offset in range(0, len(payload), 16):
+            chunk = payload[offset:offset + 16]
+            if self.uart.write(chunk) != len(chunk):
+                raise BoardError(f"short UART write while sending {command!r}")
+            self.uart.flush()
+            if offset + len(chunk) < len(payload):
+                self.pause(0.024)
         deadline, received, tail = self.clock() + timeout, bytearray(), b""
         # newlib stdout is line buffered: the trailing "player> " can remain
         # unsent until the NEXT command's newline. A complete response line,
@@ -78,9 +89,24 @@ class Console:
             text = tail.decode("utf-8", errors="replace")
             if "PROBE_BUSY " in text or "Commands:" in text:
                 raise BoardError(f"board refused {command!r}: {text.strip()}")
-            match = pattern.search(text)
-            if match:
+            for match in pattern.finditer(text):
                 result = fields(match[1])
+                if marker == "SESSION_POST":
+                    request = value(result, "request")
+                    kind = value(result, "kind")
+                    if self.last_post_request is not None and not (0 < ((request - self.last_post_request) & 0xffffffff) < 0x80000000):
+                        continue
+                    self.last_post_request = request
+                    expected = {"stop": 5, "pause": 2, "resume": 3, "library": 7}.get(command)
+                    if command.startswith("play "):
+                        expected = 1
+                    elif command.startswith("volume "):
+                        expected = 6
+                    if expected is not None and kind != expected:
+                        self.host(f"ignored mismatched SESSION_POST: expected kind={expected}, got kind={kind} request={request}")
+                        continue
+                    if command == "stop":
+                        self.last_stop_request = request
                 if marker == "SESSION_STATUS":
                     queue = re.search(r"\bSESSION_QUEUES ([^\r\n]*)\r?\n", text[match.end():])
                     if not queue:
@@ -121,7 +147,9 @@ class Runner:
         deadline = self.console.clock() + 12
         while self.console.clock() < deadline:
             state = self.query("session", "SESSION_STATUS", ignore_faults=ignore_faults)
-            if value(state, "state") == 0:
+            stop_request = self.console.last_stop_request
+            stop_applied = stop_request is None or (value(state, "request") == stop_request and not value(state, "result"))
+            if value(state, "state") == 0 and stop_applied:
                 audio = self.query("audio", "AUDIO_STATUS", ignore_faults=ignore_faults)
                 if value(audio, "active") == 0 and not value(state, "pinned"):
                     return state, audio
@@ -284,12 +312,17 @@ class Runner:
 
     def cleanup(self):
         self.event("cleanup-start")
+        stop_acknowledged = False
         for command, marker in (("ui sequence stop", "UI_SEQUENCE"), ("stop", "SESSION_POST")):
             try:
-                self.console.command(command, marker, timeout=3, ignore_faults=True)
+                record, _ = self.console.command(command, marker, timeout=3, ignore_faults=True)
+                if command == "stop":
+                    stop_acknowledged = not value(record, "result")
             except Exception as error:
                 self.console.host(f"cleanup failed: {command}: {error}")
         try:
+            if not stop_acknowledged:
+                raise BoardError("cleanup STOP was not acknowledged")
             self.idle(ignore_faults=True)
             confirmed = True
         except Exception as error:

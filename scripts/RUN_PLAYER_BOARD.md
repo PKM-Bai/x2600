@@ -50,6 +50,11 @@ drop/late 保留实际数字，不因一次掉帧或迟帧提前中止长跑。�
 尾部 `player> `。真实 newlib stdout 可将没有换行的 prompt 缓存到下一次命令
 回显时才发送，不能把 prompt 当作响应结束保证。
 
+控制台每轮只读取一个输入字节。运行器将命令按UTF-8字节分成最多16B的块，
+块间等待24ms，最后只发送一个CR，避免长TF路径溢出64B接收FIFO。发送完成后
+才解析回复。`SESSION_POST`还需匹配命令类型和递增请求号；STOP后的IDLE必须
+对应该次STOP请求且结果为0，不能将丢失终止符后拼接出的PLAY回复当作停止确认。
+
 无硬件回归命令：`python scripts/test-player-runner.py`。Fake UART 按真实行缓冲方式
 分块发送响应，虚拟时间运行600/1800秒，覆盖提前EOF、拒绝、前置条件、实体键/GUI中止、
 串口断开、超时、截断CSV、异常停止确认与长摘要导致的窗口外掉帧。另将首次失败日志中的 stop/UI/session/audio
