@@ -1,5 +1,24 @@
 # 播放器实施验收记录
 
+## 2026-10-20：NOR安装与复位自动启动通过
+
+用户明确要求将当前RAM播放器写入Flash。源R4合包1920032B/CRC1e71d376保持不变，
+追加406496B FF形成2326528B（0x238000）NOR派生包，CRCa046b4d8，SHA256
+`2a625f88915fcb01bfdc52656bbdedc9befbea5ffddf59eca65875c22c297a58`。
+本地核验真实ELF/BIN、BSS边界、旧ReGBA178853ea及双份16MiB原始备份；
+新增包装/故障模型和既有完整NOR写入模型通过，默认dryplan不打开串口。
+
+实板匹配旧完整应用区及持久环境后，擦写`[0x40000,0x278000)`，全部2326528B
+逐字节回读一致，FF尾和完整环境CRC/bootcmd通过。原SPL/U-Boot代码CRC3a3c3918、
+本次rootfs CRC8618c73f均保持不变。持久命令读取0x238000到0x80600000后go；
+软件reset已观察到从NOR装载、PLAYER_BOOT、AMP_READY和GUI_INIT=0。
+
+独立启动/播放冒烟初始为IDLE、媒体库页、音频关闭，默认音量7%。三秒横屏MP4
+90帧全部解码/呈现、drop/late0、max_late13333us，144000有效样本完整且音频错误0；
+STOP后IDLE、kind0、pinned0、音频CLOSED/inactive，GUI27/27且错误0。
+原始日志及散列见[NOR安装说明](NOR_INSTALL.md)。实际断电上电由用户随后拷卡测试，
+安装JSON的`cold_boot_verified=false`保持如实；兼容副本test-player.mp4尚未做TF实播。
+
 ## 2026-10-20：横屏MP4实时呈现与native回切通过
 
 R4修正CUSTOM/Rotator重复扫描、残留crop/scale、SOF瞬间站点滞后及停止顺序。

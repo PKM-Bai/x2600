@@ -1,8 +1,14 @@
 # HALLEY7-M AMP 音视频播放器
 
-本工程面向 X2600M / 64MiB DDR2，采用 MIPS + RISC-V、双 FreeRTOS 的独立应用。目标为横置屏幕上的完整 1280×720 / 30fps 有声播放，LVGL 中文媒体库、播放、诊断三页面，以及三枚板载键操作。首版先完成 RAM 加载验收，NOR 安装另行安排。
+本工程面向 X2600M / 64MiB DDR2，采用 MIPS + RISC-V、双 FreeRTOS 的独立应用。目标为横置屏幕上的完整 1280×720 / 30fps 有声播放，LVGL 中文媒体库、播放、诊断三页面，以及三枚板载键操作。支持 RAM 加载和 NOR 应用区安装，保留原 U-Boot 负责装载、跳转。
 
 ## 当前状态
+
+2026-10-20已按用户要求将当前R4播放器安装到NOR，软件复位后自动进入播放器，
+双核握手、媒体库初始化及三秒MP4冒烟90/90帧、drop/late0、音频错误0通过。
+默认音量保持7%，结束已STOP、音频关闭。原SPL/U-Boot代码和rootfs校验未变，
+启动命令已持久保存；实际断电上电由用户拷卡后测试，不记为已完成的冷启动。
+安装包、后续更新入口和证据见[NOR安装说明](NOR_INSTALL.md)。
 
 已支持 MP3、AAC-LC/ADTS、M4A 与普通 1280×720 横屏 MP4（H.264 Baseline＋AAC）。
 2026-10-20真实TF的12个MP3/AAC/M4A组合各完成约30秒播放，用户确认轮播声音正常；
@@ -31,6 +37,7 @@ AMP已完成真实TF高运动片的30分钟板内稳定性验证：ENDED时86,40
 - `scripts/build-player.ps1 -DiagnosticsOnly`：只运行串口探针，保留旧`video`逐帧CRC/显示诊断；正常构建默认启动三页GUI和异步会话。
 - `scripts/build-player.ps1 -MipsOnly`：构建主核版本，音频服务由MIPS独占，小核保持停止；可用于单核对照，不代替完整双核构建。
 - `scripts/verify-player.py`：核对 ELF 架构、入口、段边界、合包内容及 6MiB 上传上限。
+- `scripts/flash-player-nor.py`：默认生成并核对NOR派生包；显式执行时验证旧安装、回读和启动环境，详见[NOR安装说明](NOR_INSTALL.md)。
 - `scripts/prepare-player-tools.ps1 -RiscvArchive <包路径> -FfmpegArchive <包路径>`：解包并验证已下载的官方工具，不修改系统 PATH。
 - `scripts/test-player-host.ps1`：运行三键、视频布局/帧池、媒体解析、共享协议、确认超时、ILP32 除法和只读存储主机回归。
 - `scripts/test-player-artifacts.py`：使用真实 ELF/BIN 及损坏副本验证架构、入口、地址边界、ABI 与字节一致性。
