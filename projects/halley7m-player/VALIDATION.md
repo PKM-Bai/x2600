@@ -1,5 +1,40 @@
 # 播放器实施验收记录
 
+## 2026-10-20：R8 Flash冷启动补验与频闪排查
+
+用户反馈从Flash启动后，未播放文件的媒体库也曾出现整屏亮暗闪烁。本轮保留
+原R8 NOR镜像、启动环境、背光和扫描参数，没有重写Flash。先以原参数的RAM
+诊断版进入媒体库，再软件复位直接启动原R8 Flash，用户均确认不闪。最后按要求
+完全断电、等待约5秒再上电，用户回复“已断电重上电，没有频闪”。当前结论是
+本轮未复现，原因未定位，不能记作频闪修复或长期稳定性通过。
+
+冷启动日志捕获`sfcnor read`从`0x40000`读取`0x238000`到`0x80600000`成功，
+随后跳转、PLAYER_BOOT、AMP_READY及DISPLAY/GUI/BUTTONS_INIT均成功；未中断
+autoboot、上传镜像或发送Flash写命令。独立查询为AMP active、owner=riscv、
+会话IDLE、未播放、音频inactive、默认音量7%，媒体库绘制/呈现1/1、GUI错误0。
+USB串口中途断开后恢复，未捕获本次完整SPL/U-Boot输出及Reset status/PLL值；
+物理断电操作由用户确认，不能宣称已有完整的冷暖启动PLL对照。
+
+冷、暖启动快照的背光均为PWM15、PWMCDR=2、PWMCC15=5、PWMWC15=a6aa5356，
+LPCDR均4000002f；DSI稳定时序配置一致。冷、暖媒体库EOD周期均为33010～33057us，
+RAM诊断为33013～33055us。DSI错误状态00bc/00c0采样均0；这不是对整个运行期
+错误累计的证明。R8普通`display`命令未打印显示UOT累计计数，也不能据瞬时
+INT_FLAG为0推断从未显示欠载。PHY_STATUS的data-lane STOPSTATE位及GPIO输入
+快照随采样时刻变化，未将其当成初始化配置差异。
+
+最初抓到的运行快照已是吉他视频ENDED后的宽幅路线，不是未播放时的冷启动
+故障现场，因此不能用于认定冷启动或横屏路线是根因。两条线索均保留待复现。
+未采用的背光载波切换/VPG命令等实验代码及RAM产物保存在本地
+`build/player-flicker-20261020`，已从功能源码撤回；未发布调参或修复版本。
+若再次出现，应保留当时供电和页面状态，优先采集现场状态后再复位。
+
+| 本地证据 | SHA256 |
+| --- | --- |
+| `build/player-flicker-20261020/flash-cold-boot-01-board.log` | `48c82406c27ed394f12e88e143090c866ec35d1b27eb2aedf40f46fef6ab2b22` |
+| 同名`.json` | `00ce3b6294dcf2a2c35dbd3c9890b3c0f9608e022734c529f35bb7bd7fa2cf8c` |
+| `build/player-flicker-20261020/flash-warm-boot-board.log` | `d0b7a615d1fafd7d1303a2165a3bddcdcd3d4b07eff77f1d8dc4ca28a2d4f58a` |
+| `build/player-flicker-20261020/ram-1khz-baseline-board.log` | `ecefb7071ead1cf2356d563a68d2e17478dff04b7b26fd69574f6b34ff363a4b` |
+
 ## 2026-10-20：兼容性R8更新NOR并从Flash启动
 
 用户明确要求将当前新版RAM固件写入Flash。使用已完成兼容性验收的冻结R8镜像，

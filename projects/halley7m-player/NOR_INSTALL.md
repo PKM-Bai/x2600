@@ -25,6 +25,12 @@ B帧、常见尺寸/SAR及601/709色彩处理。更新源为已完成RAM验收�
 随后reset确实由NOR启动，观察到PLAYER_BOOT、AMP_READY及DISPLAY/GUI/BUTTONS_INIT=0；
 未把软件复位写成物理断电冷启动通过，安装JSON仍为`cold_boot_verified=false`。
 
+后续2026-10-20单独补做一次断电约5秒再上电，用户确认进入媒体库且没有频闪；
+串口记录NOR自动读取/跳转、双核握手和显示/GUI初始化成功，音频未启动、默认音量7%。
+冷启动原始记录为`build/player-flicker-20261020/flash-cold-boot-01-board.log/.json`，
+因USB重连缺少完整SPL/PLL段。安装JSON保留当时状态，不回写后续验收；本轮未写Flash、
+未改背光/扫描参数，不能将未复现记作频闪修复。对照及散列见[验收记录](VALIDATION.md)。
+
 新NOR包仅追加376672B的FF；原文件末端为`0x807dc0a0`，BSS为
 `[0x807dc0c0,0x8090e080)`，填充末端`0x80838000`在启动入口清零范围内。
 本地产物为`build/player-nor-compat-r8-20261020/{halley7m_player_nor.bin,manifest.json}`，
