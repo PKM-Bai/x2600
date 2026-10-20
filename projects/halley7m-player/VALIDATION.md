@@ -1,5 +1,25 @@
 # 播放器实施验收记录
 
+## 2026-10-20：新格式固件 RAM 启动，串口连接待恢复
+
+用户已将14个新格式样片复制到TF的`multimedia/audio`及`multimedia/video`。
+COM52最初未收到启动输出，USB串口转接器重插并重新枚举后捕获U-Boot，完成
+新包的YMODEM上传、长度与板端CRC校验，未写NOR。原始证据为本地
+`build/player-formats-20261020-ramload-r2.log`及同名`-console.log`。
+
+- 上传1916832B，CRC32 `2bd32c36`，主机SHA256
+  `27aca027e920a2b01763b323a0e1591b0463c50cd686bb1a0d6bdec1e5ef2334`。
+- 应用`PLAYER_BOOT`后加载35880B小核，`AMP_EVENT opcode=256 value=4`及
+  `AMP_READY`确认协议v4双核握手；小核计时器实测575993921Hz，配置576MHz。
+- `PLAYER_NOTE`默认音量7%、启动音频关闭；`DISPLAY_INIT=0`、`GUI_INIT=0`、
+  `BUTTONS_INIT=0`，并观察到SD-SPI协商频率18750000Hz。这些不是新媒体读取或播放证明。
+- 启动后准备读取状态时COM52不可打开；连续两次系统枚举中FTDI COM52消失，
+  尚未执行任何PLAY。已请用户保持开发板供电，仅重新插稳USB串口转接器；
+  保留RAM固件，恢复连接后继续样本计数、发声、横屏旋转和实时性能验收。
+
+新增14例自动板测入口及10组假UART回归已完成，工具提交`ae41828`。
+本轮只确认新固件RAM启动及协议v4握手，未将串口中断前的初始化记作格式播放通过。
+
 ## 2026-10-19：MP3、AAC/M4A、横屏 MP4 主机集成
 
 用户已选择 MP3、AAC/M4A、MP4（H.264＋AAC），并要求普通 1280×720 横屏
