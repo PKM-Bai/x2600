@@ -461,3 +461,28 @@ R5已完成独立板测，RAM日志`build/player-bframes-approved-ramload-202610
 同一R8随后完整播放用户原始`0:/multimedia/video/test.mp4`，暂停时两次查询均137760样本、已解码90/呈现86，恢复后994/994帧、drop/late0、max_late27000us；1592520有效样本全部输出，DMA错误/超时、队列/FIFO欠载及会话错误全0。`weight_approx=5`，符合已批准策略。ENDED空闲堆687840B，STOP后34650432B、IDLE/inactive/pinned0，media栈最低余11264words。原始日志`build/player-geometry-r8-original-pause-board-20261020.log`，SHA256 `1f7c080cccaa1832418b7111db6b62462e07124c11096bdda9b605c81af9d564`。R5/R7的偶发跳帧记录仍保留，不能以本轮0改写历史或承诺所有视频均不掉帧。
 
 再次播放SAR16:15样片并保留089末帧，用户人工确认“方向、比例和颜色均正常”；此为屏幕外观检查，不是光学色差或声光数值测量。最终STOP并刷新媒体库，会话IDLE、音频inactive、GUI错误0；串口刷新不改变当前播放页，结束状态日志`build/player-geometry-r8-final-idle-board-20261020.log`。板测始终保持7%音量，仅RAM加载；NOR保留此前已安装的R4版本。未将旧AVI的30分钟记录移用于本轮新格式，也不声明已测得实际声光偏差数值。
+
+## 2026-10-21：GT911 与播放器触摸界面候选版
+
+本轮范围仅为播放器，使用屏幕板载触摸接口，保留三键和 7% 默认音量。媒体库改为目录导航侧栏及十项文件窗口，播放页采用圆角浮动控制卡，诊断页和模态菜单统一配色。支持点选文件/目录、上级、前后十项、刷新、暂停/继续、结束重播、音量和停止返回；进度条仍只读。视频约 3 秒空闲后整层 UI 隐藏，隐藏后的首触只唤出，下一次点击才执行操作。
+
+### 板级依据及实现
+
+- 从本板两份一致的原始 NOR 备份提取 Linux DTB，检查 uImage 头和载荷 CRC。原 NOR SHA256 为 `5efd956157cf88fc8a55dd3695f75b216e184a9fa15bee00149680c740077926`，DTB 为 `e34b8a451acf216b6626273ea94d0c7481a9bff637adfdb205b0679192a1b57b`。节点确认 I2C0/100kHz、PC0 SCL/PC1 SDA Function 1、PC8 RST、PC7 INT、7-bit 地址 0x14，无独立电源 GPIO。证据和可复现提取脚本保留于本地 `build/player-touch-ui-20261021/board-evidence/`。未采用 x16xx 示例的不同引脚或 800×480 配置。
+- 驱动读取产品、版本及当前配置尺寸，不上传配置表。原厂组的尺寸为 720×1280、最大触点字段为 10；协议支持最多十个有界记录，向 GUI 只提供一个跟踪 ID。正常轮询周期 10ms，错误释放并退避 100ms。I2C 单事务等待上限 6ms，大报告拆为最多两个 40 字节连续读取，全部读取后才 ACK；不使用音频 PDMA，不屏蔽中断等待 I2C。
+- 触点始终在 GUI 任务转换为 1280×720 逻辑坐标，不随 native/wide 表面路线改变。控制命令异步提交，LVGL pointer 回调在最终表面持有检查之前执行，避免重新唤醒刷新后写入 DMA 持有的表面。
+- 审查修正了复位延时的 tick 相位问题、诊断快照半更新、触点按住时目录代次/窗口/菜单变化导致旧目标被合成点击，以及 ENDED 时按钮误发 TOGGLE_PAUSE 无法重播。取消状态跨显示路线暂停保留；重播携带当前媒体完整路径。
+
+### 主机与构建证据
+
+- `python scripts/test-player-touch.py` 使用生产 C 协议、MSVC `/W4 /WX`，覆盖识别及两种地址、配置只读、READY/先读再清、释放、10 触点、跟踪 ID、越界、重复 ID、IO 错误、退避、方向及时间回绕。板级适配另由 XBurst2 R5.1.6 以 `-Wall -Wextra -Werror` 编译通过。
+- `python scripts/test-player-gui.py --build build/player-touch-ui-host` 使用真实 LVGL 8.3.10、生产 GUI/input/surface/font 及 40ms 异步显示模型，完成 **223 次提交**。覆盖点选全局索引、命令背压、移出取消、上下文变化取消、route 暂停期间释放、native/wide 首触唤醒、长触不连发、暂停/重播/停止、进度不跳转，以及原有三键、alpha 清零、脏区同步和显示回归。六张 PNG 已检查；`test.log` SHA256 为 `615fc53a52887250ba9603d6164acb3215370a41fb9eaa82754fd6c4e74a436d`。截图渐变为主机合成背景。
+- 生产 session/core 回归通过，包含原 AVI/WAV、压缩音频、MP4、时间戳和生命周期；本地日志 `build/player-touch-ui-20261021/session-host.log`。完整入口 `scripts/test-player-host.ps1` 已纳入 GT911，全部通过；日志 `build/player-touch-ui-20261021/host-regression.log` 同时包含输入、音视频/协议、存储、真实 LVGL、统计和操作序列回归。
+- 双核 Release 紧凑包 **1,973,776B**，CRC32 `b20fc5e0`，SHA256 `963a722fd78a1244916f6050f98883a348ab22986ce3d73113cf27870ebeac96`；Debug **2,106,288B**，CRC32 `ed44ef07`，SHA256 `7a9cc3dd04f07e340ef2aa9e5f8109372260a28920342f75531db95c446fb686`。小核仍为 35,880B/CRC32 `003d092f`，协议 4/共享布局 3。两核入口、段边界、嵌入内容及 6MiB 上传窗口核验通过；冻结 Release 的真实 ELF/BIN 和损坏副本 **17 项**检查通过。
+- 冻结产物、manifest 和构建日志位于本地 `build/player-touch-ui-20261021/{Release,Debug}` 及同级日志。NOR 派生包仅在电脑生成，2,326,528B/CRC32 `b1f03970`，未执行写入。
+
+### 尚待完成的实板验证
+
+本轮串口预检未收到播放器状态。Windows 的 COM52/FTDI 驱动调用先阻塞，重插后原 FTDI 设备未枚举，已请用户换电脑 USB 接口并确认实际端口。**本轮没有 RAM 加载、NOR 写入或实板触控通过记录，当前 Flash 仍为 R9。** 主机模拟不作为 GT911 实物响应、四角方向、触摸命中、播放负载或冷启动证明。
+
+串口恢复后先 RAM 加载：核对 GT911 产品/固件/实际尺寸，检查四角与中心、媒体库和菜单点击；再验证 native/wide 切换、隐藏首触、暂停恢复、停止回收、三键并用及 7% 音量播放期间的 I2C/GUI/音频错误。完成这些验证后再更新 Flash 和记录。

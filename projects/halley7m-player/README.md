@@ -4,6 +4,8 @@
 
 ## 当前状态
 
+2026-10-21：候选源码新增屏幕板载 GT911 单指输入和深色触摸界面，三页、菜单和实体三键共同控制同一会话。媒体库可点选、翻页、返回上级、刷新；播放页可点暂停/继续、音量及停止返回。视频隐藏后的首触仅唤醒，进度条仍只读。I2C 引脚来自本板出厂 DTB，读取现有触摸配置，不上传配置表。协议、真实 LVGL 和会话主机回归通过；实板坐标、命中和播放负载验证尚未完成，当前 NOR 仍为下述 R9。接线、接口与验证范围见[触摸说明](touch/README.md)和[GUI说明](gui/README.md)。
+
 2026-10-20当前NOR为R9，已修复视频空闲约3秒隐藏上下UI/进度条、任意键按下唤出，
 以及MP4总时长等到EOF才显示的问题；暂停/菜单/结束时常显，默认音量7%。
 用户已确认两项操作正常，Flash全部字节回读与软件复位自动启动、短播放检查通过。
@@ -59,6 +61,7 @@ AMP已完成真实TF高运动片的30分钟板内稳定性验证：ENDED时86,40
 - `scripts/check-player-video.py --board-log <逐帧日志>`：将每个硬解输出的可见 Y/UV CRC 与 PC 解码逐帧比较，拒绝缺失、重复或错误帧。
 - `projects/halley7m-player/mips/test-session.py`：真实FFmpeg片源、生产会话生命周期和33.033ms周期DPU模型。
 - `scripts/test-player-gui.py`：实际LVGL的headless三页截图、双表面、真实显示driver边界与按键回调，无SDL。
+- `scripts/test-player-touch.py`：GT911 生产协议的内存设备回归，检查识别、报告、释放、边界及横屏坐标；不代替实板 I2C 和安装方向验证。
 - `scripts/test-player-measurement.py`：RAM一秒采样、CPU缓存、计数回绕、CSV和EOF/STOP范围验证。
 - [run-player-board.py](../../scripts/run-player-board.py)：按固定顺序执行600/1800秒采集、GUI操作序列和STOP后CSV导出，保留原始UART行；用法见[运行说明](../../scripts/RUN_PLAYER_BOARD.md)。
 - [analyze-player-board.py](../../scripts/analyze-player-board.py)：分析原始日志/CSV，按真实CPU窗口加权，对照单核与AMP的同一600秒窗口，另核对完整媒体结束证据。
@@ -77,7 +80,7 @@ python scripts/ramload-regba.py --port COM52 --execute --wait-boot --file build/
 
 至少1GiB的TF文件，以及需要样本表回读的MP4/M4A，在LOADING先建立16KiB簇链映射，容量不足时报告错误；其他小文件和RAM片源不分配映射表。`session storage`显示建图与实际定位统计，STOP后保留最近文件的记录。集中UART查询可能造成窗口外偶发跳帧，长摘要和CSV均安排在STOP确认后输出；播放性能以冻结的采样窗口和GUI操作记录核验。自动板测入口对长UTF-8命令分块发送，避免串口接收FIFO溢出。
 
-`status`、`heap`、`gui`、`buttons`、`metrics`、`audio`提供显式诊断；`tone`按默认7%播放两秒短音。`ls`、`media`、`tf bench <路径>`等同步探针要求先STOP，不在播放过程中遍历或打印大目录。普通构建也可在会话停止后用`video verify <路径>`输出全部帧CRC；它不提交DPU或启用音频，不能作为呈现帧率或音画同步证据。旧`video <帧数,0=EOF> <路径>`、`video hold/stop`和DSI彩条仅在`-DiagnosticsOnly`启用。
+`status`、`heap`、`gui`、`buttons`、`touch`、`metrics`、`audio`提供显式诊断；`touch`输出控制器识别、原始/逻辑坐标与错误统计，`tone`按默认7%播放两秒短音。`ls`、`media`、`tf bench <路径>`等同步探针要求先STOP，不在播放过程中遍历或打印大目录。普通构建也可在会话停止后用`video verify <路径>`输出全部帧CRC；它不提交DPU或启用音频，不能作为呈现帧率或音画同步证据。旧`video <帧数,0=EOF> <路径>`、`video hold/stop`和DSI彩条仅在`-DiagnosticsOnly`启用。
 
 构建目录位于仓库 `build/`，工具链、下载包和媒体产物均为本地产物。RAM 上传复用 `scripts/ramload-regba.py --file <播放器合包>` 的 YMODEM、长度及 CRC 校验。进入应用前不能单独上传高端小核/共享区，因为 U-Boot 仍占用这些地址。
 

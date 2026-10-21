@@ -19,6 +19,7 @@ static const char *directory;
 static unsigned mode_phase, mode_ack;
 static uint32_t mode_generation;
 static bool target_logical, memory_logical;
+static void controls_visible(bool visible);
 
 static uint32_t hash(const uint32_t *pixels)
 {
@@ -105,6 +106,168 @@ static void press(unsigned keys)
     tick(20, 0);
 }
 
+static void tap(unsigned x, unsigned y)
+{
+    player_gui_sample_touch(now, true, x, y);
+    tick(60, 0);
+    player_gui_sample_touch(now, false, x, y);
+    tick(100, 0);
+}
+
+static void touch_library_test(void)
+{
+    player_gui_stats_t gui;
+    unsigned before = commands;
+    tap(600, 252); /* Third visible row uses its global index, not row 2. */
+    assert(commands == before + 1 && last_command.kind == PLAYER_SESSION_LIBRARY_ACTIVATE);
+    assert(last_command.value == 23042 && last_command.library_generation == 1);
+    before = commands;
+    player_gui_sample_touch(now, true, 600, 156);
+    tick(60, 0);
+    snapshot.library_generation = 2;
+    ++snapshot.revision;
+    tick(150, 0);
+    assert(commands == before); /* Directory refresh cannot synthesize a click. */
+    player_gui_sample_touch(now, false, 600, 156);
+    tick(100, 0);
+    assert(commands == before);
+    snapshot.library_generation = 1;
+    ++snapshot.revision;
+    tick(150, 0);
+    player_gui_sample_touch(now, true, 600, 156);
+    tick(60, 0);
+    mode_phase = 1;
+    mode_ack = 0;
+    ++mode_generation;
+    target_logical = false;
+    tick(100, 0);
+    assert(mode_ack == 1 && !pending);
+    snapshot.library_generation = 2;
+    ++snapshot.revision;
+    player_gui_sample_touch(now, false, 600, 156);
+    tick(100, 0); /* Physical release arrives while LVGL input is route-gated. */
+    assert(commands == before);
+    front = NULL;
+    mode_phase = 2;
+    tick(200, 0);
+    assert(commands == before); /* Context cancellation must outlive sampled release. */
+    snapshot.library_generation = 1;
+    ++snapshot.revision;
+    tick(150, 0);
+    player_gui_sample_touch(now, true, 600, 156);
+    tick(60, 0);
+    snapshot.library_offset += 10;
+    for (unsigned i = 0; i < 10; ++i) snapshot.entries[i].index += 10;
+    ++snapshot.revision;
+    tick(150, 0);
+    player_gui_sample_touch(now, false, 600, 156);
+    tick(100, 0);
+    assert(commands == before); /* Key-driven paging keeps generation, changes row ownership. */
+    snapshot.library_offset -= 10;
+    for (unsigned i = 0; i < 10; ++i) snapshot.entries[i].index -= 10;
+    ++snapshot.revision;
+    tick(150, 0);
+    before = commands;
+    full_queue = 1;
+    tap(600, 348);
+    assert(commands == before);
+    full_queue = 0;
+    tick(150, 0);
+    assert(commands == before + 1 && last_command.kind == PLAYER_SESSION_LIBRARY_ACTIVATE);
+    assert(last_command.value == 23044 && last_command.library_generation == 1);
+    before = commands;
+    player_gui_sample_touch(now, true, 600, 156);
+    tick(60, 0);
+    player_gui_sample_touch(now, true, 1270, 630);
+    tick(60, 0);
+    player_gui_sample_touch(now, false, 1270, 630);
+    tick(100, 0);
+    assert(commands == before); /* Dragging away cancels the original row click. */
+    tap(120, 180);
+    assert(last_command.kind == PLAYER_SESSION_LIBRARY_UP);
+    tap(120, 260);
+    assert(last_command.kind == PLAYER_SESSION_LIBRARY_MOVE && last_command.value == -10);
+    tap(120, 338);
+    assert(last_command.kind == PLAYER_SESSION_LIBRARY_MOVE && last_command.value == 10);
+    tap(120, 416);
+    assert(last_command.kind == PLAYER_SESSION_LIBRARY_OPEN);
+    tap(1180, 68);
+    player_gui_get_stats(&gui);
+    assert(gui.menu_open && gui.menu_selected == 0);
+    tap(620, 350); /* Menu's diagnostic item. */
+    player_gui_get_stats(&gui);
+    assert(gui.page == PLAYER_GUI_DIAGNOSTICS && !gui.menu_open);
+    tap(1180, 68);
+    player_gui_get_stats(&gui);
+    assert(gui.page == PLAYER_GUI_LIBRARY);
+}
+
+static void touch_playback_test(void)
+{
+    player_gui_stats_t gui;
+    snapshot.state = PLAYER_SESSION_PLAYING;
+    snapshot.has_video = 1;
+    snapshot.volume_percent = 7;
+    ++snapshot.revision;
+    tick(3300, 0);
+    controls_visible(false);
+    unsigned before = commands;
+    tap(524, 626); /* Hidden volume+ must wake without changing volume. */
+    assert(commands == before && snapshot.volume_percent == 7);
+    controls_visible(true);
+    tap(524, 626);
+    assert(commands == before + 1 && last_command.kind == PLAYER_SESSION_SET_VOLUME && last_command.value == 12);
+    tap(412, 626);
+    assert(last_command.kind == PLAYER_SESSION_SET_VOLUME && last_command.value == 7);
+    before = commands;
+    player_gui_sample_touch(now, true, 524, 626);
+    tick(60, 0);
+    tick(850, PLAYER_INPUT_KEY_START);
+    tick(100, 0);
+    player_gui_get_stats(&gui);
+    assert(gui.menu_open && gui.menu_selected == 0 && commands == before);
+    player_gui_sample_touch(now, false, 524, 626);
+    tick(100, 0);
+    player_gui_get_stats(&gui);
+    assert(gui.menu_selected == 0 && commands == before);
+    tap(620, 430);
+    snapshot.state = PLAYER_SESSION_ENDED;
+    ++snapshot.revision;
+    tick(150, 0);
+    tap(240, 626);
+    assert(last_command.kind == PLAYER_SESSION_PLAY_PATH);
+    assert(!strcmp(last_command.path, snapshot.media_path));
+    before = commands;
+    press(PLAYER_INPUT_KEY_START);
+    assert(commands == before + 1 && last_command.kind == PLAYER_SESSION_PLAY_PATH);
+    assert(!strcmp(last_command.path, snapshot.media_path));
+    snapshot.state = PLAYER_SESSION_PLAYING;
+    ++snapshot.revision;
+    tick(150, 0);
+    before = commands;
+    player_gui_sample_touch(now, true, 524, 626);
+    tick(1100, 0);
+    assert(commands == before); /* A held touch never generates volume repeats. */
+    player_gui_sample_touch(now, false, 524, 626);
+    tick(150, 0);
+    assert(commands == before + 1 && last_command.kind == PLAYER_SESSION_SET_VOLUME && last_command.value == 12);
+    tap(412, 626);
+    assert(last_command.value == 7);
+    tap(240, 626);
+    assert(last_command.kind == PLAYER_SESSION_TOGGLE_PAUSE);
+    before = commands;
+    tap(600, 523); /* Progress is informational: tapping does not invent seek. */
+    assert(commands == before);
+    tap(980, 626);
+    player_gui_get_stats(&gui);
+    assert(gui.menu_open);
+    tap(620, 430);
+    player_gui_get_stats(&gui);
+    assert(!gui.menu_open);
+    tick(3300, 0);
+    controls_visible(false);
+}
+
 static void capture(const char *name)
 {
     tick(150, 0);
@@ -136,11 +299,21 @@ static void controls_visible(bool visible)
     player_gui_stats_t gui;
     player_gui_get_stats(&gui);
     assert((gui.controls_visible != 0) == visible);
-    assert(!pending); /* Compare the completed DMA front, not just LVGL flags. */
+    /* Check the actually scanned, completed front, including when a newer
+     * volume/pressed-state repaint is pending in the other DMA surface. */
+    assert(front);
     if (visible) {
-        assert(pixel(0, 0) == 0xbe101820);
-        assert(pixel(0, 650) == 0xd2101820);
-        assert(pixel(44, 557) >> 24 == 255); /* Progress remains visible. */
+        if (gui.menu_open) {
+            assert(pixel(1230, 100) >> 24); /* Modal scrim dims the visible controls. */
+            assert(pixel(640, 180) >> 24 == 255);
+        } else if (!snapshot.has_video) {
+            assert(pixel(1230, 100) >> 24 == 255);
+            assert(pixel(640, 400) >> 24 == 255); /* Audio owns an opaque canvas. */
+        } else {
+            assert(pixel(1230, 100) == 0xdc111e2a);
+            assert(pixel(1240, 710) == 0xbe0b121b);
+            assert(pixel(150, 524) >> 24 == 255); /* Progress remains visible. */
+        }
     } else {
         for (unsigned i = 0; i < PLAYER_GUI_SURFACE_BYTES / 4u; ++i)
             assert(front[i] >> 24 == 0); /* No title, footer, progress or ghost pixels. */
@@ -207,7 +380,7 @@ static void video_controls_test(void)
     ++snapshot.revision;
     tick(3300, 0);
     controls_visible(true);
-    assert(pixel(1235, 557) == 0xff63dfd2); /* EOF fills the track despite AAC trimming. */
+    assert(pixel(1138, 524) == 0xff65dfc4); /* EOF fills the track despite AAC trimming. */
     snapshot.state = PLAYER_SESSION_PLAYING;
     snapshot.has_video = 0;
     snapshot.media_kind = 3;
@@ -331,6 +504,7 @@ int main(int argc, char **argv)
     font_test();
     assert(last_command.kind == PLAYER_SESSION_LIBRARY_OPEN);
     capture("library");
+    touch_library_test();
     unsigned queued_commands = commands;
     now += 5;
     player_gui_sample_keys(now, PLAYER_INPUT_KEY_B);
@@ -366,7 +540,7 @@ int main(int argc, char **argv)
     ++snapshot.revision;
     capture("playback");
     assert(front[500 * 720 + 719 - 250] == 0); /* Center of video remains transparent. */
-    assert(front[719] == 0xbe101820); /* Real LVGL output is straight, not premultiplied. */
+    assert(pixel(1230, 100) == 0xdc111e2a); /* Real LVGL output is straight, not premultiplied. */
     press(PLAYER_INPUT_KEY_START);
     assert(last_command.kind == PLAYER_SESSION_TOGGLE_PAUSE);
     press(PLAYER_INPUT_KEY_A);
@@ -418,14 +592,16 @@ int main(int argc, char **argv)
     capture("playback-wide");
     player_gui_get_stats(&gui);
     assert(mode_ack==2 && gui.logical_output && gui.output_generation==mode_generation);
-    assert(front[250*1280+500]==0 && front[0]==0xbe101820);
+    assert(front[250*1280+500]==0 && pixel(1230, 100)==0xdc111e2a);
+    touch_playback_test();
     video_controls_test();
     mode_phase=1; mode_ack=0; ++mode_generation; target_logical=false;
     tick(100,0);
     assert(mode_ack==1 && !pending);
     front=NULL; mode_phase=2; tick(150,0);
     player_gui_get_stats(&gui);
-    assert(!gui.logical_output && gui.output_generation==mode_generation && front[719]==0xbe101820);
+    assert(!gui.logical_output && gui.output_generation==mode_generation && pixel(1230, 100)==0xdc111e2a);
+    touch_playback_test();
     video_controls_test();
     /* The activity deadline must also survive the 32-bit millisecond wrap. */
     now = UINT32_MAX - 1500u;
@@ -439,8 +615,11 @@ int main(int argc, char **argv)
     press(PLAYER_INPUT_KEY_B);
     tick(150, 0);
     controls_visible(true);
+    tap(704, 626);
+    player_gui_get_stats(&gui);
+    assert(last_command.kind == PLAYER_SESSION_STOP && gui.page == PLAYER_GUI_LIBRARY);
     assert(player_gui_deinit(0) == -EBUSY);
     assert(player_gui_deinit(1) == 0);
-    printf("PASS production LVGL GUI: native/logical rotation/guards, async pin/sync, GUI route drain/rebuild ACK, font, 3 keys, backpressure, video overlay idle/wake/alpha/wrap, duration metadata/EOF fill, three pages/menu (%u submissions)\n", submissions);
+    printf("PASS production LVGL GUI: native/logical rotation/guards, async pin/sync, GUI route drain/rebuild ACK, font, 3 keys, pointer click/release/drag/global-index/backpressure, touch wake-only/volume/pause/stop/menu, video overlay idle/wake/alpha/wrap, duration metadata/EOF fill, three pages/menu (%u submissions)\n", submissions);
     return 0;
 }

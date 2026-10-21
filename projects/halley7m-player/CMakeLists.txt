@@ -104,10 +104,11 @@ elseif(PLAYER_CORE STREQUAL "mips")
     add_subdirectory(audio-decode)
     add_subdirectory(display)
     add_subdirectory(storage)
+    add_subdirectory(touch)
     add_subdirectory(gui)
     target_link_libraries(${FIRMWARE} PRIVATE -Wl,--start-group
         player_gui player_lvgl player_codec player_h264_vendor player_display player_storage
-        player_audio_decode player_faad_fixed c m gcc -Wl,--end-group)
+        player_audio_decode player_faad_fixed player_touch c m gcc -Wl,--end-group)
 else()
     message(FATAL_ERROR "PLAYER_CORE must be mips or riscv")
 endif()

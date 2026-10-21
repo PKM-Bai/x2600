@@ -34,6 +34,12 @@ int player_gui_init(const player_gui_output_t *output);
 /* The 5ms input task may call this while GUI renders. It only runs the action
  * recognizer under a short lock; no LVGL use occurs outside the GUI task. */
 void player_gui_sample_keys(uint32_t now_ms, uint16_t stable_keys);
+/* GUI-task-only pointer sample. Coordinates always use the 1280x720 logical
+ * screen, including when the output surface is stored in native orientation.
+ * Feed pressed=false on release or controller disconnect. The first contact
+ * on hidden video controls only wakes them; it cannot activate a button. */
+void player_gui_sample_touch(uint32_t now_ms, bool pressed, unsigned logical_x,
+                             unsigned logical_y);
 int player_gui_step(uint32_t now_ms);
 void player_gui_get_stats(player_gui_stats_t *stats);
 /* Display must be stopped/quiescent before destroying buffers; caller states

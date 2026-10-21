@@ -1,0 +1,40 @@
+cmake_minimum_required(VERSION 3.16)
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    project(player_touch_probe LANGUAGES C)
+endif()
+option(PLAYER_TOUCH_HOST_TESTS "Build GT911 protocol regression without MMIO" OFF)
+get_filename_component(PLAYER_TOUCH_WORKSPACE "${CMAKE_CURRENT_SOURCE_DIR}/../../.." ABSOLUTE)
+set(PLAYER_TOUCH_SDK "${PLAYER_TOUCH_WORKSPACE}/libbare-cpu")
+add_library(player_touch STATIC player_touch_core.c)
+target_include_directories(player_touch PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+set_target_properties(player_touch PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON)
+if(MSVC)
+    target_compile_options(player_touch PRIVATE /W4 /WX /utf-8)
+else()
+    target_compile_options(player_touch PRIVATE -Wall -Wextra -Werror
+        -ffunction-sections -fdata-sections -fno-common)
+endif()
+if(CMAKE_SYSTEM_PROCESSOR STREQUAL "mips")
+    target_sources(player_touch PRIVATE player_touch_board.c)
+    target_include_directories(player_touch SYSTEM PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/../mips/include"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../mips/port"
+        "${PLAYER_TOUCH_SDK}/Middlewares/FreeRTOS-Kernel/include"
+        "${PLAYER_TOUCH_SDK}/cpu/core/include"
+        "${PLAYER_TOUCH_SDK}/cpu/soc-x2600/include"
+        "${PLAYER_TOUCH_SDK}/drivers/drivers-x2600/include")
+    target_compile_definitions(player_touch PRIVATE USE_NEWLIB=1 __SDE_MIPS_=1)
+    target_compile_options(player_touch PRIVATE -mips32r2 -mabi=32 -mfp32 -mhard-float -EL
+        -mno-abicalls -fno-pic -G0 -O2)
+endif()
+if(PLAYER_TOUCH_HOST_TESTS)
+    enable_testing()
+    add_executable(player_touch_test tests/player_touch_test.c)
+    target_link_libraries(player_touch_test PRIVATE player_touch)
+    if(MSVC)
+        target_compile_options(player_touch_test PRIVATE /W4 /WX /utf-8 /UNDEBUG)
+    else()
+        target_compile_options(player_touch_test PRIVATE -Wall -Wextra -Werror -UNDEBUG)
+    endif()
+    add_test(NAME gt911_protocol COMMAND player_touch_test)
+endif()

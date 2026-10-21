@@ -10,6 +10,7 @@
 #include "player_measurement.h"
 #include "player_ui_sequence.h"
 #include "player_gui.h"
+#include "player_touch.h"
 #include "player_storage.h"
 #include "buttons.h"
 #include "FreeRTOS.h"
@@ -25,6 +26,23 @@ static player_session_snapshot_t console_view;
 static player_diagnostics_report diagnostics;
 static TaskHandle_t gui_handle;
 static player_ui_sequence_t ui_sequence;
+
+static void print_touch(void)
+{
+    player_touch_stats_t s;
+    player_touch_get_stats(&s);
+    printf("TOUCH_STATUS ready=%lu address=%02lx product=%s firmware=%04x width=%u height=%u rotated=%lu max_contacts=%lu polls=%lu reports=%lu presses=%lu releases=%lu errors=%lu invalid=%lu multiple=%lu last_error=%d pressed=%u id=%u raw_x=%u raw_y=%u x=%u y=%u\n",
+           (unsigned long)s.ready, (unsigned long)s.address, s.product,
+           (unsigned)s.firmware, (unsigned)s.width, (unsigned)s.height,
+           (unsigned long)s.rotated, (unsigned long)s.max_contacts,
+           (unsigned long)s.polls, (unsigned long)s.reports,
+           (unsigned long)s.presses, (unsigned long)s.releases,
+           (unsigned long)s.errors, (unsigned long)s.invalid_reports,
+           (unsigned long)s.multiple_contacts, s.last_error,
+           (unsigned)s.last_raw.pressed, (unsigned)s.last_raw.id,
+           (unsigned)s.last_raw.raw_x, (unsigned)s.last_raw.raw_y,
+           (unsigned)s.last_raw.x, (unsigned)s.last_raw.y);
+}
 
 static void print_ui_sequence(void)
 {
@@ -181,8 +199,15 @@ static void gui_task(void *unused)
         printf("BUTTONS_INIT result=%d scan_ms=5 debounce_ms=20\n", result);
     }
     if (result) { gui_handle = NULL; vTaskDelete(NULL); return; }
+    /* Touch is optional: a missing controller must leave physical keys usable. */
+    printf("TOUCH_INIT result=%d\n", player_touch_init());
+    print_touch();
     for (;;) {
-        result = player_gui_step((uint32_t)(platform_time_us() / 1000u));
+        uint32_t now_ms = (uint32_t)(platform_time_us() / 1000u);
+        player_touch_sample_t touch;
+        (void)player_touch_poll(now_ms, &touch);
+        player_gui_sample_touch(now_ms, touch.pressed != 0, touch.x, touch.y);
+        result = player_gui_step(now_ms);
         if (result < 0) {
             buttons_set_sample_callback(NULL);
             printf("GUI_ERROR result=%d surfaces=pinned\n", result);
@@ -283,6 +308,7 @@ static void console_task(void *unused)
                     if (probes_allowed()) printf("MEASURE_DUMP result=%d\n", player_measurement_dump_csv(player_amp_service));
                 }
                 else if (!strcmp(line, "buttons")) buttons_status();
+                else if (!strcmp(line, "touch")) print_touch();
                 else if (!strcmp(line, "tf probe")) {
                     if (probes_allowed()) printf("TF_PROBE_RESULT result=%d\n", player_storage_gpio_probe());
                 }
@@ -342,7 +368,7 @@ static void console_task(void *unused)
                     printf("HEAP free=%lu isr_unused=%lu media_stack_free_words=%lu\n",
                            (unsigned long)platform_free_heap(), (unsigned long)platform_isr_stack_unused(),
                            (unsigned long)uxTaskGetStackHighWaterMark(NULL));
-                else printf("Commands: play <path>, pause, resume, stop, session, volume <0..100>, library, gui, buttons, metrics, audio, tone, status, heap, reboot, ls [path], media <path>, video verify <path>; display probes require -DiagnosticsOnly\n");
+                else printf("Commands: play <path>, pause, resume, stop, session, volume <0..100>, library, gui, buttons, touch, metrics, audio, tone, status, heap, reboot, ls [path], media <path>, video verify <path>; display probes require -DiagnosticsOnly\n");
                 length = 0;
                 printf("player> ");
             } else if ((c == 8 || c == 127) && length) {
