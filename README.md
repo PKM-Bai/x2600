@@ -6,7 +6,7 @@
 
 ## 仓库当前状态
 
-以下状态截至 **2026-10-20**；Flash 安装状态指本次开发使用的 HALLEY7-M-KIT，不代表克隆源码后会自动安装固件。
+以下状态截至 **2026-10-21**；Flash 安装状态指本次开发使用的 HALLEY7-M-KIT，不代表克隆源码后会自动安装固件。
 
 | 项目 | 当前能力与验证情况 | 详细说明 |
 | --- | --- | --- |
@@ -18,11 +18,11 @@
 
 播放器 R9 已修复视频空闲约 3 秒隐藏上下 UI / 进度条、任意键唤出，以及 MP4 总时长等到 EOF 才显示的问题；用户实屏确认通过，默认音量为 **7%**。暂停、菜单和播放结束时控制条常显。
 
-播放器正在接入屏幕板载 GT911 和新版触摸界面：媒体库提供目录导航与点选，播放页使用浮动控制卡，保留实体三键。驱动从本板原始设备树核实 I2C0 / PC0、PC1、PC7、PC8；协议及真实 LVGL 主机回归通过，真机坐标与触摸操作尚待验收。当前 Flash 仍为上表的 R9，详见[触摸驱动](projects/halley7m-player/touch/README.md)及[GUI说明](projects/halley7m-player/gui/README.md)。
+播放器 GT911 与新版触摸界面的 **R8 候选仅作 RAM 测试，尚未写入 Flash**：用户已确认实板方向、点选、菜单及新版布局正常，实体三键继续保留。驱动从本板原始设备树核实 I2C0 / PC0、PC1、PC7、PC8；已修复 I2C 传输被媒体任务抢占后的误超时和静止 GUI 无效重绘，实板静止媒体库保持绘制/呈现 1/1。协议、生产传输及真实 LVGL 主机回归通过，R8 完整播放/UI 序列因 TF 读取错误未通过。当前 Flash 仍为上表的 R9，详见[触摸驱动](projects/halley7m-player/touch/README.md)及[GUI说明](projects/halley7m-player/gui/README.md)。
 
 播放器以完整横屏1280×720 / 30fps作为目标规格。当前 MP4 支持普通横屏文件，无需电脑预旋转；采用 H.264 Baseline/Main/High、8bit YUV420 逐行视频和 AAC-LC 音频，支持真实 PTS/DTS、CABAC、B 帧、常见尺寸/SAR 及 BT.601/BT.709 有限/全范围。具体参考帧、重排、尺寸和封装边界以格式说明为准。进度跳转、字幕、HE-AAC、多声道和 1080p 尚未接入。
 
-当前没有运行时应用启动选择器，也没有运行时 ReGBA/mGBA 引擎切换。历史 AVI 30 分钟长跑、各版模拟器验收、当前 R9 短片结果分别保留，不合并为所有版本和所有片源的性能保证。曾反馈的整屏频闪在 R8 冷暖启动复查时未复现，根因未定位；R9 本轮未做物理断电冷启。最新结果见[播放器验收记录](projects/halley7m-player/VALIDATION.md)及 [docs/validation](docs/validation/)。
+当前没有运行时应用启动选择器，也没有运行时 ReGBA/mGBA 引擎切换。历史 AVI 30 分钟长跑、各版模拟器验收、R9 短片结果分别保留，不合并为所有版本和所有片源的性能保证。2026-10-20 的历史兼容性 R8 冷暖启动复查曾未复现整屏频闪，R9 安装后该轮只做软件复位；2026-10-21 的 Flash/RAM 对照已再次复现，原 Linux 从 RAM 显示有效白灰静态图时也仍闪，根因尚未定位。静止 GUI 不再重绘不能视作频闪修复。最新结果见[播放器验收记录](projects/halley7m-player/VALIDATION.md)及 [docs/validation](docs/validation/)。
 
 ## 仓库结构
 
@@ -304,7 +304,7 @@ AMP 只上传紧凑主核合包。U-Boot 仍占用高端 DDR 时，不单独向�
 | 音频 | AIC / Codec / PDMA，播放器最终输出48kHz、S16LE、单声道；AMP默认由RISC-V独占音频硬件 |
 | TF | 当前使用SPI/SSI + FatFs、FAT32，支持中文路径转换 |
 | 三键 | A=PE14/SW3，B=PE15/SW4，Start=PE13/SW6；5ms扫描、20ms去抖 |
-| 屏幕触摸 | GT911；I2C0 100kHz，SCL=PC0、SDA=PC1，INT=PC7、RST=PC8；当前实板触控验收待完成 |
+| 屏幕触摸 | GT911；I2C0 100kHz，SCL=PC0、SDA=PC1，INT=PC7、RST=PC8；RAM 候选的方向、点选和菜单已获用户确认，Flash R9 尚无触摸 |
 | 调试串口 | UART0，SoC侧1.8V逻辑、115200/8N1；当前Windows枚举COM52，端口号不固定 |
 | USB Boot | `A108:EAEF` Cloner设备；与日志串口是不同通道 |
 

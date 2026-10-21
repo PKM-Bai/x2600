@@ -700,3 +700,73 @@ DCS 写入完全一致，也没有测得面板内部寄存器回读，不能据�
 | `r8-host/test.log` | `7acdad325924e787604d871359932e9ee6afead4ec18cd9636f40d1b4ac170ff` |
 | `r8-host/touch-test.log` | `ef0498a306eb89c12943a6e75b043cf4cfbe797620943eb614ea7c2219894628` |
 | `panel-command-evidence/report.json` | `5911e3753a6e383791f1114cb4e85cc2148a4d6684122c67ddfdfccc939675f2` |
+
+### 原 Linux RAM 实屏对照与 NOR 前后校验
+
+原备份 Linux-5.10.186+ uImage 仅从 RAM 引导，镜像 5,900,298B、CRC32
+`1354ec7f`、SHA256 `b2c3f9354979635453535e55d19701bcc7dd49be18aad47a78ab670a8b84e8d0`。
+初次工具因 iminfo 不支持、第二次因 shell 提示符识别超时留下的 failed 报告保留；
+随后 `linux-reference/resume2-report.json` 的实际 shell 查询确认 PID 1 为
+`/bin/sh`、exe 为 `/bin/busybox`，根挂载为 `/dev/root / jffs2 ro,relatime`，
+没有原厂 rcS/APP/softburn 用户进程。命令行虽带 mtdparts 的 ro 参数，三个 MTD
+flags 实际均为 **0xc00**，仍含 MTD_WRITEABLE=0x400；根只读已确认，MTD API
+只读分区保护未生效，两者不能混写成全部 NOR 接口只读。
+
+实际 fb0 为 layer0、720×1280/30、32bpp、stride 2880、virtual_size 720,2560。
+图案工具尝试写两页共 7,372,800B：首两段各 1,843,200B 完成，组成上半 0xff、
+下半 0x80 的完整一页；后两段报 ENOSPC、PATTERN_EXIT=1，原报告保留 failed。
+未把两页写入记作通过，0x80 含 alpha 也不作为校准灰度值。用户后续明确确认
+看到了有效白/灰静态图，且仍整屏亮暗频闪。因此已有原 Linux 实际显示后的
+频闪复现证据，根因仍未定位，不能按此前黑屏诊断或仅播放器故障处理。
+
+离开 Linux、回到 U-Boot 后，`nor-after-20261021T111000.358506Z.json` 完成
+独立整片读取和四项 CRC 比较：whole `9ee8a8f1`、boot `3a3c3918`、rootfs
+`8618c73f`、R9 app `3d7e43a0` 均与引导前相同，status=complete_match、
+flash_contents_same=true。此结论为完整 16MiB NOR 及列出区域的前后 CRC 一致，
+没有执行擦写或 saveenv。随后生产 R8 合包已恢复到 RAM 并启动，长度 1,974,368B、
+CRC32 `3ea4ae8b` 与上节冻结身份一致；Flash 仍是 R9。
+
+### R8 首轮完整序列：TF 读 token 错误，清理成功
+
+`r8/full-sequence.json` 首轮总状态为 failed。前两例 854×480、720×1280 短片各
+90/90 帧、144000 样本完整、drop/late 0；吉他片在 UI 循环启动前收到
+`SD_IO op=read stage=read-token sector=5732209 count=1 cmd=17 r1=00 token=08 result=-5`。
+会话进入错误状态：19 解码/17 呈现、drop/late 1/1、29760 有效音频样本，
+error=-5、pinned 0。本次故障有 TF 读取错误证据，不改记为旧 DPU -116。
+失败后的 STOP 清理成功，回到 IDLE/unpinned、音频 inactive；查询的音频欠载、
+DMA/队列/FIFO、GT911、显示 route/rotator/underrun 错误均 0。首轮失败仍保留，
+不能因后续短观察未复现而改写为完整播放/UI 通过。
+
+停止状态下对同一 38,782,620B 吉他文件只读前 8MiB，512 次 16KiB 读取成功，
+result=0、eof/truncated=0；含 tick 让出的壁钟耗时 4,615,670us、1,817,419B/s，
+纯 read 累计 4,257,032us、1,970,529B/s。该吞吐和成功范围只代表此 8MiB 前缀，
+不代表整文件或已找到先前 token 错误原因。
+
+`guitar-short-observation2` 随后约 5 秒未复现读取错误，STOP 后 149 解码/145
+呈现、drop/late 4/4、max_late 67000us，pinned 0、音频 inactive、音频及触摸
+错误均 0；迟到丢帧如实保留。首个 short-observation 的 marker 错误，以及
+after-io 完整运行器预期初始 native=0、实际保留 wide=1 的条件不符，都在 PLAY
+前退出，属于工具预置问题，报告保留且不作为新一次播放验收。调整运行器初态
+条件后的 after-io2 完整序列结果见下一节。
+
+| 精选本地证据（`build/player-touch-ui-20261021`） | SHA256 |
+| --- | --- |
+| `linux-reference/linux-final-observation.json` | `55a8a5400757ea66decd6b0aa4bdca23514774eafbecdf5a2bcd5d48ae0987f7` |
+| `linux-reference/nor-after-20261021T111000.358506Z.json` | `0e48427ba76b41dc3f156af62feb27d73d459dc524ff0631b9ee2052f141bde7` |
+| `r8/full-sequence.log` | `ed3aa5394935aaea608b2b5089e36f5914c5b680e140a65aaed89e4ed4dd9b7d` |
+| `r8/storage-read.json` | `ec02c19f9da349a3029243cd768e7359b88d1c8bdf14684aaf80282638498bae` |
+| `r8/guitar-short-observation2.json` | `aabdf9fa1cf311d2384277beeb67bbf71afcedddcef47ab1a2bf7b66b224bdd4` |
+
+### R8 after-io2：第二次 CMD17 读取失败，完整序列未通过
+
+修正初态路线约束后，`r8/after-io2/full-sequence.json` 再次记录 failed。两例
+geometry 短片仍各 90/90 帧、144000 样本完整、drop/late 0。随后吉他片开始阶段
+收到 `SD_IO failure=2 stage=command-r1 sector=5731262 cmd=17 r1=3f result=-5`，
+与首轮 sector 5732209 的 read-token 错误发生在不同位置及阶段。会话为
+1 解码/1 呈现、drop 0、samples 0/0、error=-5；吉他音频尚未启动，音频查询仍
+保留上一会话的 inactive 统计。失败后的 STOP 清理成功，IDLE、pinned 0、音频
+inactive，触摸及显示错误为 0。完整播放/UI 序列因 TF 读取错误未通过，不能只写
+成尚未运行；两轮失败保留，TF 传输异常的原因仍未定位。
+
+该轮 JSON SHA256 为 `ad1a592636b178a78442f45de6dd1f561e7ce72fc9fa57760f02e51330773f1d`；
+同名原始日志 SHA256 为 `c6213c3439d834b9109f285b64bcecf25dc92a490b63c620d0fb47d1bbb63414`。
