@@ -1,10 +1,63 @@
 # 播放器 NOR 安装与启动
 
-当前NOR为2026-10-20更新的R9，修复播放控制条空闲隐藏/按键唤出和总时长显示，
-沿用R8的真实时间戳、Main/High、CABAC、B帧、常见尺寸/SAR及601/709色彩处理。
-更新源为已完成RAM自动板测及用户目视确认的冻结产物，默认音量7%，启动音频关闭。
+当前NOR为“GT911触摸版（2026-10-21，候选R8）”，新增屏幕板载触摸和深色播放器布局，
+沿用原R9的控制条隐藏/唤出、时长显示，以及已有音视频兼容性。用户已确认RAM阶段
+触摸方向、点选、菜单及布局正常，并明确要求将当前候选写入Flash。默认音量7%，
+启动音频关闭；频闪仍未解决，完整播放/UI序列因TF读取错误未通过。
 
-## 当前安装：R9播放UI与时长修复
+## 当前安装：GT911触摸版（2026-10-21，候选R8）
+
+此“候选R8”为本轮触摸适配的版本编号，与下文2026-10-20的历史兼容性R8区分。
+
+| 项目 | 值 |
+| --- | --- |
+| 冻结源 | `build/player-touch-ui-20261021/r8/Release` |
+| 原RAM合包 | 1974368B，CRC32 `3ea4ae8b` |
+| 原RAM SHA256 | `5c045992257be35a9615b50e997bbdff3806d850bee08116e7284b67a7296d2c` |
+| NOR安装包 | 2326528B / `0x238000`，CRC32 `286de5e5` |
+| NOR SHA256 | `81ef2455f076a71d14d0320433931df6b4ce06a6699fdf63cdc3c7af70a5c705` |
+| 替换的R9安装包 | 2326528B，CRC32 `3d7e43a0` |
+| 应用写入/擦除范围 | `[0x40000,0x278000)`，沿用旧范围 |
+| 环境区 | `[0x3f000,0x40000)`，保持原启动命令和1秒等待 |
+| 保护区前后CRC | SPL/U-Boot代码 `3a3c3918`；当前rootfs `8618c73f` |
+
+冻结合包原有字节不变，追加352160B FF；原文件末端`0x807e2060`，BSS为
+`[0x807e2080,0x809141b0)`，填充末端`0x80838000`在启动清零范围内。
+先核对真实ELF/BIN、旧R9安装身份、原始双份备份及板端旧完整应用区和有效环境，
+再擦写应用范围。安装JSON为`programmed_and_verified`：2326528字节完整回读比较与
+CRC通过，持久环境CRC有效，SPL/U-Boot代码及rootfs校验保持不变。
+启动命令仍为`sfcnor read 0x40000 0x238000 0x80600000;go 0x80600000`。
+
+首次软件复位后，日志确认由NOR自动读取`0x238000`字节并跳转，出现`PLAYER_BOOT`、
+`AMP_READY`，显示/GUI/三键/GT911初始化结果均0，默认音量7%、启动音频关闭。
+尚未进行本版物理断电冷启动，安装JSON保留`cold_boot_verified=false`；不迁移旧版
+冷启动或30分钟结果。频闪与两次TF读取失败保持为已知问题，用户授权部署不等于
+这些问题已修复，也不将用户对硬件原因的判断写成已证实结论。
+
+独立内嵌三秒片冒烟未达到零掉帧要求：81解码/78呈现时检测到drop/late 1/1、
+max_late 33334us，脚本立即STOP，未播放到EOF。清理后82解码/80呈现、
+129600/144000有效音频样本，pinned0、会话error0、音频inactive且音频错误全0。
+不将此次安装成功写成完整短片或尾段验收通过，详细边界见[验收记录](VALIDATION.md)。
+
+随后另作一次软件复位，`nor-final-boot.json`确认正常NOR自动装载和初始化，未启动
+播放；早期GUI采样为rendered1/presented0。后续静止查询`nor-final-settled.json`为
+passed：IDLE、会话音量7%、pinned0/error0、音频inactive、媒体库GUI1/1且error0，
+GT911 ready、6463次poll且error0。最终保留此静止媒体库状态；本次没有物理断电验证。
+
+当前派生包和manifest在`build/player-touch-ui-20261021/nor-install/`，
+安装JSON/log为同目录`flash-install.json/.log`。下一次更新的previous应使用这次
+实际写入的派生包和安装JSON，旧R9安装改为历史记录。
+
+| 当前安装证据（`build/player-touch-ui-20261021/nor-install`） | SHA256 |
+| --- | --- |
+| `flash-install.json` | `b7e02cc851883a35f81f056a068292777c72ed2bb771d128f75e44f3d5d8aa86` |
+| `flash-install.log` | `361a635ce794d9a86fd016986a1e62eb18ee9f76b2970ae7c0c7c7ac801d4a5a` |
+| `nor-smoke.json`（未通过） | `ce5e3a7757a93e1faaa7393c87a13d56a1bed85884dc36eab71bc741d4eb5946` |
+| `nor-smoke.log` | `8b35aaba09a80b1b936d39a3c7d13cff48313f2dd2157ccf499425f3192f6b99` |
+| `nor-final-boot.json` | `54f2fad7cde7dc31c8123dff878bab7d1119a73f7c6260ba686187ce24215a5e` |
+| `nor-final-settled.json` | `7ca62e29f6ef5498087d16eef0232fdb64db215e96af949661fb335392ccb8f4` |
+
+## R9播放UI与时长修复（历史记录）
 
 | 项目 | 值 |
 | --- | --- |
@@ -29,10 +82,10 @@ BSS为`[0x807dc6c0,0x8090e6c0)`，填充末端`0x80838000`在启动清零范围�
 音频inactive；随后再次软件复位直接从NOR进入媒体库。未进行物理断电重上电，
 `cold_boot_verified=false`，不把此前R8的冷启动确认迁移到R9。
 
-当前派生包为`build/player-ui-fixes-20261020/nor/halley7m_player_nor.bin`，
+该次派生包为`build/player-ui-fixes-20261020/nor/halley7m_player_nor.bin`，
 manifest在同目录；安装JSON/log为`build/player-ui-fixes-20261020/flash-install.json/.log`，
 独立启动/播放记录为同目录`nor-smoke-board.log/.json`。散列及RAM验收见
-[验收记录](VALIDATION.md)。这些冻结文件和安装JSON是下一次更新的previous。
+[验收记录](VALIDATION.md)。此次更新已被上述GT911触摸版替换，保留原冻结文件和证据。
 
 ## R8安装（历史记录）
 
@@ -130,14 +183,14 @@ ELF核验原文件末端为`0x807d4c20`，其后32B为对齐空隙；BSS范围�
 python scripts/flash-player-nor.py --self-test
 ```
 
-后续版本的本地准备示例（使用当前R9安装作为previous，换用新的output目录）：
+后续版本的本地准备示例（使用当前GT911触摸版安装作为previous，换用新的output目录）：
 
 ```powershell
 python scripts/flash-player-nor.py `
   --file build/player-riscv-Release/mips/halley7m_player.bin `
   --manifest build/player-riscv-Release/manifest.json `
-  --previous-bin build/player-ui-fixes-20261020/nor/halley7m_player_nor.bin `
-  --previous-install build/player-ui-fixes-20261020/flash-install.json `
+  --previous-bin build/player-touch-ui-20261021/nor-install/halley7m_player_nor.bin `
+  --previous-install build/player-touch-ui-20261021/nor-install/flash-install.json `
   --output build/player-nor-next
 ```
 

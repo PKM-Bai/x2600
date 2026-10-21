@@ -770,3 +770,53 @@ inactive，触摸及显示错误为 0。完整播放/UI 序列因 TF 读取错�
 
 该轮 JSON SHA256 为 `ad1a592636b178a78442f45de6dd1f561e7ce72fc9fa57760f02e51330773f1d`；
 同名原始日志 SHA256 为 `c6213c3439d834b9109f285b64bcecf25dc92a490b63c620d0fb47d1bbb63414`。
+
+### GT911触摸版（2026-10-21，候选R8）：NOR安装与首次自动启动
+
+用户明确要求将当前触摸候选写入Flash，接受频闪暂留；此前两轮TF读取失败和完整
+播放/UI序列未通过保持为已知问题。此版本称为“GT911触摸版（2026-10-21，候选R8）”，
+与2026-10-20的兼容性R8及播放UI/时长修复R9区分；不据用户对硬件原因的判断宣称
+频闪根因已证实。本次仅部署冻结产物，没有改动生产源码或重跑主机回归。
+
+源合包为`r8/Release/mips/halley7m_player.bin`，1974368B、CRC32 `3ea4ae8b`、
+SHA256 `5c045992257be35a9615b50e997bbdff3806d850bee08116e7284b67a7296d2c`。
+追加352160B FF后的NOR包为2326528B / `0x238000`、CRC32 `286de5e5`、SHA256
+`81ef2455f076a71d14d0320433931df6b4ce06a6699fdf63cdc3c7af70a5c705`。
+前缀与源合包逐字节相同；BSS为`[0x807e2080,0x809141b0)`，填充末端`0x80838000`
+在启动清零范围内。替换的旧R9仍为2326528B、CRC32 `3d7e43a0`，原身份记录保留。
+
+`nor-install/flash-install.json`为`programmed_and_verified`。擦除前核对旧完整应用区、
+有效持久环境与原始备份；擦写范围仍为`[0x40000,0x278000)`。全部2326528字节回读
+比较及CRC通过，环境CRC有效，SPL/U-Boot代码`3a3c3918`及rootfs `8618c73f`前后
+未变。持久启动命令仍为`sfcnor read 0x40000 0x238000 0x80600000;go 0x80600000`，
+bootdelay=1。软件复位后实际日志确认NOR自动读取并跳转、`PLAYER_BOOT/AMP_READY`，
+显示/GUI/三键/GT911初始化均为0；GT911为0x14、911/1060、720×1280旋转映射，
+默认音量7%、启动音频关闭。安装JSON的`cold_boot_verified=false`保持原值，尚未做
+本版物理断电冷启动。当前Flash已由旧R9更新为本触摸版，后续previous入口改用
+`nor-install/halley7m_player_nor.bin`和`nor-install/flash-install.json`。
+
+独立`nor-install/nor-smoke.json`初态确认AMP active、媒体库、GUI rendered/presented
+为1/1、GT911 ready且error 0、会话音量7%且音频inactive。其内嵌三秒片检查以250ms
+间隔查询状态，81解码/78呈现时出现drop/late 1/1、max_late 33334us，触发严格零丢帧
+断言后立即停止，报告为failed，未到EOF。清理后82解码/80呈现、129600/144000有效
+音频样本、pinned 0、会话error 0、音频inactive且DMA/超时/队列/FIFO/欠载错误均0。
+本次不能记作90/90、完整尾段或零掉帧通过；查询是否造成扰动未证实，也不将这次
+短片未通过混写成NOR擦写失败。完整TF序列失败及频闪未解决的结论保持不变。
+
+随后独立执行一次软件复位，`nor-final-boot.json`为passed，确认由持久环境自动NOR
+装载、双核及全部界面输入初始化正常，未启动播放。其早期GUI快照为rendered1/
+presented0，不能改记为1/1。之后只读`nor-final-settled.json`为passed：session0、
+IDLE/kind0、会话音量7%、pinned0/error0，音频inactive；媒体库page0、rendered1/
+presented1/error0，GT911 ready、911/1060、polls6463/errors0。此后串口关闭，
+板卡保留静止媒体库与音频关闭状态；没有新增物理断电冷启动或播放回归。
+
+| 安装证据（`build/player-touch-ui-20261021/nor-install`） | SHA256 |
+| --- | --- |
+| `flash-install.json` | `b7e02cc851883a35f81f056a068292777c72ed2bb771d128f75e44f3d5d8aa86` |
+| `flash-install.log` | `361a635ce794d9a86fd016986a1e62eb18ee9f76b2970ae7c0c7c7ac801d4a5a` |
+| `nor-smoke.json`（未通过） | `ce5e3a7757a93e1faaa7393c87a13d56a1bed85884dc36eab71bc741d4eb5946` |
+| `nor-smoke.log` | `8b35aaba09a80b1b936d39a3c7d13cff48313f2dd2157ccf499425f3192f6b99` |
+| `nor-final-boot.json` | `54f2fad7cde7dc31c8123dff878bab7d1119a73f7c6260ba686187ce24215a5e` |
+| `nor-final-boot.log` | `d926bf67a558720982cecdd373943173310898c0718dbfabb970680f22f7679c` |
+| `nor-final-settled.json` | `7ca62e29f6ef5498087d16eef0232fdb64db215e96af949661fb335392ccb8f4` |
+| `nor-final-settled.log` | `471c68cabf53629babb5a153bb5ee0b872d526a2b2d218bea33fdbe09f2c7a6b` |

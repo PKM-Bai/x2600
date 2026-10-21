@@ -14,11 +14,11 @@
 | ReGBA 掌机 | MIPS FreeRTOS、ReGBA JIT、中文游戏库、蓝牙手柄、原生存档、读档与设置、CPU/FPS；已有 RAM 与历史 NOR 验收 | [掌机工程](projects/halley7m-regba/README.md)、[GUI 记录](docs/ReGBA掌机GUI实施记录.md) |
 | mGBA 引擎 | 同一掌机工程的独立编译选项，固定 mGBA 0.10.5；软件、RAM 实板及独立 660 秒联合测试通过，性能限制单列 | [引擎分离记录](docs/ReGBA引擎分离实施记录.md) |
 | AMP 播放器 | MIPS / RISC-V 各运行 FreeRTOS，H.264 硬解、音频主时钟、LVGL 中文三页、三键操作；支持 AVI/WAV、MP3、AAC/M4A、MP4 | [播放器工程](projects/halley7m-player/README.md)、[输入格式](projects/halley7m-player/FORMATS.md) |
-| 当前实板 Flash | **播放器 R9**，NOR 包 2,326,528B / CRC32 `3d7e43a0`；完整回读、软件复位自动启动及短播放检查通过 | [当前安装与更新](projects/halley7m-player/NOR_INSTALL.md) |
+| 当前实板 Flash | **GT911触摸版（2026-10-21，候选R8）**，NOR 包 2,326,528B / CRC32 `286de5e5`；完整回读与软件复位自动启动通过 | [当前安装与更新](projects/halley7m-player/NOR_INSTALL.md) |
 
-播放器 R9 已修复视频空闲约 3 秒隐藏上下 UI / 进度条、任意键唤出，以及 MP4 总时长等到 EOF 才显示的问题；用户实屏确认通过，默认音量为 **7%**。暂停、菜单和播放结束时控制条常显。
+当前播放器沿用 R9 已验证的视频空闲约 3 秒隐藏上下 UI / 进度条、任意键唤出，以及 MP4 总时长提前显示；默认音量为 **7%**。暂停、菜单和播放结束时控制条常显。
 
-播放器 GT911 与新版触摸界面的 **R8 候选仅作 RAM 测试，尚未写入 Flash**：用户已确认实板方向、点选、菜单及新版布局正常，实体三键继续保留。驱动从本板原始设备树核实 I2C0 / PC0、PC1、PC7、PC8；已修复 I2C 传输被媒体任务抢占后的误超时和静止 GUI 无效重绘，实板静止媒体库保持绘制/呈现 1/1。协议、生产传输及真实 LVGL 主机回归通过，R8 完整播放/UI 序列因 TF 读取错误未通过。当前 Flash 仍为上表的 R9，详见[触摸驱动](projects/halley7m-player/touch/README.md)及[GUI说明](projects/halley7m-player/gui/README.md)。
+播放器 GT911 与新版触摸界面已按用户要求从 RAM 候选部署到 Flash：用户已在 RAM 阶段确认实板方向、点选、菜单及新版布局正常，实体三键继续保留。驱动从本板原始设备树核实 I2C0 / PC0、PC1、PC7、PC8；已修复 I2C 传输被媒体任务抢占后的误超时和静止 GUI 无效重绘，实板静止媒体库保持绘制/呈现 1/1。协议、生产传输及真实 LVGL 主机回归通过，R8 完整播放/UI 序列因 TF 读取错误未通过。此次 Flash 安装完整回读和首次软件复位自动启动通过，显示、GUI、三键及 GT911 初始化成功；尚未验证本版物理断电冷启动。详见[触摸驱动](projects/halley7m-player/touch/README.md)及[GUI说明](projects/halley7m-player/gui/README.md)。
 
 播放器以完整横屏1280×720 / 30fps作为目标规格。当前 MP4 支持普通横屏文件，无需电脑预旋转；采用 H.264 Baseline/Main/High、8bit YUV420 逐行视频和 AAC-LC 音频，支持真实 PTS/DTS、CABAC、B 帧、常见尺寸/SAR 及 BT.601/BT.709 有限/全范围。具体参考帧、重排、尺寸和封装边界以格式说明为准。进度跳转、字幕、HE-AAC、多声道和 1080p 尚未接入。
 
@@ -287,7 +287,7 @@ AMP 只上传紧凑主核合包。U-Boot 仍占用高端 DDR 时，不单独向�
 
 当前实板保留原 SPL/U-Boot，自动从 NOR 读取播放器到 DDR。更新播放器使用 `scripts/flash-player-nor.py`，默认只生成和核对安装计划；显式 `--execute` 才写 Flash，需匹配实际上一版派生包和安装记录，写后完整回读并核对保护区。
 
-当前 R9 的包、CRC、上一版参数及后续更新示例见[播放器 NOR 安装说明](projects/halley7m-player/NOR_INSTALL.md)。掌机历史安装及 USB Boot/接线说明见[烧录步骤](docs/烧录步骤.md)。早期 Cloner 整段配置属于环境实验记录，不作为当前应用更新流程；首次部署到另一块板也不能直接套用本板备份和安装身份。
+当前 GT911触摸版（2026-10-21，候选R8）的包、CRC、上一版参数及后续更新示例见[播放器 NOR 安装说明](projects/halley7m-player/NOR_INSTALL.md)。掌机历史安装及 USB Boot/接线说明见[烧录步骤](docs/烧录步骤.md)。早期 Cloner 整段配置属于环境实验记录，不作为当前应用更新流程；首次部署到另一块板也不能直接套用本板备份和安装身份。
 
 ## 硬件环境
 
