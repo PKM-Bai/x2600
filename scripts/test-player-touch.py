@@ -15,22 +15,25 @@ def main():
     args = parser.parse_args()
     output = ROOT / 'build/player-host/touch'
     output.mkdir(parents=True, exist_ok=True)
-    executable = output / ('player_touch_test.exe' if os.name == 'nt' else 'player_touch_test')
     source = ROOT / 'projects/halley7m-player/touch'
-    sources = [source / 'tests/player_touch_test.c', source / 'player_touch_core.c']
+    environment = None
     if Path(args.cc).stem.lower() == 'cl':
         spec = importlib.util.spec_from_file_location('touch_test_support', ROOT / 'scripts/test-player-amp.py')
         support = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(support)
         environment = support.msvc_environment()
         compiler = shutil.which(args.cc, path=environment.get('Path', environment.get('PATH'))) or args.cc
-        command = [compiler, '/nologo', '/std:c11', '/O2', '/W4', '/WX', '/utf-8', '/I' + str(source)]
-        command += [str(path) for path in sources] + ['/Fe:' + str(executable)]
-        subprocess.run(command, cwd=output, env=environment, check=True)
+        prefix = [compiler, '/nologo', '/std:c11', '/O2', '/W4', '/WX', '/utf-8',
+                  '/I' + str(source / 'tests/stubs'), '/I' + str(source)]
     else:
-        subprocess.run([args.cc, '-std=c11', '-O2', '-Wall', '-Wextra', '-Werror', '-I', str(source),
-                        *map(str, sources), '-o', str(executable)], cwd=output, check=True)
-    subprocess.run([str(executable)], check=True)
+        prefix = [args.cc, '-std=c11', '-O2', '-Wall', '-Wextra', '-Werror',
+                  '-I', str(source / 'tests/stubs'), '-I', str(source)]
+    for name in ('player_touch_test', 'player_touch_transfer_test'):
+        executable = output / (name + ('.exe' if os.name == 'nt' else ''))
+        sources = [source / 'tests' / (name + '.c'), source / 'player_touch_core.c']
+        suffix = ['/Fe:' + str(executable)] if environment else ['-o', str(executable)]
+        subprocess.run([*prefix, *map(str, sources), *suffix], cwd=output, env=environment, check=True)
+        subprocess.run([str(executable)], check=True)
 
 
 if __name__ == '__main__':

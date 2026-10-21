@@ -481,8 +481,22 @@ R5已完成独立板测，RAM日志`build/player-bframes-approved-ramload-202610
 - 双核 Release 紧凑包 **1,973,776B**，CRC32 `b20fc5e0`，SHA256 `963a722fd78a1244916f6050f98883a348ab22986ce3d73113cf27870ebeac96`；Debug **2,106,288B**，CRC32 `ed44ef07`，SHA256 `7a9cc3dd04f07e340ef2aa9e5f8109372260a28920342f75531db95c446fb686`。小核仍为 35,880B/CRC32 `003d092f`，协议 4/共享布局 3。两核入口、段边界、嵌入内容及 6MiB 上传窗口核验通过；冻结 Release 的真实 ELF/BIN 和损坏副本 **17 项**检查通过。
 - 冻结产物、manifest 和构建日志位于本地 `build/player-touch-ui-20261021/{Release,Debug}` 及同级日志。NOR 派生包仅在电脑生成，2,326,528B/CRC32 `b1f03970`，未执行写入。
 
-### 尚待完成的实板验证
+### 首轮 RAM 验证及 I2C 超时修正
 
-本轮串口预检未收到播放器状态。Windows 的 COM52/FTDI 驱动调用先阻塞，重插后原 FTDI 设备未枚举，已请用户换电脑 USB 接口并确认实际端口。**本轮没有 RAM 加载、NOR 写入或实板触控通过记录，当前 Flash 仍为 R9。** 主机模拟不作为 GT911 实物响应、四角方向、触摸命中、播放负载或冷启动证明。
+初次提交时，Windows COM52/FTDI 驱动调用先阻塞，重插后原设备未枚举，未能进行 RAM 加载。用户随后恢复连接，首版以长度 1,973,776B、CRC32 `b20fc5e0` 校验通过并启动；日志为本地 `build/player-touch-ui-20261021/ramload.log`。双核 READY、显示及 GUI 初始化正常，GT911 读出地址 0x14、产品 911、固件 1060、720×1280、max_contacts 10，初始错误为 0。
 
-串口恢复后先 RAM 加载：核对 GT911 产品/固件/实际尺寸，检查四角与中心、媒体库和菜单点击；再验证 native/wide 切换、隐藏首触、暂停恢复、停止回收、三键并用及 7% 音量播放期间的 I2C/GUI/音频错误。完成这些验证后再更新 Flash 和记录。
+首个真实 TF 的 854×480 短片解码/呈现 90/90、144000 个有效音频样本、drop/late 0，全部音频错误 0；STOP 后 IDLE、audio inactive、pinned 0。但触摸计数在 2540 次轮询时记录一次 ETIMEDOUT，自动验收明确失败并停止；后续空闲至 11480 次轮询，错误未增长。原始失败日志及 JSON 保留在本地 `build/player-touch-ui-20261021/ram-ui-board.*`，没有将视频成功等同于触摸验收通过。
+
+代码审查确认旧循环每轮只收发一个字节且使用旧 STOP 快照，存在媒体任务抢占后数据已完成却先判超时的竞态。本轮改为有限批量填充 TX/排空 RX，全部命令入队后才开始 6ms 设备完成等待；入队另有独立 6ms 预算。接收后读取新 STOP/活动状态，超时临界点再复核一次，enable/disable 到期也最终重读 ENBST。未扩大优先级或 IRQ 临界区，未放宽完成限时。首次实板超时未保存底层寄存器快照，其具体触发阶段未被直接测得。
+
+新增测试直接编译生产 `player_touch_board.c`，只替换 MMIO/时钟/RTOS 边界，模拟 12ms 抢占覆盖入队、已完成 RX、STOP 后到、deadline 采样及 enable 状态变化；真正的 TX/RX/enable 卡死、无 STOP、NACK 和溢出仍有界报错。`scripts/test-player-touch.py` 的协议及传输两项 MSVC `/W4 /WX` 测试通过，日志为本地 `build/player-touch-ui-20261021/r2/touch-host.log`。
+
+修正版 R2 两核 Release 为 **1,974,032B**、CRC32 `b61a81ec`、SHA256 `3244d1ffa422beeb2cf3df1e6729b8022feed9badccfa9a5ebe93ded8fe63fa9`；Debug **2,106,544B**、CRC32 `7a7a84e2`、SHA256 `01f1615f59ef7c48a633fae26e282983d5c8ba00da61eec2744e9029d3248812`。构建与地址/嵌入核验通过，冻结 Release 的真实 ELF/BIN 及损坏副本 17 项通过，产物保留在本地 `build/player-touch-ui-20261021/r2/{Release,Debug}`。
+
+R2 RAM 上传及校验通过，正常 GUI/AMP/7% 的真实 TF 复测中，854×480 和原生 720×1280 短片各 90/90 帧、144000 样本、drop/late 0，全部音频错误 0。吉他片短播及一次完整三键菜单/诊断序列通过，暂停前后两次查询均为 2203200 样本，恢复后隐藏正常；本轮停止时 1507 解码/1442 呈现、drop/late 65/65、max_late 121000us，照实保留。原始 test.mp4 全部 994 帧解码、988 呈现、drop/late 6/6，1592520 样本完整、音频错误 0、weight_approx 5。它们不构成零掉帧或新版本 30 分钟证明。
+
+截至这些复测结束，GT911 9869 次轮询错误为 0；后续故障诊断期间至 66004 次轮询仍为 0。用户在黑屏时实际触碰，驱动收到 13 次按下/释放，坐标报告有效、invalid 0；未将这些未明确对应屏幕目标的触点记作方向或命中验收通过。记录为本地 `r2/coordinate-touch.*`。
+
+R2 全套自动验收仍失败：上述 wide 文件切回原生 acceptance-30min.avi 后，解码 22 帧、呈现 19 帧、drop 1，发生显示/STOP 超时 -116、pinned 1。音频已关闭、音频错误仍 0、触摸仍正常；用户确认屏幕为黑屏。连续快照保留在 `r2/avi-display*.log`，显示 pending 事务与硬件旧 layer 地址长期不匹配，TFT_ST 持续为 0。该失败未计作完整播放器通过，显示运行中描述符提交正在单独修正。
+
+当前 Flash 仍为 R9，新的 NOR 派生包仅在电脑生成。可见界面恢复后还需触摸方向/命中和人工操作验收；用户已取消手机录像和实际声光偏差数值验证。

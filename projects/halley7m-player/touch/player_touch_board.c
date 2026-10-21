@@ -15,6 +15,15 @@
 #define TOUCH_ENABLE_US 1000u
 #define TOUCH_MAX_TRANSFER 40u
 
+/* Register access remains direct in firmware. The production transfer loop is
+ * also exercised with a FIFO/clock peer in the host regression. */
+#ifndef PLAYER_TOUCH_I2C_READ
+#define PLAYER_TOUCH_I2C_READ(reg) (I2C0_Instance->reg)
+#endif
+#ifndef PLAYER_TOUCH_I2C_WRITE
+#define PLAYER_TOUCH_I2C_WRITE(reg, value) (I2C0_Instance->reg = (value))
+#endif
+
 static player_gt911_t controller;
 static player_touch_stats_t published_stats;
 
@@ -31,9 +40,10 @@ static void publish_stats(void)
 static int set_enabled(unsigned enabled)
 {
     uint64_t deadline = platform_time_us() + TOUCH_ENABLE_US;
-    I2C0_Instance->I2C_ENABLE = enabled;
-    while ((I2C0_Instance->I2C_ENBST & 1u) != enabled) {
-        if (platform_time_us() >= deadline) return -ETIMEDOUT;
+    PLAYER_TOUCH_I2C_WRITE(I2C_ENABLE, enabled);
+    while ((PLAYER_TOUCH_I2C_READ(I2C_ENBST) & 1u) != enabled) {
+        if (platform_time_us() >= deadline)
+            return (PLAYER_TOUCH_I2C_READ(I2C_ENBST) & 1u) == enabled ? 0 : -ETIMEDOUT;
     }
     return 0;
 }
@@ -91,53 +101,83 @@ static int transfer(uint8_t address, uint16_t reg, uint8_t *read_data,
 {
     size_t received = 0, queued = 0;
     uint64_t deadline;
-    int result;
+    int result, disabled;
     if (!size || size > TOUCH_MAX_TRANSFER || (!read_data && !write_data)) return -EINVAL;
     result = set_enabled(0);
     if (result) return result;
-    (void)I2C0_Instance->I2C_CINT;
-    I2C0_Instance->I2C_TAR = address;
+    (void)PLAYER_TOUCH_I2C_READ(I2C_CINT);
+    PLAYER_TOUCH_I2C_WRITE(I2C_TAR, address);
     result = set_enabled(1);
     if (result) return result;
     deadline = platform_time_us() + TOUCH_TRANSFER_US;
     const size_t commands = size + 2u;
-    for (;;) {
-        uint32_t interrupt = I2C0_Instance->I2C_RINTST;
-        if (interrupt & I2C_RAW_INTM_STAT_TX_ABRT) {
-            result = (I2C0_Instance->I2C_ABTSRC & 1u) ? -ENXIO : -EIO;
-            break;
-        }
-        if (interrupt & ((1u << 1) | (1u << 3))) { /* RX_OVER / TX_OVER */
-            result = -EIO;
-            break;
-        }
-        if (read_data && received < size && (I2C0_Instance->I2C_ST & I2C_ST_RFNE))
-            read_data[received++] = (uint8_t)I2C0_Instance->I2C_DC;
-        if (queued < commands && (I2C0_Instance->I2C_ST & I2C_ST_TFNF)) {
+    while (queued < commands) {
+        /* At most 42 commands fit in the 64-entry FIFO. Feed all available
+         * space before checking elapsed time so the controller can finish
+         * autonomously if the higher-priority media task preempts this task. */
+        while (queued < commands && (PLAYER_TOUCH_I2C_READ(I2C_ST) & I2C_ST_TFNF)) {
             uint32_t command;
             if (!queued) command = reg >> 8;
             else if (queued == 1) command = reg & 255u;
             else if (read_data) command = I2C_DC_CMD | (queued == 2 ? I2C_DC_RESTART : 0u);
             else command = write_data[queued - 2u];
             if (queued + 1u == commands) command |= I2C_DC_STOP;
-            I2C0_Instance->I2C_DC = command;
+            PLAYER_TOUCH_I2C_WRITE(I2C_DC, command);
             ++queued;
         }
-        if (queued == commands && (!read_data || received == size) &&
+        uint32_t interrupt = PLAYER_TOUCH_I2C_READ(I2C_RINTST);
+        if (interrupt & I2C_RAW_INTM_STAT_TX_ABRT) {
+            result = (PLAYER_TOUCH_I2C_READ(I2C_ABTSRC) & 1u) ? -ENXIO : -EIO;
+            goto finished;
+        }
+        if (interrupt & ((1u << 1) | (1u << 3))) { /* RX_OVER / TX_OVER */
+            result = -EIO;
+            goto finished;
+        }
+        if (queued < commands && platform_time_us() >= deadline) {
+            result = -ETIMEDOUT;
+            goto finished;
+        }
+    }
+    /* Keep the device-completion budget at 6ms. Time spent suspended before
+     * the last FIFO command was queued is not an I2C completion timeout. */
+    deadline = platform_time_us() + TOUCH_TRANSFER_US;
+    unsigned final_check = 0;
+    for (;;) {
+        /* Drain all received bytes before considering a timeout. A completed
+         * 40-byte transfer can be waiting in RX FIFO when this task resumes. */
+        while (read_data && received < size &&
+               (PLAYER_TOUCH_I2C_READ(I2C_ST) & I2C_ST_RFNE))
+            read_data[received++] = (uint8_t)PLAYER_TOUCH_I2C_READ(I2C_DC);
+        uint32_t interrupt = PLAYER_TOUCH_I2C_READ(I2C_RINTST);
+        if (interrupt & I2C_RAW_INTM_STAT_TX_ABRT) {
+            result = (PLAYER_TOUCH_I2C_READ(I2C_ABTSRC) & 1u) ? -ENXIO : -EIO;
+            break;
+        }
+        if (interrupt & ((1u << 1) | (1u << 3))) {
+            result = -EIO;
+            break;
+        }
+        /* STOP is sampled after RX service, not from a previous loop's state. */
+        if ((!read_data || received == size) &&
             (interrupt & I2C_RAW_INTM_STAT_STOP_DET) &&
-            !(I2C0_Instance->I2C_ST & I2C_ST_MSTACT)) {
+            !(PLAYER_TOUCH_I2C_READ(I2C_ST) & I2C_ST_MSTACT)) {
             result = 0;
             break;
         }
-        if (platform_time_us() >= deadline) {
+        if (final_check) {
             result = -ETIMEDOUT;
             break;
         }
+        /* One bounded final drain and fresh status check closes the race
+         * between the last sample and a preemption during the clock read. */
+        if (platform_time_us() >= deadline) final_check = 1;
     }
+finished:
     /* Disable also flushes FIFO after an abort/timeout. Never wait indefinitely
      * for an unplugged touch panel; the core backs off failed polls to 100 ms. */
-    int disabled = set_enabled(0);
-    (void)I2C0_Instance->I2C_CINT;
+    disabled = set_enabled(0);
+    (void)PLAYER_TOUCH_I2C_READ(I2C_CINT);
     return result ? result : disabled;
 }
 
