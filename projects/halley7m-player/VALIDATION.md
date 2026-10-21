@@ -571,3 +571,132 @@ pinned 0、audio inactive。两轮查询的音频欠载、DMA 错误/超时和�
 截至上述 R4 记录，Flash 继续保留已安装的 R9；R3 的 NOR 派生/准备结果
 `execute=false`，未烧写。后续 R5 仅增加诊断入口并作 RAM 加载准备，不属于以上
 R4 静止界面及 AVI 证据，验收结果须按实际固件身份另记。
+
+### R5/R6：触摸轮询、PWM 载波及 DSI 彩条频闪对照
+
+R5 曾在运行中直接打开 VPG，CLI 返回成功、VID_MODE_CFG=00013f02，但用户看到
+黑屏，未看到彩条；DSI 00c0=00000080。它是失败的诊断，不能作为彩条显示正常或
+排除面板/背光的证据。原始 `r5/static-colorbar.log`、`colorbar-registers.log` 和
+恢复正常模式的记录继续保留，本节不以 R6 的结果改写该失败。
+
+R6 使用冻结 Release 紧凑包 **1,975,520B**、CRC32 `22ec2ba1`、SHA256
+`9b44855f17212807f6041f35cb71af6b9041665975df6736fba3a12f15bfac6d`，
+manifest SHA256 为 `6f1a83ce2691bf852d2613ebba5384dfd8f01fa07216d10e68cc31687b18408b`。
+两核真实 ELF/BIN 及损坏副本 17 项检查通过，RAM 上传日志确认完整长度和板端 CRC
+一致；仅 RAM 加载，Flash 继续保留 R9。以下证据均在本地
+`build/player-touch-ui-20261021/r6`，不移用 R4 的短播放结果作为 R6 播放验收。
+
+重新加载 R6 后停在媒体库、未启动媒体，session IDLE、音频 inactive、默认 7%。
+GUI rendered/presented 1/1，DPU overlay 仅一次提交/确认、pending 0、mismatches/
+underruns 0。原始 PWM 为 PWMEN=00008000、PWMCC15=00000005、PWMCDR=00000002、
+PWMWC15=a6aa5356；LPCDR=4000002f。基线 EOD 周期 33013～33054us，DSI
+0038=00003f02、00c0=0。用户确认这次新加载的静止媒体库仍整屏亮暗频闪。
+
+随后逐项改变并收集人工观察：
+
+| 对照 | 板内记录 | 用户观察及适用边界 |
+| --- | --- | --- |
+| 暂停触摸轮询 | `TOUCH_POLL enabled=0`；等待后两次 polls 都为 29812，GUI 仍 1/1，PWM 保持 a6aa5356 | 仍频闪。此操作只停止软件 I2C 轮询，没有关闭 GT911 电源或断开屏幕板载触摸硬件。 |
+| 恢复轮询，再切名义 10kHz PWM | `enabled=1`、polls 恢复增加；载波命令 result=0，PWMWC15=10aa0856，PWMCC15/PWMCDR 和 LPCDR 不变，GUI 仍 1/1、DSI 00c0=0 | 仍闪，基本没有变化。只核对了寄存器和代码中的周期/近似相同占空比，没有用示波器实测背光引脚频率或电流，不能据此排除全部背光问题。 |
+| 还原名义 1kHz，再用停止/复位序列打开 VPG | PWMWC15 恢复 a6aa5356；停止 DPU DMA、DSI PWR_UP=0、设置 VPG、PWR_UP=1 后重新启动；result=0，0038=00013f02，GUI 仍 1/1 | 用户明确确认“能看到彩条，仍频闪”。本轮有实际彩条观察，与 R5 黑屏诊断分开记录。 |
+| 退出 VPG，恢复正常 GUI | 正常模式命令 result=0，0038 恢复 00003f02，PWM 保持 a6aa5356；GUI 1/1、pending/mismatches/underruns 均 0，触摸恢复至 polls 53576、errors 0 | 已恢复正常媒体库和原 PWM，继续定位频闪，没有将诊断配置留作生产默认。 |
+
+VPG 切换后的 DSI 00c0 为 00000080，恢复普通 GUI 后该状态仍为 00000080，照实
+保留；基线、暂停触摸与 10kHz 对照时均为 0。该切换期 DSI 状态不等于 GUI
+output_error，GUI 始终为 0，也不能据此把正常 GUI 的频闪直接归因于同一错误。
+累计 EOD 周期在切 VPG 后最大 37999us、恢复后最大 59369us，包含模式切换过程，
+不作为普通静止画面的稳定刷新周期。没有重置或删掉这些切换期观测。
+
+截至本节，静止 GUI 没有持续提交、暂停软件触摸轮询后仍闪、实际 VPG 彩条下也
+仍闪，这些都是各自条件下的观察；尚未定位根因，不能宣称完全排除触摸硬件、
+背光或供电。用户说明开发板由 USB Hub 供电，下一步拟改电脑 USB 直连或独立 5V
+供电作对照；该供电对照的实板结果尚未获得，不记作通过。
+后续 COM52 的 `--wait-boot` 监听捕获新的启动，Reset status=00000001，未发送
+reboot，并开始上传同一 R6；过程日志为 `r6/direct-usb-power-ramload.log`。
+用户尚未文字确认具体改接方式，不能从这次启动推定已改为电脑直连；新的频闪
+观察结果也尚未获得。
+
+| R6 原始本地日志 | SHA256 |
+| --- | --- |
+| `baseline-library.log` | `2bb4a41efa4f9fb40f464ab629a13240fa7be74a361db1b4511252140cfd768c` |
+| `touch-poll-paused.log` | `8ec215d7be3a993483a560ab8f86bb19122825e50343175cffa315afe65a832d` |
+| `carrier-10khz.log` | `305cf5009aa8f7e6bd66ce195748a0d06b45ad75efbb35c4034d7211c82d8178` |
+| `restore-carrier-and-vpg.log` | `15eefee701f87119b7103a419b871fcdcd37c275d25810de4e3a454292e6ffe5` |
+| `restore-after-vpg.log` | `755ce139e404a7dacb3c6f0d27bb209e5204d6c0f9b748e4c905412ebb1a2080` |
+
+### 独立供电与 R7：DC 背光对照、串口中断和实际固件身份
+
+用户随后明确已改用独立 **5V/3A** 电源，仍有频闪。前述等待启动后的 R6 上传并未
+完成：YMODEM 在 block 757 连续超时，期间又收到 Reset status=00000001，最终
+达到重试上限，没有长度/CRC 校验成功或 go。开发板重新从原 Flash 启动 R9；
+`r6/independent-power-flash-clean-status.log` 的 STOP 后查询为 IDLE、pinned 0、
+音频 inactive、GUI 1/1。不能把这一轮供电观察记成同一 R6 的完整复测或 R6 已在
+独立供电下持续运行。电源额定值来自用户说明，未实测板端电源轨。
+
+R7 仅在临时诊断候选中增加 PC14 背光引脚 GPIO 常高/PWM 切换。冻结 Release
+**1,975,648B**、CRC32 `42a9e2c2`、SHA256
+`04a83a3c056f31209db5805d6abd3bc0609f980bb9f766729f76a66873ab8e40`，
+manifest/17 项产物核验通过；`r7/ramload.log` 确认 RAM 长度与板端 CRC 后执行。
+这次新加载的 R7 在独立 5V/3A、原名义 1kHz PWM 下，用户仍看到频闪。
+
+DC 对照命令 result=0，PC14 配置从 GPIOC mask=7e003ff0、pat0=00000403 改为
+mask=7e007ff0、pat0=00004403，pin 快照含 PC14 高电平；内部 PWMEN 仍为
+00008000、PWMWC15=a6aa5356，改变的是引脚复用为 GPIO 输出，不是关闭 PWM
+计数器。用户确认 DC 常高时仍频闪、基本未变。随后恢复 PWM，mask/pat0 回到
+7e003ff0/00000403，波形寄存器仍为 a6aa5356。三次查询均 GUI 1/1、pending 0、
+mismatches/underruns 0，基线 EOD 33012～33055us；恢复后的累计范围为
+33011～33056us。该对照未实测背光电流或面板电压，不将其写成全部背光/供电
+硬件已被排除，也未改变生产默认背光设置。
+
+R7 的 `full-sequence.json` 总状态为 **failed**：前两例 854×480、720×1280 短片
+各 90/90 帧、144000 样本完整、drop/late 0，STOP 后 IDLE/unpinned。吉他片已开始
+播放，随后在 UI 操作阶段发生 Windows `ClearCommError`/拒绝访问；日志还收到
+新的 SPL/DDR 启动输出及 Reset status=00000001。自动 cleanup 的 WriteFile
+同样失败，没有取得 STOP/音频关闭确认。JSON 的 cleanup false 表示未获确认，
+不能当成板内音频实际仍在运行的证据。该结果不是完整功能序列通过，也没有本轮
+DPU 超时的板端证据，不能把串口异常改写成显示 -116；原 R2/R3 超时另行保留。
+
+串口随后从系统消失；用户确认 COM14 是无关 CH340。FTDI 直连重插后 COM52
+恢复，但实际已运行原 Flash R9。`r7/serial-restored-stop.log` 的 STOP 后查询为
+session 0/IDLE、pinned 0、音频 inactive、GUI 1/1；`touch` 仅返回不含触摸命令的
+旧版帮助。这份恢复后的状态属于 R9，不能用于确认 R7 cleanup 或 R7 触摸状态。
+
+### R8：移除临时诊断、二进制核对与原 Linux 命令表证据
+
+R8 移除普通版本的触摸轮询暂停、PWM 载波/DC、VPG 等临时诊断入口和额外 DSI
+状态项，保留 native live-ADDR 提交、显示统计及相应主机模型/测试。GT911 协议和
+生产传输测试通过；`r8-host/test.log` 的显示/格式/rotator/三键/生产 LVGL 回归均
+通过，GUI 154 次提交。两核 Debug/Release 构建及每组 17 项产物检查通过。
+
+逐字节核对冻结 R8 与 R4 的对应合包，Release 和 Debug 均完全一致：Release
+1,974,368B、CRC32 `3ea4ae8b`、SHA256
+`5c045992257be35a9615b50e997bbdff3806d850bee08116e7284b67a7296d2c`；
+Debug 2,106,880B、CRC32 `6e36ea82`、SHA256
+`e0f836ee0f318cafe98d5b671fd5419009588ffa32be75cd2a541d3e451e21a9`。
+因此可引用上文相同 R4 二进制的短窗口板测证据及其限制；这不是新增 R8 实板或
+供电验收，也不能补全 R7 被串口中断的完整操作序列。
+
+从两份一致的原 NOR 备份验证 uImage 头/载荷 CRC 并解压原 Linux 内核后，提取
+到 202 项面板初始化长包表，与当前 panel_zc502.c 重打包的 30906 字节完全相同，
+包含各项头部、有效载荷和零填充；两份表 SHA256 均为
+`93cc673a2d4ce6ca7fe9374414ec300a51fc561a6ef0e7b27721063f2dc7edd3`。
+报告为本地 `panel-command-evidence/report.json`。该比较仅覆盖这张命令表，不
+证明 Linux 与当前程序的整个电源/复位延时、sleep/display 命令、控制流程或运行期
+DCS 写入完全一致，也没有测得面板内部寄存器回读，不能据此宣布频闪原因。
+
+截至本节，频闪仍未解决，Flash 一直保留 R9。原 Linux 仅 RAM、只读及 init shell
+参考材料已准备并开始上传，尚未执行 bootm，不能提前记录其面板表现或稳定性结果。
+
+| 本地证据（`build/player-touch-ui-20261021`） | SHA256 |
+| --- | --- |
+| `r6/direct-usb-power-ramload.log` | `4b915e85ab39a6d61b092f5da293a56e78a0a767f75f61ae8c00fa099b3ae654` |
+| `r6/independent-power-flash-clean-status.log` | `b4e8783d2cb0104b553cbc22d5223dc1d9cac6fd26f26ba972973e7a947d2319` |
+| `r7/baseline-independent-power.log` | `3f1d9ff5778773b5649c5442443c47b3375532086459a4bfd078a485b2d3e94d` |
+| `r7/backlight-dc.log` | `573ee3e14089afe7c68f7137714978c5cc17bef2e9b61e969b3024f1c3d9958e` |
+| `r7/backlight-pwm-restored.log` | `c76f0458256c6dec0927c20f97b1947bf464c56567778e2f57d45449f481bc48` |
+| `r7/full-sequence.json` | `b98cf6adc893b9ced3a9b32e5a102e2609a23bbdcaf2f82e0cf7c9edd4bbabb5` |
+| `r7/full-sequence.log` | `2dd5411d29d30cd59413d918b3b745528f07b2bef6c628c640a0264ada47c5f9` |
+| `r7/serial-restored-stop.log` | `a69f39d97030b2ae78bed097fa4d260d908e7d016d70c3309fed9b80720dd09b` |
+| `r8-host/test.log` | `7acdad325924e787604d871359932e9ee6afead4ec18cd9636f40d1b4ac170ff` |
+| `r8-host/touch-test.log` | `ef0498a306eb89c12943a6e75b043cf4cfbe797620943eb614ea7c2219894628` |
+| `panel-command-evidence/report.json` | `5911e3753a6e383791f1114cb4e85cc2148a4d6684122c67ddfdfccc939675f2` |

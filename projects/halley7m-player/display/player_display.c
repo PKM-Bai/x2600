@@ -672,7 +672,18 @@ static int submit(bool video_change, const player_display_frame_t *frame,
         WRITE_REG(lcd.Instance->DC_FRM_CFG_ADDR,pending_descriptor);
         WRITE_REG(lcd.Instance->DC_FRM_CFG_CTRL,1u);
         lcd.CompData.comp_stopped=0;
-    } else started=HAL_COMP_Start(&lcd);
+    } else if (lcd.CompData.comp_stopped) started=HAL_COMP_Start(&lcd);
+    else {
+        /* PM11.6.5 supports inserting into a running native chain by writing
+         * its next descriptor address. Keep the HAL START sequence above for
+         * the first submission after initialization or a completed stop. */
+        unsigned index=lcd.CompData.comp_next_frame;
+        CleanDCache_by_Addr((unsigned long *)&lcd.CompData.FrameDesc[index],
+                           sizeof(lcd.CompData.FrameDesc[0]));
+        CleanDCache_by_Addr((unsigned long *)lcd.CompData.LayerDesc[index],
+                           sizeof(lcd.CompData.LayerDesc[0]));
+        WRITE_REG(lcd.Instance->DC_FRM_CFG_ADDR,pending_descriptor);
+    }
     if (started == HAL_OK) {
         if (video_change && frame) ++counters.video_submitted;
         if (ui_change) {
@@ -904,13 +915,15 @@ void player_display_print_status(void)
                    (unsigned long)rotator.slots[i].physical,(unsigned long)rotator.slots[i].flags,
                    (unsigned long)rotator.slots[i].sequence);
     }
-    printf("DISPLAY_SCHED active=%u video_submitted=%lu video_busy=%lu overlay_submitted=%lu overlay_queued=%lu overlay_merged=%lu overlay_only=%lu video_confirmed=%lu overlay_confirmed=%lu eod_period_min_us=%lu eod_period_max_us=%lu video_latency_max_us=%lu\n",
+    printf("DISPLAY_SCHED active=%u video_submitted=%lu video_busy=%lu overlay_submitted=%lu overlay_queued=%lu overlay_merged=%lu overlay_only=%lu video_confirmed=%lu overlay_confirmed=%lu eod_period_min_us=%lu eod_period_max_us=%lu video_latency_max_us=%lu vblanks=%lu mismatches=%lu last_y=%08lx read_site=%08lx underruns=%lu\n",
            (unsigned)timing.video_active, (unsigned long)timing.video_submitted, (unsigned long)timing.video_busy,
            (unsigned long)timing.overlay_submitted, (unsigned long)timing.overlay_queued_requests,
            (unsigned long)timing.overlay_merged, (unsigned long)timing.overlay_only,
            (unsigned long)timing.confirmed, (unsigned long)timing.overlay_confirmed,
            (unsigned long)timing.eod_period_min_us, (unsigned long)timing.eod_period_max_us,
-           (unsigned long)timing.video_latency_max_us);
+           (unsigned long)timing.video_latency_max_us, (unsigned long)timing.vblanks,
+           (unsigned long)timing.mismatches, (unsigned long)timing.last_physical_y,
+           (unsigned long)timing.last_read_site, (unsigned long)timing.underruns);
     printf("DISPLAY clocks=%d init=%d running=%d backlight=%d panel_result=%d pending=%d scanout=%d\n",
            clocks_enabled, initialized, running, backlight_on, panel_zc502_result(),
            pending_valid, scanout_valid);

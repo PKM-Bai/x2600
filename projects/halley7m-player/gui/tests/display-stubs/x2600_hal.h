@@ -69,7 +69,7 @@ typedef struct { unsigned PLLMux, Div, Config; } LL_CPM_CGU_ConfigTypeDef;
 #define DC_INTC_INT_OOW_0 (1u << 16)
 #define DC_DPU_INTC_EOD_MSK_0 DC_INTC_INT_EOD_0
 #define DC_DPU_INTC_UOT_MSK_0 DC_INTC_INT_UOT_0
-#define DC_CTRL_DES_CNT_RST_0 (1u << 15)
+#define DC_CTRL_DES_CNT_RST_0 (1u << 2)
 #define VID_MODE_CFG_VPG_EN (1u << 16)
 uint32_t fake_physical(uintptr_t pointer);
 #define CPHYSADDR(p) fake_physical((uintptr_t)(p))

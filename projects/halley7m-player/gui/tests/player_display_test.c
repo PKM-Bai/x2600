@@ -16,7 +16,8 @@ struct lcd_data panel_zc502_data;
 int fake_working;
 static struct lay_cfg submitted_layers[4];
 static uint32_t next_descriptor, loaded_descriptor, loaded_y, loaded_ui;
-static unsigned word, starts, backlights;
+static unsigned word, starts, descriptor_posts, channel_writes, backlights;
+static uintptr_t published_frame, published_layers;
 static uint64_t clock_us;
 static void (*lcd_irq)(int, void *);
 static void (*rot_irq)(int,void *);
@@ -30,6 +31,8 @@ static LCD_HandleTypeDef *last_lcd;
 
 void fake_cache_publish(unsigned long *pointer, long bytes)
 {
+    if (bytes==64) published_frame=(uintptr_t)pointer;
+    if (bytes==256) published_layers=(uintptr_t)pointer;
     if (bytes!=3686400) return;
     for (unsigned i=0;i<3;++i) if (cached_writebacks[i]==(uintptr_t)pointer) return;
     for (unsigned i=0;i<3;++i) if (!cached_writebacks[i]) { cached_writebacks[i]=(uintptr_t)pointer; return; }
@@ -59,6 +62,16 @@ void fake_write(volatile unsigned long *reg, unsigned long value)
     *reg = value;
     if (reg == &fake_dpu.DC_CTRL) word = 0;
     if (reg == &fake_dpu.DC_CLR_ST) fake_dpu.DC_INT_FLAG &= ~value;
+    if (reg == &fake_dpu.DC_COM_CONFIG) ++channel_writes;
+    if (reg == &fake_dpu.DC_FRM_CFG_ADDR) {
+        unsigned index=last_lcd->CompData.comp_next_frame;
+        assert(value==CPHYSADDR(&last_lcd->CompData.FrameDesc[index]));
+        assert(published_frame==(uintptr_t)&last_lcd->CompData.FrameDesc[index]);
+        assert(published_layers==(uintptr_t)last_lcd->CompData.LayerDesc[index]);
+        published_frame=published_layers=0;
+        next_descriptor=(uint32_t)value;
+        ++descriptor_posts;
+    }
     if (reg == &fake_dpu.DC_FRM_CFG_CTRL && value==1) {
         assert(!composer_started);
         composer_started=true;
@@ -110,10 +123,15 @@ HAL_StatusTypeDef HAL_COMP_Init(LCD_HandleTypeDef *lcd, struct lay_cfg *layers)
 }
 HAL_StatusTypeDef HAL_COMP_Start(LCD_HandleTypeDef *lcd)
 {
-    display_consumer_active=true;
-    next_descriptor = CPHYSADDR(&lcd->CompData.FrameDesc[lcd->CompData.comp_next_frame]);
+    /* Model the real HAL's publication and MMIO so the regression distinguishes
+     * the initial START from address-only insertion into a running chain. */
+    unsigned index=lcd->CompData.comp_next_frame;
+    WRITE_REG(lcd->Instance->DC_COM_CONFIG,READ_REG(lcd->Instance->DC_COM_CONFIG)&~3u);
+    fake_cache_publish((unsigned long *)&lcd->CompData.FrameDesc[index],sizeof(lcd->CompData.FrameDesc[0]));
+    fake_cache_publish((unsigned long *)lcd->CompData.LayerDesc[index],sizeof(lcd->CompData.LayerDesc[0]));
+    WRITE_REG(lcd->Instance->DC_FRM_CFG_ADDR,CPHYSADDR(&lcd->CompData.FrameDesc[index]));
+    WRITE_REG(lcd->Instance->DC_FRM_CFG_CTRL,1u);
     lcd->CompData.comp_stopped = 0;
-    ++starts;
     return HAL_OK;
 }
 static void interrupt_only(void)
@@ -151,17 +169,17 @@ static void continuous_video_priority(void)
     const uint32_t *ui_b = (const uint32_t *)(uintptr_t)0x82400000u;
     player_display_completion_t completion;
     uint32_t serial;
-    unsigned baseline = starts;
+    unsigned baseline = descriptor_posts;
     assert(player_display_submit_frame(&a) == 0);
     assert(player_display_submit_overlay(ui_a, PLAYER_DISPLAY_OVERLAY_BYTES, 20) == 0);
     latch();
     /* GUI runs first after EOD, before the media worker consumes completion:
      * this used to start a GUI-only transaction and steal the next refresh. */
-    assert(player_display_poll_overlay_completion(&serial) == 0 && starts == baseline + 1u);
+    assert(player_display_poll_overlay_completion(&serial) == 0 && descriptor_posts == baseline + 1u);
     assert(player_display_submit_frame(&b) == -EAGAIN);
     assert(player_display_poll_completion(&completion) == 1 && completion.latched.slot == 0);
-    assert(player_display_poll_overlay_completion(&serial) == 0 && starts == baseline + 1u);
-    assert(player_display_submit_frame(&b) == 0 && starts == baseline + 2u);
+    assert(player_display_poll_overlay_completion(&serial) == 0 && descriptor_posts == baseline + 1u);
+    assert(player_display_submit_frame(&b) == 0 && descriptor_posts == baseline + 2u);
     latch();
     assert(player_display_poll_overlay_completion(&serial) == 1 && serial == 20);
     assert(player_display_poll_completion(&completion) == 1 && completion.latched.slot == 1);
@@ -170,9 +188,9 @@ static void continuous_video_priority(void)
     assert(player_display_submit_overlay(ui_b, PLAYER_DISPLAY_OVERLAY_BYTES, 21) == 0);
     for (unsigned i = 0; i < 10; ++i) {
         clock_us += 1000u;
-        assert(player_display_poll_overlay_completion(&serial) == 0 && starts == baseline + 2u);
+        assert(player_display_poll_overlay_completion(&serial) == 0 && descriptor_posts == baseline + 2u);
     }
-    assert(player_display_submit_frame(&c) == 0 && starts == baseline + 3u);
+    assert(player_display_submit_frame(&c) == 0 && descriptor_posts == baseline + 3u);
     latch();
     assert(player_display_poll_overlay_completion(&serial) == 1 && serial == 21);
     assert(player_display_poll_completion(&completion) == 1 && completion.latched.slot == 2);
@@ -185,7 +203,7 @@ static void continuous_video_priority(void)
     player_display_set_video_active(true);
     assert(player_display_submit_overlay(ui_b, PLAYER_DISPLAY_OVERLAY_BYTES, 23) == 0);
     player_display_set_video_active(false);
-    assert(player_display_poll_overlay_completion(&serial) == 0 && starts == baseline + 5u);
+    assert(player_display_poll_overlay_completion(&serial) == 0 && descriptor_posts == baseline + 5u);
     latch();
     assert(player_display_poll_overlay_completion(&serial) == 1 && serial == 23);
     player_display_stats_t stats;
@@ -254,7 +272,8 @@ static void wide_route(void)
     player_display_frame_t a=frame(0),b=frame(1);
     a.capacity=b.capacity=1382400;
     player_display_completion_t c;
-    assert(player_display_submit_frame(&a)==0);
+    unsigned wide_starts=starts;
+    assert(player_display_submit_frame(&a)==0 && starts==wide_starts+1u);
     assert(submitted_layers[0].source_w==1280 && submitted_layers[0].source_h==720);
     assert(submitted_layers[0].stride==1280 && fake_dpu.DC_COM_CONFIG==1);
     interrupt_only();
@@ -323,7 +342,9 @@ static void wide_route(void)
     player_display_stats_t stats;
     player_display_get_stats(&stats);
     assert(stats.confirmed==2 && stats.writebacks==4 && stats.rotator_repeats==1);
+    assert(starts==wide_starts+4u); /* Every completed one-shot was started. */
     assert(player_display_clear_video()==0);
+    assert(starts==wide_starts+5u);
     writeback();
     rotation_event(PLAYER_ROTATOR_SOF|PLAYER_ROTATOR_WORKING); /* Repeat drains first. */
     rotation_event(PLAYER_ROTATOR_EOF);
@@ -339,7 +360,7 @@ static void wide_route(void)
     assert(player_display_set_video_geometry(720,1280)==0 && !rot_irq);
     assert(player_display_overlay_stride()==720);
     a=frame(0);
-    assert(player_display_submit_frame(&a)==0); latch();
+    assert(player_display_submit_frame(&a)==0 && starts==wide_starts+6u); latch();
     assert(player_display_poll_completion(&c)==1 && c.has_latched);
     player_display_gui_attach(false);
     assert(player_display_stop()==0);
@@ -419,6 +440,48 @@ static void scaled_format_route(void)
     assert(player_display_stop()==0);
 }
 
+static void native_chain_insertion(void)
+{
+    assert(player_display_init()==0 && player_display_start()==0);
+    unsigned first_start=starts, first_post=descriptor_posts, first_channel=channel_writes;
+    player_display_frame_t a=frame(0), b=frame(1);
+    player_display_completion_t completion;
+    uint32_t serial;
+    assert(player_display_submit_frame(&a)==0);
+    assert(starts==first_start+1u && descriptor_posts==first_post+1u);
+    assert(channel_writes==first_channel+1u && composer_started);
+    latch();
+    assert(player_display_poll_completion(&completion)==1 && completion.latched.slot==0);
+    for (unsigned i=0;i<8;++i) {
+        const uint32_t *ui=(const uint32_t *)(uintptr_t)(i&1u ? 0x82400000u : 0x82000000u);
+        unsigned old_index=last_lcd->CompData.comp_next_frame;
+        assert(player_display_submit_overlay(ui,PLAYER_DISPLAY_OVERLAY_BYTES,100u+i)==0);
+        assert(last_lcd->CompData.comp_next_frame==(old_index+1u)%3u);
+        assert(starts==first_start+1u && channel_writes==first_channel+1u);
+        assert(descriptor_posts==first_post+2u+i && composer_started);
+        interrupt_only(); /* Posting a next address cannot acknowledge old scanout. */
+        assert(player_display_poll_overlay_completion(&serial)==0);
+        latch();
+        assert(player_display_poll_overlay_completion(&serial)==1 && serial==100u+i);
+        assert(player_display_poll_completion(&completion)==0);
+    }
+    assert(player_display_submit_frame(&b)==0);
+    assert(starts==first_start+1u && channel_writes==first_channel+1u);
+    assert(descriptor_posts==first_post+10u);
+    latch();
+    assert(player_display_poll_completion(&completion)==1 && completion.latched.slot==1 &&
+           completion.has_retired && completion.retired.slot==0);
+    assert(player_display_stop()==0 && !composer_started);
+
+    assert(player_display_init()==0 && player_display_start()==0);
+    assert(player_display_submit_frame(&a)==0);
+    assert(starts==first_start+2u && channel_writes==first_channel+2u);
+    assert(descriptor_posts==first_post+11u && composer_started);
+    latch();
+    assert(player_display_poll_completion(&completion)==1 && completion.latched.slot==0);
+    assert(player_display_stop()==0);
+}
+
 int main(void)
 {
     assert(player_display_init() == 0 && player_display_start() == 0);
@@ -436,7 +499,7 @@ int main(void)
     latch();
     assert(player_display_poll_completion(&completion) == 1 && completion.has_latched);
     assert(completion.latched.slot == 0 && !completion.has_retired);
-    assert(player_display_submit_frame(&b) == 0 && starts == 2);
+    assert(player_display_submit_frame(&b) == 0 && descriptor_posts == 2 && starts == 1);
     assert(submitted_layers[0].lay_en && submitted_layers[1].lay_en);
     assert(submitted_layers[0].lay_z_order == 2 && submitted_layers[1].lay_z_order == 3);
     assert(submitted_layers[2].lay_z_order == 1 && submitted_layers[3].lay_z_order == 0);
@@ -455,9 +518,9 @@ int main(void)
 
     assert(player_display_submit_frame(&c) == 0);
     assert(player_display_submit_overlay(ui_a, PLAYER_DISPLAY_OVERLAY_BYTES, 12) == 0);
-    unsigned before = starts;
+    unsigned before = descriptor_posts;
     latch();
-    assert(player_display_poll_overlay_completion(&serial) == 0 && starts == before + 1);
+    assert(player_display_poll_overlay_completion(&serial) == 0 && descriptor_posts == before + 1);
     /* GUI polling drives a queued update without another video submission. */
     assert(player_display_clear_video() == -EAGAIN);
     latch();
@@ -483,6 +546,7 @@ int main(void)
     continuous_video_priority();
     wide_route();
     scaled_format_route();
-    puts("PASS production display: legacy guards/priority, CUSTOM EOW/SOF/EOD ownership, paused GUI-only/repeat, GUI route ACK, native compatibility, stop pin");
+    native_chain_insertion();
+    puts("PASS production display: legacy guards/priority, CUSTOM EOW/SOF/EOD ownership, paused GUI-only/repeat, GUI route ACK, native address-only insertion/restart, wide one-shot START, stop pin");
     return 0;
 }
