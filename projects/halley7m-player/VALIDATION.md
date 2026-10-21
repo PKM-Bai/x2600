@@ -500,3 +500,74 @@ R2 RAM 上传及校验通过，正常 GUI/AMP/7% 的真实 TF 复测中，854×4
 R2 全套自动验收仍失败：上述 wide 文件切回原生 acceptance-30min.avi 后，解码 22 帧、呈现 19 帧、drop 1，发生显示/STOP 超时 -116、pinned 1。音频已关闭、音频错误仍 0、触摸仍正常；用户确认屏幕为黑屏。连续快照保留在 `r2/avi-display*.log`，显示 pending 事务与硬件旧 layer 地址长期不匹配，TFT_ST 持续为 0。该失败未计作完整播放器通过，显示运行中描述符提交正在单独修正。
 
 当前 Flash 仍为 R9，新的 NOR 派生包仅在电脑生成。可见界面恢复后还需触摸方向/命中和人工操作验收；用户已取消手机录像和实际声光偏差数值验证。
+
+### R3 后续：界面和点击确认，显示故障仍保留
+
+R3 将正在扫描的 native composer 新描述符提交改为只写地址，重启及 wide one-shot
+仍保留 START。用户随后明确确认新版界面画面正常、触摸点击准确；真实操作后的
+GT911 记录为 47 次按下/释放、errors/invalid 均 0。这项确认补充上文首轮黑屏时
+尚未完成的方向与命中检查，不代表所有播放生命周期均已通过。
+
+同一 R3 的短片复测中，854×480 和 720×1280 均 90/90 帧；原始 test.mp4 为
+994 解码/988 呈现、drop/late 6/6，1592520 有效样本完整、音频错误 0。用户操作
+期间调整过音量，后段原片及 AVI 为 0%，不能把这部分声卡计数当作有声听感检查。
+之后 wide 原片切到 acceptance-30min.avi 仍失败：22 解码/19 呈现、drop/late
+1/1，显示及 STOP 超时 -116、pinned 1，音频 inactive 且音频错误仍 0。连续显示
+快照的 vblanks 均停在 14202、mismatches 1，video/overlay 各有一笔未确认。
+R3 的地址提交调整未解决该序列的全部问题，不能覆盖或删除 R2/R3 的失败记录。
+原始证据为本地 `build/player-touch-ui-20261021/r3/ram-ui-board.log`、
+`avi-after-ui-check.log` 和 `avi-display-stable-error.log`。
+
+### R4：静止界面停止无效重绘，频闪尚未解决
+
+R3 静止媒体库也会持续增加 GUI 绘制/提交计数；检查生产 LVGL 8.3.10 确认，
+对已经可见的对象再次清除 HIDDEN 仍会 invalidation。GUI 增加幂等可见性更新，
+列表、音频标识和播放控件只在隐藏位实际改变时操作；菜单背景色也只在实际不同
+时写入。既有文本、进度宽度及背景 opacity 保留变化检查。该改动消除静止画面的
+无效绘制与提交，不改变三键/触摸动作、3 秒隐藏、布局或默认 7% 音量。
+
+生产 LVGL 主机回归新增固定画面但会话 revision 持续增加的测试：50 轮、共 5 秒，
+覆盖媒体库、native/wide 暂停视频及固定音频界面，断言 rendered、presented、
+提交数和前台像素 hash 不变，且无 pending。修正前媒体库断言已实际失败，修正后
+完整 GUI/显示/按钮入口通过，共 154 次异步提交、六张 PNG；触摸取消、首触唤醒、
+透明层清空、脏区、时间回绕和三键回归保持通过。主机日志为
+`build/player-touch-ui-host/test.log`，SHA256
+`5feda8d5c0c4c6359d60cf7f5bf12069dc609172e38ac44564d2bf6a0611429e`。
+截图为主机合成显示结果，不能替代真实面板频闪检查。
+
+R4 两核 Debug/Release 构建、入口/内存/嵌入核验及真实 ELF/BIN 和损坏副本 17 项
+检查通过，冻结 ELF/BIN/MAP 与 manifest 在本地
+`build/player-touch-ui-20261021/r4/{Release,Debug}`。Release 紧凑包
+**1,974,368B**、CRC32 `3ea4ae8b`、SHA256
+`5c045992257be35a9615b50e997bbdff3806d850bee08116e7284b67a7296d2c`；
+Debug **2,106,880B**、CRC32 `6e36ea82`、SHA256
+`e0f836ee0f318cafe98d5b671fd5419009588ffa32be75cd2a541d3e451e21a9`。
+小核仍为 35,880B、CRC32 `003d092f`，协议 4/共享布局 3。
+
+R4 RAM 上传校验通过，静止媒体库两次 GUI 查询之间包含 5 秒静置，rendered/
+presented 始终 1/1；display 也仅一次 overlay 提交及确认、pending 0、mismatches/
+underruns 0。GT911 计数从 8505 到 9107 次轮询、错误 0。该证据确认静止界面不再
+反复向 DPU 提交，不包含 CPU 忙率实测，不能给出 CPU 使用率下降百分比。用户在
+这一状态仍确认整屏亮暗频闪，因此本次幂等更新不能记作频闪修复，背光与面板问题
+仍在单独定位。
+
+R4 另完成两个仅约 8 秒的 native AVI 前缀复测，均默认 7%：启动后直接播放时，
+查询为 242 解码/240 呈现，STOP 后 299 解码/298 呈现、drop/late 0/0、max_late
+16667us、pinned 0、audio inactive；停止前已解码但未呈现的一帧不计为丢帧。
+先播放 854×480 wide 短片为 90/90 帧、144000 样本完整，再切回 native AVI 时，
+查询为 240 解码/238 呈现，STOP 后 298/298 帧、drop/late 0/0、max_late 23334us、
+pinned 0、audio inactive。两轮查询的音频欠载、DMA 错误/超时和队列/FIFO 错误
+均 0。它们证明这两个短序列通过，未重跑 R3 的完整 wide 原片及人工操作序列，
+也不是新版 30 分钟验收，不能据此宣称旧超时在所有切换场景消失。
+
+| 本地证据（`build/player-touch-ui-20261021`） | SHA256 |
+| --- | --- |
+| `r3/avi-after-ui-check.log` | `541e7e5341bd729262b4bbcb19e10853b7f6a2c113d623c12353efdef0c0d24c` |
+| `r3/avi-display-stable-error.log` | `2c2fb904df16ecb8eb4d928f89e2a3aaaf86b2bd9028de530eae554ee24e7d48` |
+| `r4/static-library.log` | `4c5b9e17b9d58ddd4450ee10c72d38ebcc11c340368704411ea828db1a43d8e7` |
+| `r4/direct-native-avi.log` | `f368817d65b4a6322f456efe3ace5490edf88c8b7df2caae567167e975c73567` |
+| `r4/wide-to-native-avi.log` | `0444fb9824226a2c0034fce857a321d68583936207b1ccd860867a3eeba00d1b` |
+
+截至上述 R4 记录，Flash 继续保留已安装的 R9；R3 的 NOR 派生/准备结果
+`execute=false`，未烧写。后续 R5 仅增加诊断入口并作 RAM 加载准备，不属于以上
+R4 静止界面及 AVI 证据，验收结果须按实际固件身份另记。

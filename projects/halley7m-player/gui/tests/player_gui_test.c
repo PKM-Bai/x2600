@@ -106,6 +106,25 @@ static void press(unsigned keys)
     tick(20, 0);
 }
 
+static void static_frame_test(void)
+{
+    /* The worker may publish fresh revisions without any visible change.
+     * Once the last asynchronous repaint retires, those snapshots must not
+     * keep redrawing and resubmitting an unchanged library/paused frame. */
+    tick(250, 0);
+    player_gui_stats_t before, after;
+    player_gui_get_stats(&before);
+    unsigned old_submissions = submissions;
+    uint32_t old_hash = hash(front);
+    for (unsigned i = 0; i < 50; ++i) {
+        ++snapshot.revision;
+        tick(100, 0);
+    }
+    player_gui_get_stats(&after);
+    assert(after.rendered == before.rendered && after.presented == before.presented);
+    assert(submissions == old_submissions && !pending && hash(front) == old_hash);
+}
+
 static void tap(unsigned x, unsigned y)
 {
     player_gui_sample_touch(now, true, x, y);
@@ -358,6 +377,7 @@ static void video_controls_test(void)
     ++snapshot.revision;
     tick(3300, 0);
     controls_visible(true);
+    static_frame_test();
     snapshot.state = PLAYER_SESSION_PLAYING;
     ++snapshot.revision;
     tick(3300, 0);
@@ -387,6 +407,7 @@ static void video_controls_test(void)
     ++snapshot.revision;
     tick(3300, 0);
     controls_visible(true); /* Audio playback does not disappear. */
+    static_frame_test();
     snapshot.has_video = 1;
     snapshot.media_kind = 2;
     snapshot.elapsed_samples = 48000u * 37u;
@@ -504,6 +525,7 @@ int main(int argc, char **argv)
     font_test();
     assert(last_command.kind == PLAYER_SESSION_LIBRARY_OPEN);
     capture("library");
+    static_frame_test();
     touch_library_test();
     unsigned queued_commands = commands;
     now += 5;

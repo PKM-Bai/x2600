@@ -61,6 +61,15 @@ static void text(lv_obj_t *object, const char *value)
     if (object && strcmp(lv_label_get_text(object), value)) lv_label_set_text(object, value);
 }
 
+static void set_visible(lv_obj_t *object, bool shown)
+{
+    /* LVGL 8 invalidates even when HIDDEN is cleared on an already visible
+     * object. Fresh session snapshots must not force identical redraws. */
+    if (shown == !lv_obj_has_flag(object, LV_OBJ_FLAG_HIDDEN)) return;
+    if (shown) lv_obj_clear_flag(object, LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_add_flag(object, LV_OBJ_FLAG_HIDDEN);
+}
+
 static lv_obj_t *box(lv_obj_t *parent, int x, int y, int width, int height,
                      uint32_t color, unsigned opacity)
 {
@@ -370,8 +379,7 @@ static void update_view(void)
             if (lv_color_to32(lv_obj_get_style_bg_color(rows[i], 0)) != lv_color_to32(lv_color_hex(color))) {
                 lv_obj_set_style_bg_color(rows[i], lv_color_hex(color), 0);
             }
-            if (i < view.library_count) lv_obj_clear_flag(rows[i], LV_OBJ_FLAG_HIDDEN);
-            else lv_obj_add_flag(rows[i], LV_OBJ_FLAG_HIDDEN);
+            set_visible(rows[i], i < view.library_count);
         }
         snprintf(line, sizeof(line), "点按文件打开 · A/B 选择 · Start 确认     %lu / %s%lu",
                  (unsigned long)(view.library_count ? view.library_selected + 1u : 0u),
@@ -414,8 +422,7 @@ static void update_view(void)
             media_label=m4a ? "M4A音频" : "MP4视频";
         }
         text(rows[1], view.error_code ? view.error : view.has_video ? "" : media_label);
-        if (view.has_video) lv_obj_add_flag(audio_art, LV_OBJ_FLAG_HIDDEN);
-        else lv_obj_clear_flag(audio_art, LV_OBJ_FLAG_HIDDEN);
+        set_visible(audio_art, !view.has_video);
         lv_opa_t background = view.has_video ? LV_OPA_TRANSP : LV_OPA_COVER;
         if (lv_obj_get_style_bg_opa(screen, 0) != background)
             lv_obj_set_style_bg_opa(screen, background, 0);
@@ -562,10 +569,8 @@ static void update_controls(uint32_t now_ms)
     if (visible == (stats.controls_visible != 0)) return;
     stats.controls_visible = visible;
     lv_obj_t *objects[] = {top_bar, bottom_bar, playback_controls, rows[1], audio_art};
-    for (unsigned i = 0; i < sizeof(objects) / sizeof(objects[0]); ++i) {
-        if (visible && (objects[i] != audio_art || !view.has_video)) lv_obj_clear_flag(objects[i], LV_OBJ_FLAG_HIDDEN);
-        else lv_obj_add_flag(objects[i], LV_OBJ_FLAG_HIDDEN);
-    }
+    for (unsigned i = 0; i < sizeof(objects) / sizeof(objects[0]); ++i)
+        set_visible(objects[i], visible && (objects[i] != audio_art || !view.has_video));
 }
 
 static bool pop_input(player_input_event_t *event)
@@ -644,7 +649,9 @@ int player_gui_step(uint32_t now_ms)
         for (unsigned i = 0; i < 3; ++i) {
             lv_opa_t opa = i == stats.menu_selected ? LV_OPA_COVER : LV_OPA_TRANSP;
             if (lv_obj_get_style_bg_opa(menu_rows[i], 0) != opa) {
-                lv_obj_set_style_bg_color(menu_rows[i], lv_color_hex(0x35616d), 0);
+                if (lv_color_to32(lv_obj_get_style_bg_color(menu_rows[i], 0)) !=
+                    lv_color_to32(lv_color_hex(0x35616d)))
+                    lv_obj_set_style_bg_color(menu_rows[i], lv_color_hex(0x35616d), 0);
                 lv_obj_set_style_bg_opa(menu_rows[i], opa, 0);
             }
         }
