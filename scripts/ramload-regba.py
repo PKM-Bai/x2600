@@ -22,6 +22,9 @@ ADDRESS = 0x80600000
 MAX_IMAGE = 0x600000
 SOH, STX, EOT, ACK, NAK, CAN, CRC = 1, 2, 4, 6, 21, 24, 67
 PROMPT = re.compile(rb"(?:^|\n)[A-Za-z0-9_./:@ -]{1,80}# ?$")
+YMODEM_RESTART_BANNER = re.compile(
+    rb"[\r\n\0](U-Boot(?: SPL)? [0-9]{4}\.[0-9]{2}|PLAYER_BOOT core=mips)(?=[ (\r\n-])"
+)
 
 
 class Log:
@@ -227,6 +230,10 @@ class YModem:
     def __init__(self, console: Console, retries=10, timeout=8.0):
         self.console, self.retries, self.timeout = console, retries, timeout
         self.retry_count = 0
+        # Keep raw bytes across wait/retry boundaries. Filtering ASCII 'C' as
+        # a CRC request must not corrupt a new boot banner, and a partial
+        # banner may arrive immediately before one packet wait expires.
+        self._rx_window = bytearray(b"\n")
 
     def wait(self, accepted, timeout=None):
         deadline = time.monotonic() + (self.timeout if timeout is None else timeout)
@@ -234,6 +241,15 @@ class YModem:
         while time.monotonic() < deadline:
             value = self.console.serial.read(1)
             if value:
+                self._rx_window.extend(value)
+                del self._rx_window[:-256]
+                restarted = YMODEM_RESTART_BANNER.search(self._rx_window)
+                if restarted:
+                    self.console.log("YMODEM RX restart " + bytes(self._rx_window).decode(
+                        "ascii", errors="backslashreplace"))
+                    raise RuntimeError("Board restarted during YMODEM (" +
+                                       restarted.group(1).decode("ascii") +
+                                       "); stopped without sending further packets or go")
                 code = value[0]
                 if code == CAN:
                     raise RuntimeError("Receiver cancelled YMODEM")
@@ -422,11 +438,49 @@ def self_test():
             else:
                 raise AssertionError("Command/transfer disconnect was hidden")
             assert peer.open_attempts == 0 and len(peer.writes) == 1
+
+        # A boot marker can straddle packet wait/retry boundaries. One retry
+        # before the marker is complete is allowed; recognition stops the loop
+        # immediately, without cancellation/cleanup writes or another packet.
+        clock = BootClock()
+        time.monotonic, time.sleep = clock.monotonic, clock.sleep
+        peer = BootSerial(clock, [], fail_opens=0)
+        original_write = peer.write
+
+        def fragmented_restart(data):
+            count = original_write(data)
+            if len(peer.writes) == 1:
+                peer.events.append(b"\r\nU-Boot SPL 20")
+            elif len(peer.writes) == 2:
+                peer.events.append(b"13.07-00006 boot\r\n")
+            else:
+                raise AssertionError("Packet sent after complete restart banner")
+            return count
+
+        peer.write = fragmented_restart
+        modem = YModem(Console(peer, lambda _: None), timeout=0.3)
+        try:
+            modem.acknowledged(packet(1, b"x", 128), "restart split across retry")
+        except RuntimeError as exc:
+            assert "Board restarted during YMODEM" in str(exc)
+        else:
+            raise AssertionError("Restart banner split across retries was ignored")
+        assert len(peer.writes) == 2 and modem.retry_count == 1 and not peer.open_attempts
+
+        # The rolling detector sees unfiltered CRC 'C' bytes and stays bounded;
+        # normal CRC/ACK processing and the existing loady noise remain valid.
+        clock = BootClock()
+        time.monotonic, time.sleep = clock.monotonic, clock.sleep
+        peer = BootSerial(clock, [b"loady noise:" + b"C" * 1024 + bytes((ACK,))])
+        modem = YModem(Console(peer, lambda _: None))
+        assert modem.wait((ACK,), timeout=20.0) == ACK
+        assert len(modem._rx_window) == 256 and modem._rx_window[-2:] == bytes((CRC, ACK))
+        assert not peer.writes
     finally:
         time.monotonic, time.sleep = original_monotonic, original_sleep
 
     class FakeSerial:
-        def __init__(self, eot_nak=False, reject_first=True, header_c=False):
+        def __init__(self, eot_nak=False, reject_first=True, header_c=False, restart_banner=None):
             self.pending = bytearray()
             self.state, self.next_block = "console", 1
             self.received, self.commands = bytearray(), []
@@ -434,6 +488,8 @@ def self_test():
             self.reject_first, self.eot_nak, self.header_c = reject_first, eot_nak, header_c
             self.rejected = self.eot_seen = False
             self.bad_crc = self.bad_length = False
+            self.restart_banner = restart_banner
+            self.writes = []
 
         def read(self, size=1):
             result = bytes(self.pending[:size])
@@ -444,6 +500,9 @@ def self_test():
             pass
 
         def write(self, data):
+            self.writes.append(data)
+            if self.state == "restarted":
+                raise AssertionError("Data/command sent after receiver restart")
             if self.state == "console":
                 command = data.decode("ascii").strip()
                 self.commands.append(command)
@@ -492,7 +551,10 @@ def self_test():
                 if self.header_c:
                     self.pending.append(CRC)
             elif self.state == "data":
-                if self.reject_first and not self.rejected:
+                if self.restart_banner is not None:
+                    self.pending.extend(self.restart_banner)
+                    self.state = "restarted"
+                elif self.reject_first and not self.rejected:
                     self.rejected = True
                     self.pending.append(NAK)
                 elif data[1] == (self.next_block & 255):
@@ -540,7 +602,26 @@ def self_test():
         else:
             raise AssertionError("Incorrect transfer length was accepted")
         assert not any(command.startswith("go ") for command in fake.commands)
-    print("PASS: boot disconnect/re-enumeration, failed reopen/recovery with original settings and inactive DTR/RTS, stale banner/prompt rejection, fixed deadline/no upload, command/YMODEM disconnect propagation; YMODEM CRC16, 128/1K framing, header with/without C, NAK retry, one/two EOT, sequence wrap, exact length/padding, clocks, board CRC32/filesize rejection; no serial port opened.")
+
+    # Restart during a real upload path must stop at the first data packet:
+    # do not retransmit to the new shell, send EOT/CAN, verify, or run go.
+    for banner in (
+        b"\r\nU-Boot SPL 2013.07-00006-g96302ff087 (test)\r\n",
+        b"\r\nU-Boot 2013.07-00006-g96302ff087 (test)\r\n",
+        b"\r\nPLAYER_BOOT core=mips rtos=FreeRTOS entry=80600000\r\n",
+    ):
+        fake = FakeSerial(reject_first=False, restart_banner=banner)
+        try:
+            upload(Console(fake, lambda _: None), Path("fake.bin"), b"x" * 2048)
+        except RuntimeError as exc:
+            assert "Board restarted during YMODEM" in str(exc)
+        else:
+            raise AssertionError("Receiver restart during upload was ignored")
+        assert len(fake.writes) == 3  # loady, metadata, first data packet only.
+        assert fake.commands == [f"loady {ADDRESS:x}"] and not fake.received
+        assert not any(data in (bytes((EOT,)), bytes((CAN,))) or data.startswith(b"go ")
+                       for data in fake.writes)
+    print("PASS: boot disconnect/re-enumeration, failed reopen/recovery with original settings and inactive DTR/RTS, stale banner/prompt rejection, fixed deadline/no upload, command/YMODEM disconnect propagation; YMODEM restart abort/no retransmit/go, raw bounded banner window across reads/retries; CRC16, 128/1K framing, header with/without C, NAK retry, one/two EOT, sequence wrap, exact length/padding, clocks, board CRC32/filesize rejection; no serial port opened.")
 
 
 def main():
