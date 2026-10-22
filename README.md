@@ -88,7 +88,7 @@ git submodule update --init u-boot-ingenic
 | 工具 | 用途与要求 |
 | --- | --- |
 | Git | 获取仓库与固定版本子模块 |
-| Python 3 | 构建生成器、产物核验、媒体和串口工具；当前开发机为 3.14.7 |
+| Python >= 3.10 | 构建生成器、产物核验、媒体和串口工具；本轮 Windows 实测 3.14.3 |
 | CMake、Ninja | Windows Hello 及 ReGBA/mGBA/player 默认构建后端；工程最低 CMake 3.16，当前开发机 CMake 4.3.2 |
 | MinGW Make | Windows Hello 可选 `-Generator 'MinGW Makefiles'`，需能找到 `mingw32-make` |
 | Visual Studio C++ / Build Tools | **主机测试**使用 MSVC x64；安装 C++ 桌面开发工具和 Windows SDK |
@@ -96,6 +96,8 @@ git submodule update --init u-boot-ingenic
 | FFmpeg / FFprobe 9.0.2 essentials | 播放器转码、片源分析及完整媒体主机回归；准备脚本会核验版本 |
 
 MSVC 编译的是主机测试程序；目标固件仍由官方交叉工具链生成。CMake、Ninja、Python 和所需 Make 应加入对应系统的 PATH。
+
+2026-10-23 已完成本机环境复验：Windows / Linux XBurst2 R5.1.6、Victory0 r1.1.1 和 FFmpeg 9.0.2 均可用，11 组目标构建、两套主机回归及三项 MIPS 指令模拟通过。包散列、目标配置、产物身份和验收范围见[环境复验摘要](docs/validation/development-environment-20261023.json)。
 
 ### 3. MIPS 工具链
 
@@ -106,6 +108,23 @@ MSVC 编译的是主机测试程序；目标固件仍由官方交叉工具链生
 ```
 
 默认安装到 `toolchains/xburst2-windows/`。安装脚本遇到已有目标目录会停止；已安装环境直接使用，无需重复解包。MIPS 应用采用小端、MIPS32r2、32 位 ABI；FreeRTOS 应用使用 hard-float。
+
+此 Windows R5.1.6 ZIP 未附带 `cc1.exe` 所需的 **64 位 `zlib1.dll`**；若 PATH 中先找到 32 位同名 DLL，编译会报 `0xC000007B`，即使 `gcc --version` 正常也不能证明可以编译。本轮使用已安装的 64 位 Git for Windows 所带 DLL，复制到工具链私有 `bin` 目录。以下示例从唯一 GCC 路径定位目标，已有目标时保留原文件；Git 安装在其他位置时调整 `$zlibSource`：
+
+```powershell
+$gcc = @(Get-ChildItem -LiteralPath .\toolchains\xburst2-windows -Recurse -File -Filter 'mips*-gcc.exe' |
+    Where-Object { $_.Directory.Name -eq 'bin' })
+if ($gcc.Count -ne 1) { throw '应找到唯一的 MIPS GCC，请核对工具链目录。' }
+$zlibSource = Join-Path $env:ProgramFiles 'Git\mingw64\bin\zlib1.dll'
+$zlibTarget = Join-Path $gcc[0].Directory.FullName 'zlib1.dll'
+if (-not (Test-Path -LiteralPath $zlibTarget)) {
+    if (-not (Test-Path -LiteralPath $zlibSource -PathType Leaf)) { throw '请提供 64 位 Git for Windows 的 zlib1.dll 路径。' }
+    Copy-Item -LiteralPath $zlibSource -Destination $zlibTarget -ErrorAction Stop
+}
+.\scripts\enter-env.ps1
+```
+
+上述操作不修改厂商归档或全局 PATH；`enter-env.ps1` 在当前 PowerShell 会话前置工具链 `bin`，之后再运行构建脚本。
 
 如需 WSL Hello、U-Boot 或 MIPS 指令模拟，另准备 Linux R5.1.6 包。已安装 WSL2 Ubuntu 22.04 后，在 PowerShell 执行：
 

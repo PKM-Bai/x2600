@@ -49,6 +49,10 @@ if (Test-Path -LiteralPath $mipsRoot -PathType Container) {
         Where-Object { $_.Directory.Name -eq 'bin' })
 }
 if ($mipsCompilers.Count -eq 1) {
+    # GCC's helper processes also load the runtime DLLs from this directory.
+    $mipsBin = $mipsCompilers[0].Directory.FullName
+    $pathEntries = @($env:PATH -split [IO.Path]::PathSeparator | Where-Object { $_ -and $_ -ne $mipsBin })
+    $env:PATH = (@($mipsBin) + $pathEntries) -join [IO.Path]::PathSeparator
     Write-Host "XBurst2 compiler found (not validated by this entry point): $($mipsCompilers[0].FullName)"
 } else {
     Write-Warning "Expected one XBurst2 compiler under $mipsRoot; found $($mipsCompilers.Count). MIPS cross-compilation is not ready."

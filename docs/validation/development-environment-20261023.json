@@ -1,0 +1,374 @@
+{
+  "schema_version": 1,
+  "started_date": "2026-10-22",
+  "completed_date": "2026-10-23",
+  "status": "PASS_SOFTWARE_DEVELOPMENT_ENVIRONMENT",
+  "source_base_commit": "d33ab2f0371a03764fd61fcc7280a4b6d817a8ab",
+  "scope": "Windows application builds, WSL cross tools, host regressions and MIPS instruction simulation",
+  "host_tools": {
+    "ninja": "1.12.1",
+    "wsl": "Ubuntu-22.04 / WSL2",
+    "msvc": "VS2022 Community / MSVC 14.44",
+    "wsl_packages": [
+      "build-essential",
+      "cmake",
+      "ninja-build",
+      "python3",
+      "libssl-dev",
+      "zlib1g-dev",
+      "libncurses-dev"
+    ],
+    "cmake": "4.3.2",
+    "python": {
+      "version": "3.14.3",
+      "virtual_environment": ".venv",
+      "pyserial": "3.5",
+      "pyusb": "1.3.1",
+      "utf8_mode": 1
+    },
+    "ffmpeg": "9.0.2 essentials",
+    "ffmpeg_archive_sha256": "60f467265b1e312373dbcd92200c2618a74850f98d3d078e94296bb3fa2047ba"
+  },
+  "submodules": {
+    "libbare-cpu": "9500d2ec917a44d0d9657940e865e70f1a885849",
+    "third_party/mGBA": "26b7884bc25a5933960f3cdcd98bac1ae14d42e2",
+    "third_party/ReGBA": "7f379052dc14366e622a96c7cf7fb6b5a7e918a3"
+  },
+  "toolchains": {
+    "xburst2_windows": {
+      "archive": {
+        "path": "Xburst2/Windows/mips-ingenic-xburst2-elf-tools-x86_64-w64.r5.1.6.zip",
+        "bytes": 77280174,
+        "sha256": "fc105a0c5f8703e0317033f793ca1d6ecb3a81d17d905bc54262089825f92fa8",
+        "vendor_md5": "7b6038ffc0c024a5e4aca91ec037d323",
+        "vendor_md5_match": true
+      },
+      "version": "XBurst2 ELF R5.1.6.2 / GCC 7.2.0 / newlib 4.1.0",
+      "target": "mips-sde-elf",
+      "compiler_sha256": "c22a7566b383a3a120fd0128506521d272cf4826ce641fa0a8a8aac04b487afd",
+      "runtime_fix": {
+        "dependency": "x64 zlib1.dll",
+        "source": "installed Git for Windows mingw64/bin/zlib1.dll",
+        "sha256": "cb7ab3788d10940df874acd97b1821bbb5ee4a91f3eec11982bb5bf7a3c96443",
+        "destination": "toolchains/xburst2-windows/mips-ingenic-xburst2-elf-tools-x86_64-w64.r5.1.6/bin/zlib1.dll",
+        "global_path_changed": false,
+        "vendor_archive_changed": false
+      }
+    },
+    "xburst2_linux": {
+      "archive": {
+        "path": "Xburst2/Linux/mips-ingenic-xburst2-elf-tools-r5.1.6.tar.bz2",
+        "bytes": 77839029,
+        "sha256": "70f00c55eaf74fdc2a396994315e9d4100b1b90aa50c2fb059ae16e6832629db",
+        "vendor_md5": "e1a6ce3b9e2f0aaac6a4e29f94ed6b6b",
+        "vendor_md5_match": true
+      },
+      "version": "mips-sde-elf-gcc (Ingenic MIPS ELF Tools R5.1.6.2 Default_xburst2_newlib4.1.0 2023.04-18 06:59:20) 7.2.0",
+      "target": "mips-sde-elf",
+      "compiler_sha256": "1f12237101afb823e132b897b7c407bce40dd8de4a2d2d29b87095bc213c1cab",
+      "simulator": "GNU simulator (SIM) 7.11.50.20160803-git",
+      "runtime_dependencies_missing": []
+    },
+    "victory0": {
+      "version": "riscv32-ingenicv0-elf-gcc (g, Ingenic victory0-series rv32emc-ilp32e Newlib4.1.0 2024.03-13 08:01:17) 11.1.0",
+      "target": "riscv32-ingenicv0-elf",
+      "archive_sha256": "4c0e37045fab661438753cb2b5bacc1b80c3077f21742da5f93cc6a69cf8c694",
+      "march": "rv32imc",
+      "abi": "ilp32",
+      "smoke": "compiler-smoke-passed"
+    }
+  },
+  "cross_builds": [
+    {
+      "target": "hello-windows",
+      "configuration": "Release",
+      "status": "passed",
+      "binary": "build/windows-Release/halley7m_hello.bin",
+      "bytes": 13020,
+      "sha256": "1a193faface81fa85352cf8e5596946c9e3e3e103601c6e782e8a5ec91449f20",
+      "crc32": "5ff39592",
+      "verification": "scripts/build.ps1 readelf",
+      "log": {
+        "path": "build/environment/hello-Release-build.log",
+        "sha256": "132bcf063a034d3976865ea5d8a95ffd62bb70bc5e30d647bb81c9e46bfbe988"
+      },
+      "entry": "0x80600000"
+    },
+    {
+      "target": "hello-windows",
+      "configuration": "Debug",
+      "status": "passed",
+      "binary": "build/windows-Debug/halley7m_hello.bin",
+      "bytes": 17564,
+      "sha256": "97edb6a091a43f134a21155eee29dc06ea241e82a5b84710d3615bf86f8905b3",
+      "crc32": "7db1bc94",
+      "verification": "scripts/build.ps1 readelf",
+      "log": {
+        "path": "build/environment/hello-Debug-build.log",
+        "sha256": "6ec179020f51f1a8b48685a6633d07ea141b468b9544d815de6d6a857f094e92"
+      },
+      "entry": "0x80600000"
+    },
+    {
+      "target": "hello-linux",
+      "configuration": "Release",
+      "status": "passed",
+      "binary": "build/linux-Release/halley7m_hello.bin",
+      "bytes": 15748,
+      "sha256": "a1840e133c4d0647678bcb84c15fcce9ded18ed14cef5e685818cd8fdd9e0713",
+      "crc32": "eb63154c",
+      "verification": "scripts/build.sh readelf",
+      "log": {
+        "path": "build/environment/hello-linux-Release-build.log",
+        "sha256": "c7f14194918b38d3409e9e431eddfe7fd65a8944c50ffbe367f72fb4bfd9db79"
+      },
+      "entry": "0x80600000"
+    },
+    {
+      "target": "regba",
+      "configuration": "Release",
+      "status": "passed",
+      "binary": "build/regba-Release/halley7m_regba.bin",
+      "bytes": 2308400,
+      "sha256": "57727b0806cadd1b5beb105f6eaefeca775ea828472a90e87a3214676681d391",
+      "crc32": "23f228ad",
+      "verification": "scripts/verify-regba.py",
+      "log": {
+        "path": "build/environment/regba-Release-build.log",
+        "sha256": "9d4f838d736563c9b6fa6a97af9bb173a5b0f5d280056ba8aee4e77c45cd286b"
+      },
+      "entry": "0x80600000",
+      "manifest": {
+        "path": "build/regba-Release/manifest.json",
+        "sha256": "1fe5633f3bb1ebf4d1ae4e5da0897d84bf548561772394d79156907ee910bdd6"
+      }
+    },
+    {
+      "target": "regba",
+      "configuration": "Debug",
+      "status": "passed",
+      "binary": "build/regba-Debug/halley7m_regba.bin",
+      "bytes": 2964624,
+      "sha256": "baefdfb1dce43af20868373ee7de700d3713327480780a681563a663cdbd0f73",
+      "crc32": "fc887a60",
+      "verification": "scripts/verify-regba.py",
+      "log": {
+        "path": "build/environment/regba-Debug-build.log",
+        "sha256": "88d47622a16ee3f56c9fbd374278dd7f3ed02fc5f1cc723ad44e161605c5a0df"
+      },
+      "entry": "0x80600000",
+      "manifest": {
+        "path": "build/regba-Debug/manifest.json",
+        "sha256": "1244ef75f21f246822dd392673f79d842fe2467ec18312cfa5da5fbfeec7ccf2"
+      }
+    },
+    {
+      "target": "mgba",
+      "configuration": "Release",
+      "status": "passed",
+      "binary": "build/mgba-Release/halley7m_regba.bin",
+      "bytes": 2386604,
+      "sha256": "e0b822d7dd887acc24b192647a9dd62dfe2b1596c26b26de05f849186b765d50",
+      "crc32": "89cd53ab",
+      "verification": "scripts/verify-regba.py",
+      "log": {
+        "path": "build/environment/mgba-Release-build.log",
+        "sha256": "8ed0bc7a76eaa229aa2426853fbc8740eaa90cefcfcf401d9d14b2a216ef2060"
+      },
+      "entry": "0x80600000",
+      "manifest": {
+        "path": "build/mgba-Release/manifest.json",
+        "sha256": "9a0d93e456c3b1934700cb7faf3f5c10832b105d62f55abd672d0a51ab8b96ec"
+      }
+    },
+    {
+      "target": "mgba",
+      "configuration": "Debug",
+      "status": "passed",
+      "binary": "build/mgba-Debug/halley7m_regba.bin",
+      "bytes": 2745196,
+      "sha256": "52064de513468198b40ce87712177020ba521772b04d5a798b09c5c6b84b116f",
+      "crc32": "a2e23194",
+      "verification": "scripts/verify-regba.py",
+      "log": {
+        "path": "build/environment/mgba-Debug-build.log",
+        "sha256": "7122ee3c180d3b38ba91e4d6a718ff410e25c72690e821ce2d03c9d5abbc3fa6"
+      },
+      "entry": "0x80600000",
+      "manifest": {
+        "path": "build/mgba-Debug/manifest.json",
+        "sha256": "00115c4e23f70c8915a647bdd3a0baa5ff98cb08969186f4f572127da7394e30"
+      }
+    },
+    {
+      "target": "player-riscv",
+      "configuration": "Release",
+      "status": "passed",
+      "binary": "build/player-riscv-Release/mips/halley7m_player.bin",
+      "bytes": 1892304,
+      "sha256": "ca7b6cc3bcf05c0dd43e643e249929d1e60fcb4921089e2fa9f0130006c79262",
+      "crc32": "c19a9b54",
+      "verification": "scripts/verify-player.py",
+      "log": {
+        "path": "build/environment/player-Release-build.log",
+        "sha256": "67298c82c25d14f038ed1d403b13b9eac882a24e28a6b7b5514b9bbbb4677a1a"
+      },
+      "entry": "0x80600000",
+      "manifest": {
+        "path": "build/player-riscv-Release/manifest.json",
+        "sha256": "993a4ce9bcc7f042ac2f5fbe176731329c2651619bab7c3ff14b60465c1ffdc6"
+      }
+    },
+    {
+      "target": "player-riscv",
+      "configuration": "Debug",
+      "status": "passed",
+      "binary": "build/player-riscv-Debug/mips/halley7m_player.bin",
+      "bytes": 2024272,
+      "sha256": "ab3bb0d1ae5d0c564d48b7e07b0ae48db67042c8a5233f3ea24cafb7b30a8fe8",
+      "crc32": "4b97fea8",
+      "verification": "scripts/verify-player.py",
+      "log": {
+        "path": "build/environment/player-Debug-build.log",
+        "sha256": "6684409e4fbd92448d0544b424de70b7d15affb61d6053b43759858525af1f87"
+      },
+      "entry": "0x80600000",
+      "manifest": {
+        "path": "build/player-riscv-Debug/manifest.json",
+        "sha256": "5986b3edd8fcb62ec666ac575cb339e81247d5d3c54c0d233c580d1ee005929f"
+      }
+    },
+    {
+      "target": "player-mips",
+      "configuration": "Release",
+      "status": "passed",
+      "binary": "build/player-mips-Release/mips/halley7m_player.bin",
+      "bytes": 1881216,
+      "sha256": "1645898d9a85273e293f37137a794f099b0c3b290fc946da9e64c1c3b3a6591f",
+      "crc32": "abc007b6",
+      "verification": "scripts/verify-player.py",
+      "log": {
+        "path": "build/environment/player-mips-owner-Release-build.log",
+        "sha256": "7704fc0c41b948381e3bcbfc9e9fc4619569db2ab12b6e4ba354f3875d39805d"
+      },
+      "entry": "0x80600000",
+      "manifest": {
+        "path": "build/player-mips-Release/manifest.json",
+        "sha256": "0de82ae984e7966ef4fc7930e451d605aa71e0395aeb85425b32fa8600cc3f64"
+      }
+    },
+    {
+      "target": "player-mips-only",
+      "configuration": "Release",
+      "status": "passed",
+      "binary": "build/player-mips-only-Release/mips/halley7m_player.bin",
+      "bytes": 1863392,
+      "sha256": "1204859a8d91c8d951b1bee4894ebb3633f1d7658acbd43f7a1f851f58d7e1a9",
+      "crc32": "0a0411aa",
+      "verification": "scripts/verify-player.py",
+      "log": {
+        "path": "build/environment/player-mips-only-Release-build.log",
+        "sha256": "9e6612ae989861b637cad0557c607c52d77647f0fbdf3372f1d93a26e9e2a983"
+      },
+      "entry": "0x80600000",
+      "manifest": {
+        "path": "build/player-mips-only-Release/manifest.json",
+        "sha256": "48ccd5e7eedf7d456213cc704383cd5220e63984bcc75bfea2a6123f2eab3689"
+      }
+    }
+  ],
+  "host_regressions": [
+    {
+      "suite": "regba",
+      "status": "passed",
+      "log": {
+        "path": "build/environment/regba-host.log",
+        "sha256": "d7ec7704bfc77700ec3f690110c2d125165dfab895c9d92f0b2aa38ec1505b68"
+      }
+    },
+    {
+      "suite": "player",
+      "status": "passed",
+      "log": {
+        "path": "build/environment/player-host-verified.log",
+        "sha256": "bdd1792259568e17abf791ca30712a80279ce4fc002416368e0bb3ce25ca842a"
+      }
+    }
+  ],
+  "instruction_simulation": {
+    "regba": {
+      "status": "passed",
+      "generated_at": "2026-10-23T00:11:03.8432228+08:00",
+      "toolchain": "Linux XBurst2 ELF R5.1.6.2",
+      "firmware_manifest": "build/regba-Release/manifest.json",
+      "firmware_manifest_sha256": "1fe5633f3bb1ebf4d1ae4e5da0897d84bf548561772394d79156907ee910bdd6",
+      "test_resources_sha256": "572cd5bc49af2a6dec5c5e4483a076cb80de596e0dddaf064e9a0e6744e4fbf9",
+      "runs": [
+        {
+          "mode": "normal",
+          "pass": true,
+          "frames": 120,
+          "irq_count": 118,
+          "timeout_seconds": 45,
+          "return_code": 0,
+          "host_wall_seconds": 16.705,
+          "translation_recursion_peak": null,
+          "depth_current": null,
+          "elf": "build/regba-sim/regba_sim.elf",
+          "elf_sha256": "29ec1271a02c78461fe74e199309ab2c87bea0092da72da924be94b70357f189",
+          "log": "build/environment/linux-xburst2-regba-sim.log",
+          "log_sha256": "74d8b81b893612069e7215c8f334ac53766a02236057ff70dc1e240a2806cf1f"
+        },
+        {
+          "mode": "depth-regression",
+          "pass": true,
+          "frames": 120,
+          "irq_count": 118,
+          "timeout_seconds": 45,
+          "return_code": 0,
+          "host_wall_seconds": 16.892,
+          "translation_recursion_peak": 8,
+          "depth_current": 0,
+          "elf": "build/regba-depth-sim/regba_sim.elf",
+          "elf_sha256": "96750818b658dbc42353a6830ee368289af0e5de915e4e98973f60cf84c5cc44",
+          "log": "build/environment/linux-xburst2-regba-depth-sim.log",
+          "log_sha256": "0a67c4698cd4ad7760a76e1adf841434ee04ccc61cf829214e419e71a0cb877a"
+        }
+      ],
+      "hardware_accessed": false,
+      "fps_claim": "none; host simulation wall time is not board performance"
+    },
+    "mgba_cpu": {
+      "pass": true,
+      "mode": "cpu",
+      "return_code": 0,
+      "host_wall_seconds": 63.024937475,
+      "mGBA_commit": "26b7884bc25a5933960f3cdcd98bac1ae14d42e2",
+      "library_sha256": "2cb202beb640b7b4481412ab549e74fd0d284a16ad536613fcd3cb864c7232c7",
+      "adapter_sha256": "a780808061b84e97b43ff38008e99a97eee495c50e55ce5642cf4c809d39ca90",
+      "harness_sha256": "c80f5d1d5057b51f8d0ecf171f34f21b58b5cf7a0853bf7f23cdf4ffd1755a5f",
+      "test_resources_sha256": "311b3a3fb98595354374b3a7d3406e24a708d0a969cd960d4650010b9309f722",
+      "inputs_changed": [],
+      "elf_sha256": "2bdc8f40397aca4b282710333a9cca5daf79ed266cb3259b85d50384f5c9987c",
+      "log": "build/mgba-adapter-sim-cpu/simulator.log",
+      "scope": "生产适配层、软件 CPU / 原生存档；无实板 FPS 结论",
+      "timeout_seconds": 360,
+      "toolchain": "Linux XBurst2 ELF R5.1.6.2",
+      "firmware_manifest": "build/mgba-Release/manifest.json",
+      "invocation_log": "build/environment/linux-xburst2-mgba-cpu-sim.log",
+      "hardware_accessed": false
+    }
+  },
+  "additional_checks": {
+    "powershell_51_json_without_bom": "passed",
+    "environment_entry_repeated_path_deduplication": "passed"
+  },
+  "validation_limits": [
+    "Software environment verification; board acceptance records remain separate.",
+    "mGBA ISA validation used CPU mode; other save-specific ISA modes were not rerun.",
+    "Host simulator wall time is not board FPS; SDK warnings remain in build logs."
+  ],
+  "hardware_accessed": false,
+  "nor_written": false,
+  "physical_tf_written": false
+}
