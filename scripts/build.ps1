@@ -1,10 +1,24 @@
 [CmdletBinding()]
 param(
     [string]$ToolchainRoot = (Join-Path $PSScriptRoot '..\toolchains\xburst2-windows'),
-    [ValidateSet('Debug', 'Release')][string]$Configuration = 'Release'
+    [ValidateSet('Debug', 'Release')][string]$Configuration = 'Release',
+    [ValidateSet('Ninja', 'MinGW Makefiles')][string]$Generator = 'Ninja',
+    [string]$BuildDirectory
 )
 $ErrorActionPreference = 'Stop'
 $workspace = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
+if (-not $BuildDirectory) { $BuildDirectory = "build\windows-$Configuration" }
+$buildDir = if ([IO.Path]::IsPathRooted($BuildDirectory)) { $BuildDirectory } else { Join-Path $workspace $BuildDirectory }
+$cache = Join-Path $buildDir 'CMakeCache.txt'
+if (Test-Path -LiteralPath $cache -PathType Leaf) {
+    $cachedGenerator = @(Get-Content -LiteralPath $cache | Where-Object { $_ -match '^CMAKE_GENERATOR:INTERNAL=' })
+    if ($cachedGenerator.Count -eq 1) {
+        $previousGenerator = $cachedGenerator[0] -replace '^CMAKE_GENERATOR:INTERNAL=', ''
+        if ($previousGenerator -ne $Generator) {
+            throw "Build directory $buildDir uses generator '$previousGenerator'. Run with -Generator '$previousGenerator', or choose a new -BuildDirectory. The existing cache was not changed."
+        }
+    }
+}
 if (-not (Test-Path -LiteralPath $ToolchainRoot)) {
     throw 'XBurst2 toolchain missing. Run scripts\install-toolchain.ps1 with the official Windows ZIP.'
 }
@@ -20,8 +34,7 @@ if ($LASTEXITCODE -ne 0 -or $version -notmatch '(?i)xburst2') {
 }
 Write-Host $version.Trim()
 $prefix = ($compiler -replace 'gcc\.exe$', '') -replace '\\', '/'
-$buildDir = Join-Path $workspace "build\windows-$Configuration"
-& cmake -S (Join-Path $workspace 'projects\halley7m-hello') -B $buildDir -G 'MinGW Makefiles' "-DCMAKE_TOOLCHAIN_FILE=$workspace/cmake/xburst2-elf.cmake" "-DCROSS_COMPILE=$prefix" "-DCMAKE_BUILD_TYPE=$Configuration"
+& cmake -S (Join-Path $workspace 'projects\halley7m-hello') -B $buildDir -G $Generator "-DCMAKE_TOOLCHAIN_FILE=$workspace/cmake/xburst2-elf.cmake" "-DCROSS_COMPILE=$prefix" "-DCMAKE_BUILD_TYPE=$Configuration"
 if ($LASTEXITCODE -ne 0) { throw 'CMake configuration failed.' }
 & cmake --build $buildDir --parallel ([Environment]::ProcessorCount)
 if ($LASTEXITCODE -ne 0) { throw 'Compilation failed.' }

@@ -69,10 +69,10 @@ cd x2600
 git submodule update --init libbare-cpu third_party/ReGBA
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\Activate.ps1
+.\scripts\enter-env.ps1
 ```
 
-后续示例均在仓库根目录运行，`python` 指激活后的虚拟环境。不能激活时，可使用 `.\.venv\Scripts\python.exe` 的完整路径。Python 依赖固定为 PySerial 3.5、PyUSB 1.3.1。
+后续示例均在仓库根目录运行，`python` 指激活后的虚拟环境。每次打开 PowerShell 后运行 `.\scripts\enter-env.ps1`，它会激活已有 `.venv`、设置当前进程 `PYTHONUTF8=1`，并在 `tools/ffmpeg/bin` 存在时前置到 PATH，同时报告 Python、CMake、Ninja 与交叉工具链状态；不会安装工具或修改全局配置。不能激活时，可使用 `.\.venv\Scripts\python.exe` 的完整路径。Python 依赖固定为 PySerial 3.5、PyUSB 1.3.1。
 
 只有选择 mGBA 或重编启动器时，再分别初始化对应子模块：
 
@@ -89,8 +89,8 @@ git submodule update --init u-boot-ingenic
 | --- | --- |
 | Git | 获取仓库与固定版本子模块 |
 | Python 3 | 构建生成器、产物核验、媒体和串口工具；当前开发机为 3.14.7 |
-| CMake、Ninja | ReGBA/mGBA/player 构建；工程最低 CMake 3.16，当前开发机 CMake 4.3.2 |
-| MinGW Make | Windows Hello 脚本使用 `MinGW Makefiles`，需能找到 `mingw32-make` |
+| CMake、Ninja | Windows Hello 及 ReGBA/mGBA/player 默认构建后端；工程最低 CMake 3.16，当前开发机 CMake 4.3.2 |
+| MinGW Make | Windows Hello 可选 `-Generator 'MinGW Makefiles'`，需能找到 `mingw32-make` |
 | Visual Studio C++ / Build Tools | **主机测试**使用 MSVC x64；安装 C++ 桌面开发工具和 Windows SDK |
 | WSL2 Ubuntu 22.04 | 当前 Linux Victory0、Linux XBurst2 指令模拟器和可选 U-Boot 构建 |
 | FFmpeg / FFprobe 9.0.2 essentials | 播放器转码、片源分析及完整媒体主机回归；准备脚本会核验版本 |
@@ -141,9 +141,10 @@ Linux 工具链默认在 `toolchains/xburst2-linux/`。Windows 与 Linux 的工�
 ```powershell
 .\scripts\build.ps1
 .\scripts\build.ps1 -Configuration Debug
+.\scripts\build.ps1 -Generator 'MinGW Makefiles'
 ```
 
-产物为 `build/windows-Release/halley7m_hello.{bin,elf,map}`，Debug 对应 `windows-Debug`。WSL 入口为：
+Windows 默认使用 Ninja，产物仍为 `build/windows-Release/halley7m_hello.{bin,elf,map}`，Debug 对应 `windows-Debug`。已有 CMake 缓存的生成器必须与 `-Generator` 一致；如不一致，沿用原生成器，或用 `-BuildDirectory build/windows-ninja-Release` 指定新目录，脚本不会删除旧缓存。WSL 入口为：
 
 ```powershell
 wsl -d Ubuntu-22.04 -- bash scripts/build.sh
