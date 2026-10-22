@@ -180,6 +180,7 @@ if ($ffmpeg) {
 } else {
     $report.ffmpeg = @{ status = 'missing'; expected_version = '9.0.2 essentials' }
 }
-$report | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $reportPath -Encoding utf8
-$report | ConvertTo-Json -Depth 5 | Write-Output
+$reportJson = $report | ConvertTo-Json -Depth 5
+[IO.File]::WriteAllText($reportPath, $reportJson, [Text.UTF8Encoding]::new($false))
+Write-Output $reportJson
 if (-not $riscv -or -not $ffmpeg) { throw 'Player dependencies are incomplete; see build/player-tools/dependencies.json.' }
