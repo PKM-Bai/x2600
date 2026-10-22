@@ -64,7 +64,9 @@ def main():
     common = ROOT / 'projects/halley7m-player/common'
     for owner in (1, 2):
         executable = output / f'amp_control_{owner}.exe'
-        subprocess.run([compiler, '/nologo', '/std:c11', '/O2', '/W4', '/WX', '/wd4324', '/utf-8',
+        # Each owner deliberately makes the production and fixture owner guards
+        # constant. Older MSVC reports C4127 for these compile-time branches.
+        subprocess.run([compiler, '/nologo', '/std:c11', '/O2', '/W4', '/WX', '/wd4324', '/wd4127', '/utf-8',
                         '/D_CRT_SECURE_NO_WARNINGS', f'/DPLAYER_AUDIO_OWNER={owner}',
                         '/I' + str(common), str(generated), str(common / 'player_amp.c'),
                         '/Fe:' + str(executable)], cwd=output, env=environment, check=True)

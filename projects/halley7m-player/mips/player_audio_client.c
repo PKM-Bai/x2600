@@ -244,7 +244,7 @@ int player_audio_client_start(uint32_t total_samples, unsigned volume_percent)
 #if PLAYER_AUDIO_OWNER == PLAYER_AUDIO_OWNER_RISCV
     return command(PLAYER_AMP_AUDIO_CMD_START, total_samples, volume_percent);
 #else
-    _Static_assert((int)PLAYER_AUDIO_FAULT == (int)PLAYER_AMP_AUDIO_FAULT, "Audio status ABI");
+    _Static_assert((enum player_amp_audio_state)PLAYER_AUDIO_FAULT == PLAYER_AMP_AUDIO_FAULT, "Audio status ABI");
     int result = player_audio_set_volume(volume_percent);
     if (!result) result = player_audio_open();
     if (!result) result = player_audio_begin();
