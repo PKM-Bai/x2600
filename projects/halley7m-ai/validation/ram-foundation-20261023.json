@@ -1,0 +1,34 @@
+{
+  "schema": 1,
+  "date": "2026-10-23",
+  "board": "HALLEY7-M-KIT / X2600M",
+  "deployment": "RAM-only",
+  "nor_written": false,
+  "r1": {
+    "bytes": 343088,
+    "sha256": "49477b87c5a368149178af7463ec6526402b508401f3f68bb3e34664c1f9da9b",
+    "board_crc32": "273ba62c",
+    "resources": {"mount": 0, "font": 0, "dictionary": 0, "config": 0, "key_present": true},
+    "initialization": {"display": 0, "gui": 0, "touch": 0, "buttons": 0},
+    "display_sample": {"submitted": 140, "confirmed": 140, "mismatches": 0, "underruns": 0},
+    "user_confirmed": ["display", "touch_nihao_candidate", "failed_send_keeps_draft", "start_unavailable_hint"],
+    "rng": {"samples": 256, "repeats": 0, "zero_words": 0, "all_one_words": 0, "one_bits": 4040, "varying_bits": "ffffffff"},
+    "phy_probe_result": -34,
+    "phy_probe_note": "Premature AHB0 limit; no MDIO access. Corrected to documented MAC AHB2 domain in R2."
+  },
+  "r2": {
+    "bytes": 343152,
+    "sha256": "4af6ce67a168ed552d2047e7d9c4d4fd47363a5a7c14ac7bb2d4e6f8cae8c085",
+    "board_crc32": "a60bd6e8",
+    "resources": {"mount": 0, "font": 0, "dictionary": 0, "config": 0, "key_present": true},
+    "phy": {"result": 0, "mac_version": "00002037", "mode": "40000002", "clock": "40000023", "address": 0, "id": "02430c54", "bmsr": "7849", "ahb0_hz": 360000000, "ahb2_hz": 300000000},
+    "rng_runs": [
+      {"samples": 256, "repeats": 0, "zero_words": 0, "all_one_words": 0, "one_bits": 4061, "varying_bits": "ffffffff"},
+      {"samples": 256, "repeats": 0, "zero_words": 0, "all_one_words": 0, "one_bits": 4146, "varying_bits": "ffffffff"}
+    ],
+    "gui_result": 0,
+    "free_heap_bytes": 45671488
+  },
+  "unverified": ["missing_resource_board_path", "ethernet_frames", "dhcp_dns_sntp", "continuous_entropy_service", "board_tls", "board_cloud", "air_uart_dma", "wifi", "two_hour_joint_run", "nor_install", "physical_cold_boot"],
+  "existing_display_flicker_resolved": false
+}

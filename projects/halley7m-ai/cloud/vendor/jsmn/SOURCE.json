@@ -1,0 +1,15 @@
+{
+  "project": "jsmn",
+  "version": "v1.1.0",
+  "license": "MIT",
+  "files": {
+    "jsmn.h": {
+      "url": "https://raw.githubusercontent.com/zserge/jsmn/v1.1.0/jsmn.h",
+      "sha256": "1ed6154dedf009212a08a397e9c4ed50a0ce31d5a8301bb294e137ae3188c13b"
+    },
+    "LICENSE": {
+      "url": "https://raw.githubusercontent.com/zserge/jsmn/v1.1.0/LICENSE",
+      "sha256": "4675b94a50d2afe811c52785463c854f1156056632cce17cc7133939eac8ed55"
+    }
+  }
+}

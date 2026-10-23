@@ -1,0 +1,12 @@
+data: {"id":"recorded-shape-20261023","object":"chat.completion.chunk","created":1792742805,"model":"deepseek-flash","system_fingerprint":"anonymized","choices":[{"index":0,"delta":{"role":"assistant","content":""},"logprobs":null,"finish_reason":null}],"usage":null}
+
+data: {"id":"recorded-shape-20261023","object":"chat.completion.chunk","created":1792742805,"model":"deepseek-flash","system_fingerprint":"anonymized","choices":[{"index":0,"delta":{"content":"协议"},"logprobs":null,"finish_reason":null}],"usage":null}
+
+data: {"id":"recorded-shape-20261023","object":"chat.completion.chunk","created":1792742805,"model":"deepseek-flash","system_fingerprint":"anonymized","choices":[{"index":0,"delta":{"content":"回放"},"logprobs":null,"finish_reason":null}],"usage":null}
+
+data: {"id":"recorded-shape-20261023","object":"chat.completion.chunk","created":1792742805,"model":"deepseek-flash","system_fingerprint":"anonymized","choices":[{"index":0,"delta":{"content":"好"},"logprobs":null,"finish_reason":null}],"usage":null}
+
+data: {"id":"recorded-shape-20261023","object":"chat.completion.chunk","created":1792742805,"model":"deepseek-flash","system_fingerprint":"anonymized","choices":[{"index":0,"delta":{"content":""},"logprobs":null,"finish_reason":"stop"}],"usage":{"prompt_tokens":29,"completion_tokens":3,"total_tokens":32,"prompt_tokens_details":{"cached_tokens":0},"prompt_cache_hit_tokens":0,"prompt_cache_miss_tokens":29}}
+
+data: [DONE]
+

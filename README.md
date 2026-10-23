@@ -11,6 +11,7 @@
 | 项目 | 当前能力与验证情况 | 详细说明 |
 | --- | --- | --- |
 | Hello 裸机示例 | Windows / WSL 交叉构建，基础串口与启动环境验证入口 | [源码](projects/halley7m-hello/main.c)、[构建脚本](scripts/build.ps1) |
+| 云端 AI 终端（2026-10-23） | 独立MIPS FreeRTOS基础工程、中文全拼/词组、TF资源、音频/网络核心；DeepSeek电脑端真实文字验收通过，板端云连接尚未完成 | [AI工程与阶段状态](projects/halley7m-ai/README.md)、[验证记录](projects/halley7m-ai/VALIDATION.md) |
 | ReGBA 掌机 | MIPS FreeRTOS、ReGBA JIT、中文游戏库、蓝牙手柄、原生存档、读档与设置、CPU/FPS；已有 RAM 与历史 NOR 验收 | [掌机工程](projects/halley7m-regba/README.md)、[GUI 记录](docs/ReGBA掌机GUI实施记录.md) |
 | mGBA 引擎 | 同一掌机工程的独立编译选项，固定 mGBA 0.10.5；软件、RAM 实板及独立 660 秒联合测试通过，性能限制单列 | [引擎分离记录](docs/ReGBA引擎分离实施记录.md) |
 | AMP 播放器 | MIPS / RISC-V 各运行 FreeRTOS，H.264 硬解、音频主时钟、LVGL 中文三页、三键操作；支持 AVI/WAV、MP3、AAC/M4A、MP4 | [播放器工程](projects/halley7m-player/README.md)、[输入格式](projects/halley7m-player/FORMATS.md) |

@@ -23,7 +23,7 @@ MAX_IMAGE = 0x600000
 SOH, STX, EOT, ACK, NAK, CAN, CRC = 1, 2, 4, 6, 21, 24, 67
 PROMPT = re.compile(rb"(?:^|\n)[A-Za-z0-9_./:@ -]{1,80}# ?$")
 YMODEM_RESTART_BANNER = re.compile(
-    rb"[\r\n\0](U-Boot(?: SPL)? [0-9]{4}\.[0-9]{2}|PLAYER_BOOT core=mips)(?=[ (\r\n-])"
+    rb"[\r\n\0](U-Boot(?: SPL)? [0-9]{4}\.[0-9]{2}|(?:PLAYER|AI)_BOOT core=mips)(?=[ (\r\n-])"
 )
 
 
@@ -174,6 +174,26 @@ class Console:
                     return
         self.log("RX identify " + bytes(data).decode("ascii", errors="backslashreplace"))
         raise RuntimeError("Player diagnostics not confirmed; no reboot sent")
+
+    def reboot_ai(self):
+        """Identify the independent AI firmware before its watchdog reboot."""
+        self.drain()
+        self.log("TX status (identify AI firmware before software reboot)")
+        self.write(b"\rstatus\r")
+        data = bytearray()
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            chunk = self.serial.read(1)
+            if chunk:
+                data.extend(chunk)
+                if re.search(rb"(?:^|\n)(?:ai> )?AI_STATUS stage=foundation ", data):
+                    self.log("RX " + bytes(data).decode("ascii", errors="backslashreplace"))
+                    self.log("TX reboot (AI watchdog reset; no NOR programming)")
+                    self.write(b"reboot\r")
+                    self.wait_boot(timeout=30.0)
+                    return
+        self.log("RX identify " + bytes(data).decode("ascii", errors="backslashreplace"))
+        raise RuntimeError("AI diagnostics not confirmed; no reboot sent")
 
 
 def memory_words(output: bytes) -> dict[int, int]:
@@ -609,6 +629,7 @@ def self_test():
         b"\r\nU-Boot SPL 2013.07-00006-g96302ff087 (test)\r\n",
         b"\r\nU-Boot 2013.07-00006-g96302ff087 (test)\r\n",
         b"\r\nPLAYER_BOOT core=mips rtos=FreeRTOS entry=80600000\r\n",
+        b"\r\nAI_BOOT core=mips rtos=FreeRTOS entry=80600000\r\n",
     ):
         fake = FakeSerial(reject_first=False, restart_banner=banner)
         try:
@@ -640,6 +661,8 @@ def main():
                         help="Verify a running Linux shell, reboot it and interrupt U-Boot on the same UART")
     parser.add_argument("--reboot-player", action="store_true",
                         help="Verify player diagnostics, watchdog reboot and interrupt U-Boot on the same UART")
+    parser.add_argument("--reboot-ai", action="store_true",
+                        help="Verify AI diagnostics, watchdog reboot and interrupt U-Boot on the same UART")
     parser.add_argument("--log", type=Path)
     args = parser.parse_args()
     if args.self_test:
@@ -647,8 +670,8 @@ def main():
         return 0
     if args.no_go and not args.execute:
         parser.error("--no-go requires --execute")
-    if sum((args.reboot_linux, args.reboot_player, args.wait_boot)) > 1:
-        parser.error("Choose --reboot-linux, --reboot-player or --wait-boot")
+    if sum((args.reboot_linux, args.reboot_player, args.reboot_ai, args.wait_boot)) > 1:
+        parser.error("Choose --reboot-linux, --reboot-player, --reboot-ai or --wait-boot")
     data = args.file.read_bytes() if args.execute else b""
     if args.execute and not 0 < len(data) <= MAX_IMAGE:
         parser.error("BIN must be non-empty and fit the fixed 6MiB RAM upload window")
@@ -668,6 +691,8 @@ def main():
             console.reboot_linux()
         elif args.reboot_player:
             console.reboot_player()
+        elif args.reboot_ai:
+            console.reboot_ai()
         elif args.wait_boot:
             console.wait_boot()
         else:
