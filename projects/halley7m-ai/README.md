@@ -14,6 +14,7 @@ RISC-V 保持复位。按源文件复用播放器的启动、显示、GT911、�
 | 会话核心 | 50轮显示存储、独立8轮完整上下文、手动重试与旧代次丢弃 | 会话任务、聊天记录页面、实际流式回答接入 |
 | 音频核心 | Air1103拆包组帧、带低通24→16kHz重采样、PTT边界 | UART接线/DMA、录放音与实际尾音测量 |
 | 网络基础 | 双网选择策略、lwIP2.2.1原生FreeRTOS适配；实板DTRNG有限采样、PHY地址0/ID02430c54读取 | GMAC帧收发、持续熵服务、DHCP/DNS/SNTP、真实TLS/WSS、SWT6621-SH |
+| TLS适配 | Mbed TLS4.1.1客户端、强制证书校验、TLS1.2/1.3本机真实握手及异常证书拒绝、MIPS编译/可重定位链接 | 绑定板端socket、熵/UTC/CA服务及真实云握手 |
 | 发布 | 资源散列、构建产物校验 | 双网长跑、NOR安装与回读、物理断电冷启动 |
 
 前置硬件材料和阻塞项见 [BOARD_PREREQUISITES.md](BOARD_PREREQUISITES.md)，
@@ -33,6 +34,7 @@ python scripts/test-ai-host.py
 python -m unittest discover -s tests -p 'test_ai_*probe.py' -q
 python scripts/prepare-ai-network.py --download
 python projects/halley7m-ai/network/tests/check_build.py --mips
+python projects/halley7m-ai/tls/tests/check_build.py --mips
 ```
 
 产物为 `build/ai-Release/halley7m_ai.{elf,bin,map}` 和 `manifest.json`。
@@ -102,3 +104,6 @@ FreeRTOS、LVGL与现有平台源保持仓库原许可证，lwIP/Mbed TLS版本�
 
 DeepSeek纯C请求/SSE协议层见 [cloud/README.md](cloud/README.md)。它已通过11组主机用例和MIPS静态库编译，
 尚未连接设备TLS/HTTP传输；该静态库不等于主程序已具备联网能力。
+
+TLS模块独立构建和接入约定见 [tls/README.md](tls/README.md)。本机回环测试使用Windows BCrypt提供熵，
+板端尚未安装该回调；不会以PC熵或固定seed代替X2600持续随机数服务。

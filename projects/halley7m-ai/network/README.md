@@ -1,6 +1,6 @@
 # AI 网络基础
 
-当前已实现双网状态策略、lwIP 2.2.1 的原生 FreeRTOS 适配、固定依赖准备脚本，以及显式 DTRNG/MDIO 诊断入口。尚未实现 GMAC 数据帧和 SWT6621-SH 驱动接入，也没有实板网络收发或真实 TLS 握手结果。这里的 host 测试与 MIPS 编译结果不能替代这些验收。
+当前已实现双网状态策略、lwIP 2.2.1 的原生 FreeRTOS 适配、固定依赖准备脚本，以及显式 DTRNG/MDIO 诊断入口。实板有限DTRNG采样和PHY寄存器读取已通过；GMAC数据帧和SWT6621-SH驱动尚未接入。TLS适配已通过本机真实握手和MIPS编译，仍无板端TLS结果，见 [TLS模块](../tls/README.md)。
 
 ## 依赖准备
 
@@ -28,7 +28,7 @@ python scripts/prepare-ai-network.py --output build/ai-network-deps --download
 - 源码选择为 `lwip/src/core/*.c`、`core/ipv4/*.c`、`api/*.c`、`netif/ethernet.c`、`apps/sntp/sntp.c` 和本目录 `sys_arch.c`；不编译 SDK 内的 CMSIS `system/OS/sys_arch.c`。`lwipopts.h` 启用 `NO_SYS=0`、IPv4、DHCP/DNS、sockets/netif API、SNTP、软件校验和。所有实际 netif 操作需要遵守 tcpip 任务所有权。
 - 在 `tcpip_init()` 前必须安装经实板验证的随机源。`ai_lwip_random_ready()` 只表明回调已安装，不能证明 DTRNG 已通过验收。当前仅有 DTRNG 诊断入口，没有验收过的持续熵服务，不安装任何固定种子或 tick 伪熵；缺少随机源时误启动依赖随机数的堆栈将明确触发断言。
 - SNTP 使用 RAM UTC 基准，拒绝早于 2026-01-01 的样本，按 64 位单调时钟外推，超过 24 小时未校时则返回时间未就绪。默认 SNTP 更新周期 1 小时；服务器配置与启动由网络任务负责。SNTP 本身不等于可信时间认证，TLS 的 CA/hostname/date 校验不能关闭。
-- Mbed TLS 当前只准备源码，未宣称完成 MIPS 配置/编译/链接或 TLS socket 适配。DTRNG 寄存器资料现已找到，仍需实板验证并实现持续熵服务、UTC 与证书链验证后才能进入实际握手验收。
+- Mbed TLS已完成独立客户端适配与MIPS编译、可重定位链接；BIO字节流由网络任务提供，尚未绑定lwIP socket。DTRNG已完成有限实板采样，仍需持续熵服务、UTC与生产证书配置后才能进入板端握手验收。
 
 ## 显式实板诊断入口
 
