@@ -1,0 +1,35 @@
+{
+  "execution": "live_api",
+  "provider": "deepseek",
+  "model": "deepseek-flash",
+  "device_gate": "UNVERIFIED",
+  "voice_gate": "UNVERIFIED",
+  "scenario_expectations_met": true,
+  "requested_turns": 1,
+  "completed_probe_turns": 1,
+  "usage_incomplete_turns": 0,
+  "turns": [
+    {
+      "turn": 1,
+      "mode": "text",
+      "status": "completed",
+      "history_turns": [],
+      "response_id": "cf9e54b4-73d1-4e11-8e24-ab3afe726f3c",
+      "finish_reason": "stop",
+      "sse_done": true,
+      "first_text_ms": 744.9,
+      "history_eligible": true,
+      "usage": {
+        "prompt_tokens": 29,
+        "completion_tokens": 3,
+        "total_tokens": 32,
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 29,
+        "complete": true
+      },
+      "error": null,
+      "total_ms": 845.7,
+      "expectation_met": true
+    }
+  ]
+}

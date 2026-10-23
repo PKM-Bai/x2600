@@ -1,0 +1,17 @@
+{
+  "fixture_kind": "scenario_template_not_live_evidence",
+  "turns": [
+    {"text": "记住测试代号是蓝色纸船，请只回复已记住。"},
+    {"pcm": "audio/02.pcm"},
+    {"text": "这是第三轮连通性测试，请只回复数字3。"},
+    {"pcm": "audio/04.pcm"},
+    {"text": "这是第五轮连通性测试，请只回复数字5。"},
+    {"pcm": "audio/06.pcm"},
+    {"text": "这是第七轮连通性测试，请只回复数字7。"},
+    {"pcm": "audio/08.pcm"},
+    {"text": "请复述此前的测试代号。", "expect_substring": "蓝色纸船"},
+    {"pcm": "audio/10.pcm"},
+    {"text": "请复述上一轮的新标记。", "expect_substring": "绿色风铃"},
+    {"pcm": "audio/12.pcm", "new_conversation": true}
+  ]
+}

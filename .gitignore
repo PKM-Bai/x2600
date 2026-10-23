@@ -13,6 +13,10 @@
 /Halley7/
 /output/
 
+# Local AI credentials and populated device configuration.
+/configs/config.txt
+/configs/ai.local.ini
+
 # Local Python caches, build products and board/game data.
 __pycache__/
 *.py[cod]
