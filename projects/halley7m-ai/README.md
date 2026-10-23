@@ -2,7 +2,7 @@
 
 独立的 X2600M MIPS + FreeRTOS 工程，入口 `0x80600000`，54 MiB 主核 RAM，
 RISC-V 保持复位。按源文件复用播放器的启动、显示、GT911、按键和 TF 适配。
-目前是可构建的基础固件，网络尚未接通，点击发送会保留输入并提示未连接。
+目前是可构建的基础固件，以太网已在RAM实板完成DHCP、DNS和校时，云端业务尚未接通；点击发送会保留输入并提示未连接云端。
 电脑端 DeepSeek 真实文字测试通过不代表板端已经能聊天。
 
 ## 当前交付与阶段边界
@@ -13,7 +13,7 @@ RISC-V 保持复位。按源文件复用播放器的启动、显示、GT911、�
 | P1 固件基础 | MIPS构建、ELF/BIN核验、中文键盘/候选、TF资源与配置加载；RAM实板显示/触摸/Start由用户确认正常 | 缺失/损坏资源路径实板、音量键交互 |
 | 会话核心 | 50轮显示存储、独立8轮完整上下文、手动重试与旧代次丢弃 | 会话任务、聊天记录页面、实际流式回答接入 |
 | 音频核心 | Air1103拆包组帧、带低通24→16kHz重采样、PTT边界 | UART接线/DMA、录放音与实际尾音测量 |
-| 网络基础 | 双网选择策略、lwIP2.2.1原生FreeRTOS适配；实板DTRNG有限采样、PHY地址0/ID02430c54读取 | GMAC帧收发、持续熵服务、DHCP/DNS/SNTP、真实TLS/WSS、SWT6621-SH |
+| 网络基础 | 双网选择策略、lwIP2.2.1原生FreeRTOS适配；GMAC轮询DMA、持续DTRNG服务、实板100Mbps全双工及DHCP/DNS/SNTP、一次实际拔插恢复、32B网关Ping | 1472B网关Ping未通过；同网段互访、连续负载、MMC有效计数、TLS熵质量依据、真实TLS/WSS、SWT6621-SH |
 | TLS适配 | Mbed TLS4.1.1客户端、强制证书校验、TLS1.2/1.3本机真实握手及异常证书拒绝、MIPS编译/可重定位链接 | 绑定板端socket、熵/UTC/CA服务及真实云握手 |
 | 发布 | 资源散列、构建产物校验 | 双网长跑、NOR安装与回读、物理断电冷启动 |
 
@@ -29,11 +29,12 @@ RISC-V 保持复位。按源文件复用播放器的启动、显示、GT911、�
 
 ```powershell
 python scripts/prepare-ai-resources.py --download
+python scripts/prepare-ai-network.py --download
 .\scripts\build-ai.ps1
 python scripts/test-ai-host.py
 python -m unittest discover -s tests -p 'test_ai_*probe.py' -q
-python scripts/prepare-ai-network.py --download
 python projects/halley7m-ai/network/tests/check_build.py --mips
+python projects/halley7m-ai/network/tests/check_entropy.py --mips
 python projects/halley7m-ai/tls/tests/check_build.py --mips
 ```
 
@@ -82,11 +83,13 @@ python scripts/ramload-regba.py --port COM52 --file build/ai-Release/halley7m_ai
 |---|---|
 | `status`、`heap` | 当前基础阶段、资源结果、GUI循环及剩余堆；只显示key是否存在 |
 | `buttons`、`display` | 现有三键和显示状态 |
-| `net rng` | 256个DTRNG有限采样诊断，不输出原始随机字、不注册TLS熵 |
-| `net phy` | 显式复位PHY并扫描MDIO，结束恢复引脚/时钟；不启动帧DMA |
+| `net rng` | 持续DTRNG服务的状态、采样及交付计数，不输出原始随机字；TLS熵仍未就绪 |
+| `net status`、`net phy` | 网络任务缓存的PHY/DMA、DHCP、DNS、UTC及收发诊断，不重新复位硬件 |
+| `net ping` | 仅向当前DHCP网关发4个1472B ICMP数据包，逐包1秒等待；记录RTT，不调用云API |
+| `net ping small` | 相同流程使用32B数据包，作为包长对照 |
 | `reboot` | 看门狗复位，返回原有NOR启动程序 |
 
-`net phy`短暂占用现有PC15～PC24以太网引脚；严禁把Air接到占用GT911的J6 PC7/PC8。
+网络任务独占PC15～PC24以太网引脚与GMAC；严禁把Air接到占用GT911的J6 PC7/PC8。
 详细寄存器证据、超时边界和待确认差异见 [network/README.md](network/README.md)。
 
 ## 内存与后续接入
@@ -103,7 +106,7 @@ GUI约使用两张3.52MiB的ARGB原生表面、160KiB行缓冲及1MiB LVGL堆。
 FreeRTOS、LVGL与现有平台源保持仓库原许可证，lwIP/Mbed TLS版本及许可证见网络依赖清单。
 
 DeepSeek纯C请求/SSE协议层见 [cloud/README.md](cloud/README.md)。它已通过11组主机用例和MIPS静态库编译，
-尚未连接设备TLS/HTTP传输；该静态库不等于主程序已具备联网能力。
+尚未连接设备TLS/HTTP传输；以太网就绪后仍需完成TLS与云业务接入。
 
 TLS模块独立构建和接入约定见 [tls/README.md](tls/README.md)。本机回环测试使用Windows BCrypt提供熵，
 板端尚未安装该回调；不会以PC熵或固定seed代替X2600持续随机数服务。

@@ -1,0 +1,88 @@
+{
+  "schema": 1,
+  "date": "2026-10-23",
+  "board": "HALLEY7-M-KIT / X2600M",
+  "deployment": "RAM-only",
+  "nor_written": false,
+  "stage_p2_complete": false,
+  "candidates": [
+    {"name": "r1", "bytes": 438912, "sha256": "e9173ab1301c469cefed3e7d441aad8791f425b1b1c17212b95068694c885a76", "board_crc32": "b6a79471"},
+    {"name": "r2", "bytes": 440720, "sha256": "3a579bdde9fc20fe39e3af1b9a41cc6637e6bb283d6a42a285dd8f5e29ce9a8a", "board_crc32": "4864f7a6"},
+    {"name": "r3", "bytes": 469792, "sha256": "ed5cfb837c9739222955b431bd51b39787962e3b31074425488ababa61b9e38a", "board_crc32": "1a7b3369"},
+    {"name": "r4", "bytes": 470304, "sha256": "79f8c16c0b941b8c87fea4342654cf1526928d1b9bd4a98b744c30a2136d77b2", "board_crc32": "63f12419"},
+    {"name": "r5", "bytes": 472016, "sha256": "5d6c6b95cea694a3b246c4b64efd4f3c3c872ed7428713528c09bc718cc4f4b5", "board_crc32": "72e6ab5f"}
+  ],
+  "all_ram_length_crc_checks_passed": true,
+  "latest_candidate": "r5",
+  "phy": {"address": 0, "id": "02430c54", "mode": "40000002", "hardware_features": "490d0935", "negotiated_mbps": 100, "full_duplex": true},
+  "latest_services": {"dhcp": true, "deepseek_dns": true, "sntp_utc": true, "board_tls": false, "board_cloud_request": false},
+  "r2_physical_cable_recovery": {
+    "user_confirmed": true,
+    "link_sequence": [1, 0, 1],
+    "generation_sequence": [4, 5, 6, 7],
+    "address_ready_cleared_while_down": true,
+    "same_address_rebound": true,
+    "dns_and_ntp_services_restarted": true,
+    "new_descriptor_errors": 0
+  },
+  "pc_to_board_ping": {
+    "echo_reply_received": false,
+    "same_lan_test_performed": false,
+    "user_confirmed_different_routers_with_same_private_subnet": true,
+    "user_requested_keep_current_wiring": true
+  },
+  "gateway_ping": {
+    "r3": [{"payload_bytes": 1472, "sent": 4, "received": 0, "result": -116}],
+    "r4": [
+      {"payload_bytes": 32, "sent": 4, "received": 4, "rtt_ms": [2, 1, 1, 1], "result": 0},
+      {"payload_bytes": 1472, "sent": 4, "received": 0, "result": -116}
+    ],
+    "r5": [
+      {"payload_bytes": 32, "sent": 4, "received": 4, "rtt_ms": [2, 1, 1, 1], "result": 0},
+      {"payload_bytes": 1472, "sent": 4, "received": 0, "result": -116}
+    ]
+  },
+  "r5_samples": {
+    "dma_rx_sequence": [20, 25, 25],
+    "dma_tx_sequence": [12, 17, 21],
+    "arp_rx_sequence": [14, 15, 15],
+    "descriptor_rx_errors": 0,
+    "descriptor_tx_errors": 0,
+    "input_drops": 0,
+    "output_drops": 0,
+    "free_heap_bytes": 45129920,
+    "network_stack_min_free_words": 3702,
+    "gui_result": 0,
+    "entropy_state": "READY",
+    "entropy_fault": 0,
+    "entropy_hardware_words": 17,
+    "entropy_read_calls": 14,
+    "entropy_bytes_delivered": 58,
+    "tls_entropy_ready": false
+  },
+  "mmc_observation": {
+    "capability_bit_set": true,
+    "control": "00000000",
+    "all_sampled_counters_remained_zero_during_verified_small_ping": true,
+    "usable_for_error_exclusion": false
+  },
+  "r2_display_sample": {
+    "submitted": 925,
+    "confirmed": 925,
+    "pending": 0,
+    "mismatches": 4,
+    "underruns": 0,
+    "note": "Mismatch counts EOD descriptor/source/SITE checks that are retried; not a count of failed final presentations. No new visible regression inferred."
+  },
+  "host_validation": {
+    "core_gui_audio_cloud_ctest_targets_passed": 4,
+    "network_policy_tests_passed": true,
+    "ping_packet_32_and_1472_boundary_checksum_content_tests_passed": true,
+    "entropy_mock_scenarios_passed": 11,
+    "network_mips_compile_sources_passed": 44,
+    "full_mips_firmware_build_passed": true
+  },
+  "unverified": ["large_frame_round_trip", "usable_mmc_counters", "same_lan_pc_interop", "sustained_network_load", "tls_entropy_quality", "board_tls", "board_cloud", "two_hour_joint_run", "nor_install", "physical_cold_boot"],
+  "new_cloud_api_calls": 0,
+  "local_artifact_root": "build/ai-ethernet-20261023"
+}

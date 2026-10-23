@@ -8,6 +8,7 @@
 #define LWIP_ARP 1
 #define LWIP_ETHERNET 1
 #define LWIP_ICMP 1
+#define LWIP_RAW 1 /* Explicit gateway-only ICMP diagnostic via socket API. */
 #define LWIP_DHCP 1
 #define LWIP_DNS 1
 #define LWIP_UDP 1
@@ -38,7 +39,7 @@
 #define TCP_SND_BUF (16 * TCP_MSS)
 #define TCP_SND_QUEUELEN 64
 #define TCP_WND (16 * TCP_MSS)
-#define TCPIP_THREAD_STACKSIZE 4096 /* lwIP bytes, converted by sys_thread_new */
+#define TCPIP_THREAD_STACKSIZE 8192 /* lwIP bytes, converted by sys_thread_new */
 #define TCPIP_THREAD_PRIO 4
 #define TCPIP_MBOX_SIZE 32
 #define DEFAULT_THREAD_STACKSIZE 4096
@@ -57,10 +58,12 @@
 #define CHECKSUM_CHECK_UDP 1
 #define CHECKSUM_CHECK_TCP 1
 #define LWIP_SNTP 1
-#define SNTP_SERVER_DNS 1
+/* Resolve in ai_ethernet with a link generation and cancellation token. */
+#define SNTP_SERVER_DNS 0
 #define SNTP_MAX_SERVERS 2
 #define SNTP_CHECK_RESPONSE 2
 #define SNTP_UPDATE_DELAY 3600000U
 #define SNTP_SET_SYSTEM_TIME(seconds) ai_lwip_set_unix_time(seconds)
+#define SNTP_GET_SYSTEM_TIME(seconds, us) ai_lwip_sntp_time(&(seconds), &(us))
 
 #endif

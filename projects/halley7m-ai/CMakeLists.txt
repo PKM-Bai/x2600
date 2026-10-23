@@ -76,8 +76,8 @@ set(PLATFORM_INCLUDES "${PLAYER}/mips/include" "${PORT}" "${KERNEL}/include"
 add_subdirectory("${PLAYER}/display" display)
 add_subdirectory("${PLAYER}/storage" storage)
 add_subdirectory("${PLAYER}/touch" touch)
+add_subdirectory(network)
 add_executable(halley7m_ai mips/main.c mips/ai_resources.c
-    network/board_rng.c network/board_gmac.c
     "${PLAYER}/mips/start.S" "${PORT}/context.S" "${PORT}/port.c"
     "${PLAYER}/mips/runtime.c" "${PLAYER}/mips/runtime_heap.c" "${PLAYER}/mips/runtime_syscalls.c"
     "${PLAYER}/common/player_cpu_freertos.c" "${PLAYER}/common/player_cpu_diagnostics.c"
@@ -93,7 +93,7 @@ add_executable(halley7m_ai mips/main.c mips/ai_resources.c
     "${KERNEL}/event_groups.c" "${KERNEL}/stream_buffer.c")
 target_include_directories(halley7m_ai PRIVATE ${PLATFORM_INCLUDES} "${PLAYER}/display" "${PLAYER}/gui" mips network)
 target_link_libraries(halley7m_ai PRIVATE -Wl,--start-group ai_gui ai_lvgl ai_core ai_audio_core
-    player_display player_storage player_touch c m gcc -Wl,--end-group)
+    player_display player_storage player_touch ai_ethernet ai_lwip c m gcc -Wl,--end-group)
 set_target_properties(halley7m_ai PROPERTIES SUFFIX ".elf")
 target_link_options(halley7m_ai PRIVATE ${ARCH} -nostdlib "-T${PLAYER}/mips/player.lds"
     "-Wl,-Map=${CMAKE_CURRENT_BINARY_DIR}/halley7m_ai.map,--cref" -Wl,--gc-sections -Wl,--print-memory-usage)

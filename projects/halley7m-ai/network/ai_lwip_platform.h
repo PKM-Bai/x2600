@@ -18,5 +18,8 @@ void ai_lwip_assert(const char *message, const char *file, int line);
  * This is clock plumbing, not proof that an unauthenticated NTP peer is trusted. */
 void ai_lwip_set_unix_time(uint32_t seconds);
 bool ai_lwip_get_unix_time(uint64_t *seconds);
+/* Request timestamp for SNTP originate matching. Before synchronization this
+ * uses uptime only; it never marks the UTC clock ready. */
+void ai_lwip_sntp_time(uint32_t *seconds, uint32_t *microseconds);
 
 #endif

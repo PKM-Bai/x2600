@@ -193,3 +193,13 @@ bool ai_lwip_get_unix_time(uint64_t *seconds)
     *seconds = base + elapsed_us / UINT64_C(1000000);
     return true;
 }
+void ai_lwip_sntp_time(uint32_t *seconds, uint32_t *microseconds)
+{
+    taskENTER_CRITICAL();
+    uint64_t now = platform_time_us();
+    uint64_t value = utc_seconds ? (uint64_t)utc_seconds * UINT64_C(1000000) +
+                                   now - utc_monotonic_us : now;
+    taskEXIT_CRITICAL();
+    *seconds = (uint32_t)(value / UINT64_C(1000000));
+    *microseconds = (uint32_t)(value % UINT64_C(1000000));
+}

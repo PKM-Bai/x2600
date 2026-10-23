@@ -10,11 +10,10 @@ ROOT = Path(__file__).resolve().parents[4]
 NETWORK = ROOT / "projects/halley7m-ai/network"
 
 
-def host_test():
+def host_test(name, sources):
     output = ROOT / "build/ai-network-host"
     output.mkdir(parents=True, exist_ok=True)
-    executable = output / ("network_host_test.exe" if os.name == "nt" else "network_host_test")
-    sources = [NETWORK / "ai_network.c", NETWORK / "tests/network_host_test.c"]
+    executable = output / (name + (".exe" if os.name == "nt" else ""))
     env = None
     if os.name == "nt":
         spec = importlib.util.spec_from_file_location("test_support", ROOT / "scripts/test-player-amp.py")
@@ -67,6 +66,7 @@ if __name__ == "__main__":
     parser.add_argument("--mips", action="store_true")
     parser.add_argument("--dependencies", type=Path, default=ROOT / "build/ai-network-deps")
     args = parser.parse_args()
-    host_test()
+    host_test("network_host_test", [NETWORK / "ai_network.c", NETWORK / "tests/network_host_test.c"])
+    host_test("ping_packet_test", [NETWORK / "tests/ping_packet_test.c"])
     if args.mips:
         mips_compile(args.dependencies)
